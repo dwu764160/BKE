@@ -1,0 +1,17 @@
+# Virtual environment
+venv/
+
+# Cache files
+__pycache__/
+*.pyc
+
+# Data and models
+data/
+models/
+reports/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Environment files
+.env
