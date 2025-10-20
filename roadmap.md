@@ -118,7 +118,7 @@ The goal is to engineer a sophisticated analytics tool that uses historical data
 
 | Phase | Deliverable | Duration |
 |--------|--------------|-----------|
-| Setup | Environment, repo, dependencies | 1–2 days |
+| Setup | Environment, repo, dependencies | 1–2 days | DONE
 | Data | Clean datasets and fetch scripts | 3–5 days |
 | EDA/Features | Engineered features and insights | 4–7 days |
 | Models | Baseline + advanced models | 5–10 days |
