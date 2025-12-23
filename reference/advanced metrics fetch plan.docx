@@ -1,0 +1,260 @@
+Nice — I researched each field in your JSON schema and mapped it to **where you can get it (API / scrape / compute)**, whether it’s **free / easy**, and any implementation notes (rate limits, headers, caveats). I used official NBA endpoints (via `nba_api`), Basketball-Reference, BallDontLie, and other community tools — and I noted when a metric must be **computed from box scores** versus can be **fetched directly**.
+
+Below is a thorough, actionable mapping you can implement immediately.
+
+---
+
+# Source map for every metric in the JSON schema
+
+(For each metric: **Source(s)** → **Free / Easy?** → **Notes / Implementation tip**)
+
+> Legend:
+> • `nba_api` = Python wrapper for stats.nba.com endpoints (recommended). ([GitHub][1])
+> • `stats.nba.com` = official NBA Stats web endpoints (used by nba_api; may require special headers when scraping). ([NBA][2])
+> • `Basketball-Reference` = b-ref pages (BPM, VORP, WS, many season/advanced tables). ([Basketball Reference][3])
+> • `BallDontLie` = free REST API with many player/team metrics (PIE, pace, basic advanced stats). ([balldontlie.io][4])
+> • `HoopR / SportsDataverse` = R wrapper exposing Synergy / playtype endpoints and other enhanced feeds (useful for play types). ([hoopR][5])
+
+---
+
+## Top-level fields
+
+### `player_id`, `season`, `team_id`
+
+* **Source:** From your existing parquet / nba_api `commonallplayers` and game logs. *(Already available.)* ([GitHub][1])
+
+---
+
+## context.usage_and_role
+
+### `usage_rate` (USG%)
+
+* **Source:** Can be *computed* from box scores using the standard usage formula (or pulled from nba.com advanced player pages).
+* **Free/Easy:** Free; compute with your game logs, or fetch from `nba_api` players/advanced endpoints. ([NBA][6])
+* **Notes:** Use team-level aggregates for denominator; compute per game/season and store.
+
+### `minutes_per_game`
+
+* **Source:** Compute from game logs (FGA/PTS etc. include `MIN`).
+* **Free/Easy:** Free; already in your logs.
+
+### `production_points_responsible` (points_scored, points_assisted, total_points_responsible)
+
+* **Source:** Compute from box scores: `points_scored` = PTS; `points_assisted` = AST × teammate FG value (or use “points produced” formulas on b-ref).
+* **Free/Easy:** Free; requires computation. Basketball-Reference documents “points produced” concepts. ([Basketball Reference][3])
+
+### `drives_per_game`, `drives_per_100_possessions`
+
+* **Source:** `stats.nba.com` Player Tracking → **Drives** page and nba_api endpoints (players/drives). There is also a drives table on NBA Stats. ([NBA][7])
+* **Free/Easy:** Free via `nba_api`, but note NBA endpoints often need `x-nba-stats-origin`/`x-nba-stats-token` headers when calling directly (use `nba_api` which handles this). StackOverflow notes header requirements. ([Stack Overflow][8])
+
+### `primary_playtypes` (isolation, pnr bh, pnr roll, spot up, post up, handoff, cut, off_screen, transition, putbacks, misc)
+
+* **Source:** NBA Stats “Play Type” pages (e.g., Players Isolation, Teams Playtype pages) — accessible via nba.com/stats endpoints (and via `nba_api`). HoopR (sportsdataverse) also exposes Synergy / playtype data for some feeds. ([NBA][9])
+* **Free/Easy:** Playtype pages are available free on NBA site; use `nba_api` to pull programmatically. Some Synergy data may be behind paid access; however nba.com provides play-type breakdowns. ([hoopR][5])
+* **Notes:** Play-type endpoints sometimes require qualification thresholds (min minutes/possessions) — handle missings.
+
+---
+
+## context.team_context
+
+### `team_net_rating`, `team_net_rating_difference_from_avg`, `team_pace`, `team_possession_factor`
+
+* **Source:** NBA Stats team advanced pages (`teams/advanced`, `teams/pace`) or compute from team box scores. BallDontLie includes `pace` and `team` aggregates too. ([NBA][6])
+* **Free/Easy:** Free; available via `nba_api` or compute from team game logs.
+* **Notes:** Precompute league average net rating to get difference.
+
+---
+
+## offensive_impact → efficiency
+
+### `ts_percent`, `efg_percent`, `points_per_shot`, `turnover_rate`
+
+* **Source:** Can be computed from box scores (PTS, FGA, 3PA, FTA, TOV). NBA advanced pages also list TS%/eFG% per player. ([NBA][6])
+* **Free/Easy:** Free; formulaic; easy to compute from your logs.
+
+---
+
+## offensive_impact → creation_and_playmaking
+
+### `assist_percent`, `ast_to_tov_ratio`, `potential_assists`, `secondary_assists`, `hockey_assists`
+
+* **Source:**
+
+  * `assist_percent` and `AST/TO` can be computed from box scores (and team totals).
+  * `potential_assists` / `secondary_assists` / `hockey_assists` require play-by-play or event-level data; NBA Stats / play-by-play endpoints include potential assists or tracking stats; also BallDontLie provides play-by-play. ([balldontlie.io][4])
+* **Free/Easy:** Potential/secondary/hockey assists need play-by-play; still free via NBA play-by-play endpoints (use nba_api), but heavier to compute.
+
+---
+
+## offensive_impact → scoring_profile
+
+### `points_per_75_possessions`, `rim_freq`, `mid_range_freq`, `three_point_freq`, `finishing_fg_percent`, `three_point_accuracy`, `free_throw_rate`
+
+* **Source:**
+
+  * `points_per_75_possessions` can be computed from points & estimated possessions.
+  * `rim/midrange/3P frequency` and finishing FG% often available via NBA shot charts / shot zone splits endpoints (`shotchart`/`playerdashptshots`) and playtype breakdowns. ([NBA][2])
+* **Free/Easy:** Free via nba_api shot/zone endpoints; computing PPP requires possession estimation.
+
+---
+
+## offensive_rebounding
+
+### `oreb_percent`, `putbacks_per_game`
+
+* **Source:** Compute from box scores (OREB fields) or NBA advanced tables. Basketball-Reference also provides rebound rates. ([Basketball Reference][3])
+* **Free/Easy:** Free; straightforward.
+
+---
+
+## spacing_and_gravity
+
+### `three_point_attempt_rate`, `catch_and_shoot_efficiency`, `pull_up_efficiency`
+
+* **Source:** NBA Stats Play Type / Shot Type endpoints provide catch & shoot / pull-up splits and wide-open shot data. `playerdashptshots` endpoints and Play Type pages expose these. ([NBA][6])
+* **Free/Easy:** Free via `nba_api`, but some wide-open definitions rely on tracking (NBA tracking data).
+
+---
+
+## defensive_impact → perimeter_defense
+
+### `opponent_fg_percent_defended`, `deflections_per_game`, `steal_percent`
+
+* **Source:** `deflections_per_game` and opponent FG% defended require tracking data (NBA player tracking endpoints). `steal%` is available from box scores / advanced pages. ([NBA][6])
+* **Free/Easy:** Tracking endpoints are accessible via nba_api/stats.nba.com (free), but rely on play-by-play/tracking parsing and heavier processing.
+
+---
+
+## defensive_impact → interior_defense
+
+### `block_percent`, `rim_defended_fg_percent`, `opponent_rim_attempts_faced`
+
+* **Source:** Block% is box-score derived (available on NBA advanced pages). Rim protection metrics require tracking/shot location data (shot attempts at rim faced), available via NBA shot tracking endpoints. ([NBA][6])
+* **Free/Easy:** Free but needs shot-location parsing.
+
+---
+
+## defensive_impact → rebounding (`dreb_percent`)
+
+* **Source:** Compute from box scores or NBA advanced tables. ([NBA][6])
+
+---
+
+## defensive_box_plus_minus, defensive_rating
+
+* **Source:** Basketball-Reference provides DBPM and BPM; NBA advanced pages provide DRtg (team) and sometimes player defensive rating. ([Basketball Reference][3])
+* **Free/Easy:** Free to fetch from Basketball-Reference (scrape) or compute (DRtg computation requires possessions).
+
+---
+
+## impact_and_value (EPM, RAPM, RAPTOR, LEBRON, GmSC, RPM/BPM, VORP, On-Off)
+
+* **EPM / LEBRON / RAPTOR / DARKO**
+
+  * **Source:** Some (EPM, LEBRON) originate from research groups or paid services (EPM via Dunks & Threes; LEBRON from version by EPM authors). Full, authoritative EPM may be behind paywalls or require specialized data. ([hoopR][5])
+  * **Free/Easy:** Partly paid/limited. You can compute proxies (e.g., RAPM requires play-by-play/on-off matrices and regression; difficult but possible with lineup/play-by-play data). ([hoopR][5])
+
+* **GmSC (Game Score Contextualized)**
+
+  * **Source:** Basketball-Reference lists GameScore; GmSC variants appear in public datasets. Good for small sample interpretation. ([Basketball Reference][3])
+
+* **BPM / VORP / WS / WS/48**
+
+  * **Source:** Basketball-Reference publishes BPM, VORP, Win Shares per season and career; these are free to scrape. ([Basketball Reference][3])
+
+* **On-Off**
+
+  * **Source:** NBA provides on/off data (on/off net rating) on player dashboard endpoints; some on/off stats require lineup data (available via nba_api). ([NBA][6])
+
+**Summary:** Many overall impact metrics are available from Basketball-Reference (free scraping). Some modern models (EPM, RAPTOR) may be partially behind research groups or require heavy computation; use BPM/VORP/WS as free proxies. ([Basketball Reference][3])
+
+---
+
+## adjustable_weights
+
+* **Source:** Internal config — store weights in DB or JSON file; no external data needed.
+
+---
+
+# Implementation notes, priorities, and caveats
+
+1. **Primary recommended data flow**
+
+   * Use `nba_api` for all `stats.nba.com` endpoints (plays, tracking, playtypes, drives, shot charts). It handles the headers and reduces scraping friction. ([GitHub][1])
+   * Use Basketball-Reference (scrape or sportsreference/sportsipy) for BPM, VORP, WS, GameScore, and career-level advanced stats. ([Basketball Reference][3])
+   * Use BallDontLie as a convenient REST alternative for some stats / backups. ([balldontlie.io][4])
+
+2. **Play-type & drives**
+
+   * Play-type endpoints are available on NBA Stats (Isolation, Drives, PnR, etc.) and are exactly what you described (isolation, transition, pick & roll BH/roll, post up, spot up, hand off, cut, off screen, putbacks, misc). Use `nba_api` or the public pages. ([NBA][9])
+
+3. **Headers & rate limits**
+
+   * Direct scraping of stats.nba.com requires setting headers (`x-nba-stats-origin`, `x-nba-stats-token`, `Referer`) to mimic the browser; `nba_api` does this for you. If you implement your own requests, respect rate limiting (add randomized sleeps, exponential backoff). See StackOverflow troubleshooting. ([Stack Overflow][8])
+
+4. **Playtype / Synergy caveat**
+
+   * Some playtype datasets (Synergy) are commercial and may not be fully available without subscription. However, standard nba.com play-type pages provide a solid free subset; HoopR offers wrappers to some datasets. ([hoopR][5])
+
+5. **Computational intensity**
+
+   * Some metrics (RAPM, full EPM) require lineup/on-off and regression across many seasons; implement later as an advanced project. For v1, use BPM, VORP, WS, On-Off, plus computed play-type PPPs as proxies. ([Basketball Reference][3])
+
+6. **Data quality & thresholds**
+
+   * NBA stats pages often impose qualification thresholds (games played, minutes, possessions) — handle missing values and small-sample noise (e.g. exclude players under threshold or impute league averages). ([NBA][9])
+
+---
+
+# Quick prioritized fetch plan (first-pass implementation)
+
+1. **Via `nba_api`:**
+
+   * Fetch Player Tracking Drives (drives per game, drive points) — `players/drives` endpoints. ([NBA][7])
+   * Fetch Play Type distribution for each player (isolation, transition, pnr BH/roll, spot-up, etc.) — nba.com playtype endpoints or `nba_api`. ([NBA][9])
+   * Fetch shot-type splits and wide-open / catch & shoot metrics (`playerdashptshots`, `playerdashboardbyshootingsplits`). ([NBA][2])
+   * Fetch on/off net ratings via player dashboard endpoints. ([NBA][6])
+
+2. **Via Basketball-Reference / sportsreference:**
+
+   * Fetch BPM, VORP, Win Shares, Game Score, advanced per-season tables (season and career). ([Basketball Reference][3])
+
+3. **Via BallDontLie (backup):**
+
+   * Fetch PIE, pace, and basic per-game advanced stats if NBA endpoints are rate-limited. ([balldontlie.io][4])
+
+4. **Compute locally from your parquet logs:**
+
+   * TS%, eFG%, USG% (if not fetched), OREB%/DREB%, AST% (approx), TOV%, points responsible (PTS + 0.7*AST), PPP per play type (requires play-by-play to map possessions to playtype). ([NBA][6])
+
+---
+
+# Key citations (important sources used)
+
+* `nba_api` GitHub (Python NBA Stats client). ([GitHub][1])
+* NBA Stats playtype / drives / advanced player pages (players/isolation, players/drives, players/advanced). ([NBA][9])
+* Basketball-Reference BPM / VORP / Win Shares documentation. ([Basketball Reference][3])
+* BallDontLie public API (free REST) — good backup for basic advanced values and PIE. ([balldontlie.io][4])
+* StackOverflow note on required headers when calling stats.nba.com endpoints directly (use `nba_api` to avoid header issues). ([Stack Overflow][8])
+
+---
+
+## Next executable steps I can do for you (pick any)
+
+* 1. Produce **fetch scripts** (python + nba_api) that pull playtype, drives, shot splits, and on/off and write them into your `advanced_metrics` JSON for each player.
+* 2. Produce **Basketball-Reference scraper** to populate BPM/VORP/WS into `advanced_metrics`.
+* 3. Build the **local computation module** to calculate TS%, eFG%, USG%, OREB%, DREB%, points responsible, PPP by play type (once playtype mapping is present).
+* 4. Implement a **rate-limited, resumable pipeline** that saves intermediate files (Parquet) and updates SQLite.
+
+Tell me which of these you want first (I recommend #1 + #3 as the highest priority), and I’ll generate the code next.
+
+[1]: https://github.com/swar/nba_api?utm_source=chatgpt.com "swar/nba_api: An API Client package to access the ..."
+[2]: https://www.nba.com/stats?utm_source=chatgpt.com "Official NBA Stats | Stats | NBA.com"
+[3]: https://www.basketball-reference.com/about/bpm2.html?utm_source=chatgpt.com "About Box Plus/Minus (BPM)"
+[4]: https://balldontlie.io/?utm_source=chatgpt.com "BALLDONTLIE | The #1 Sports API for NBA, NFL, MLB, NHL ..."
+[5]: https://hoopr.sportsdataverse.org/reference/nba_synergyplaytypes.html?utm_source=chatgpt.com "Get NBA Stats API Synergy Play Type Stats - hoopR"
+[6]: https://www.nba.com/stats/players/advanced?utm_source=chatgpt.com "Players Advanced | Stats"
+[7]: https://www.nba.com/stats/players/drives?utm_source=chatgpt.com "Players Drives | Stats"
+[8]: https://stackoverflow.com/questions/58938589/python-scrape-nba-tracking-drives-data?utm_source=chatgpt.com "Python Scrape NBA Tracking Drives Data"
+[9]: https://www.nba.com/stats/players/isolation?utm_source=chatgpt.com "Players Isolation | Stats"
