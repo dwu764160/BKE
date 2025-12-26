@@ -15,3 +15,6 @@ reports/
 
 # Environment files
 .env
+
+#png files
+*.png
