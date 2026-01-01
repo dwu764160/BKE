@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 import json
 import warnings
+import sys
 
 # ------------------------
 # Paths
@@ -14,6 +15,9 @@ import warnings
 PBP_FILE = Path("data/historical/play_by_play_2022-23.parquet")
 PBP_JSON_FALLBACK = Path(str(PBP_FILE) + ".as.json")
 TEAM_LOGS = Path("data/historical/team_game_logs.parquet")  # optional
+
+# ensure repo root is on sys.path so `import src...` works when running tests directly
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # ------------------------
 # Regexes
@@ -191,8 +195,16 @@ def validate_game_rows(df_game: pd.DataFrame):
 # ------------------------
 
 def validate_all():
+    from src.data_normalize.event_typing import add_event_type
     df = load()
     df = normalize(df)
+
+    df = add_event_type(df)
+
+    df.to_parquet(
+    "data/historical/pbp_normalized_with_events.parquet",
+    index=False
+    )
 
     missing = basic_schema_checks(df)
     if missing:
