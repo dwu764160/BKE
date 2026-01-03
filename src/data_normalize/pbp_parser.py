@@ -31,8 +31,7 @@ PATTERNS = {
     "INSTANT_REPLAY": re.compile(r"Instant Replay", re.IGNORECASE),
 }
 
-# Shot descriptors to catch Field Goals that might not explicitly say "Shot"
-# but aren't Free Throws (e.g. "Dunk", "Layup")
+# Shot descriptors
 RE_FIELD_GOAL_KEYWORDS = re.compile(
     r"\b(Shot|Layup|Dunk|Fadeaway|Tip|Putback|Alley Oop)\b", re.IGNORECASE
 )
@@ -42,13 +41,7 @@ RE_FIELD_GOAL_KEYWORDS = re.compile(
 # -------------------------------------------------------------------------
 
 def parse_clock_and_score(raw_text: str):
-    """
-    Extracts clock, score, and the clean event description line.
-    Handles the standard NBA format:
-      MM:SS
-      [SCORE] (Optional)
-      [DESCRIPTION]
-    """
+    """Extracts clock, score, and the clean event description line."""
     if not isinstance(raw_text, str):
         return None, None, None, ""
 
@@ -59,7 +52,7 @@ def parse_clock_and_score(raw_text: str):
     # Line 0 is usually clock
     clock = lines[0]
     
-    # Line 1 might be score (e.g., "10 - 12")
+    # Line 1 might be score
     score_re = re.compile(r"^(\d{1,3})\s*[-–]\s*(\d{1,3})$")
     away_score = None
     home_score = None
@@ -72,36 +65,24 @@ def parse_clock_and_score(raw_text: str):
             home_score = int(m.group(2))
             event_start_idx = 2
     
-    # Join remaining lines as the event text
     event_text = " ".join(lines[event_start_idx:])
     return clock, away_score, home_score, event_text
 
-def determine_event_type(text: str) -> str:
-    """
-    Classifies the event text into a specific type using layered rules.
-    """
-    # 1. Check specific, non-shot events first to avoid overlap
+def determine_base_event_type(text: str) -> str:
+    """Classifies the event text into a generic type."""
     for etype, pattern in PATTERNS.items():
         if pattern.search(text):
             return etype
 
-    # 2. Check for Field Goals (Made or Missed)
-    # If it has "PTS" (Made) or "MISS" (Missed) or specific shot keywords, it's a FG.
-    # We excluded Free Throws in step 1.
     if RE_PTS.search(text) or RE_MISS.search(text) or RE_FIELD_GOAL_KEYWORDS.search(text):
         return "FIELD_GOAL"
 
     return "UNKNOWN"
 
 def parse_shot_details(text: str):
-    """
-    Extracts shot details: Made/Miss, Points, 3PT status.
-    """
+    """Extracts shot details: Made/Miss, Points, 3PT status."""
     is_made = bool(RE_PTS.search(text))
     is_miss = bool(RE_MISS.search(text))
-    
-    # Logic: It matches 'made' if points are present, 'miss' if MISS is present.
-    # Fallback: If neither, we can't be sure (likely UNKNOWN).
     
     points = 0
     if is_made:
@@ -113,7 +94,7 @@ def parse_shot_details(text: str):
 
     return {
         "is_made": is_made,
-        "is_miss": is_miss, # Explicit miss flag
+        "is_miss": is_miss,
         "points": points,
         "is_three": is_three
     }
@@ -127,26 +108,34 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
     game_id = row.get("GAME_ID")
 
     clock, away, home, event_text = parse_clock_and_score(raw_text)
-    event_type = determine_event_type(event_text)
+    base_event = determine_base_event_type(event_text)
+    
+    # Defaults
+    final_event_type = base_event
+    shot_details = {"is_made": False, "points": 0, "is_three": False}
 
-    # Base output
+    # Refine Field Goals into 2PT vs 3PT
+    if base_event in ["FIELD_GOAL", "FREE_THROW"]:
+        shot_details = parse_shot_details(event_text)
+        
+        if base_event == "FIELD_GOAL":
+            if shot_details["is_three"]:
+                final_event_type = "FIELD_GOAL_3PT"
+            else:
+                final_event_type = "FIELD_GOAL_2PT"
+
+    # Construct Output
     normalized = {
         "game_id": game_id,
         "clock": clock,
         "away_score": away,
         "home_score": home,
         "event_text": event_text,
-        "event_type": event_type,
+        "event_type": final_event_type,
         "raw_text": raw_text
     }
-
-    # Add shot details for relevant types
-    if event_type in ["FIELD_GOAL", "FREE_THROW"]:
-        details = parse_shot_details(event_text)
-        normalized.update(details)
-    else:
-        # Default empty shot details
-        normalized["is_made"] = False
-        normalized["points"] = 0
+    
+    # Merge shot details
+    normalized.update(shot_details)
 
     return normalized
