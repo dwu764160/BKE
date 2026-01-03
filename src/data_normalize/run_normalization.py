@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from src.data_normalize.pbp_parser import normalize_pbp_row
 
-# Using the file name indicated in your prompt/context
-INPUT_FILE = "data/historical/play_by_play_2022-23.parquet"
+# CHANGE THESE PATHS AS NEEDED FOR EACH SEASON
+INPUT_FILE = "data/historical/play_by_play_2024-25.parquet"
 OUTPUT_FILE = "data/historical/pbp_normalized.parquet"
 
 def main():
