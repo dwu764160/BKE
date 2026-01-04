@@ -136,6 +136,16 @@ def parse_shot_details(text: str):
         "is_three": is_three
     }
 
+
+def _first_present(row: Dict[str, Any], keys: List[str]):
+    """Return the first non-None value in row for the given candidate keys."""
+    if not row:
+        return None
+    for k in keys:
+        if k in row and row[k] is not None:
+            return row[k]
+    return None
+
 # -------------------------------------------------------------------------
 # Main Normalizer
 # -------------------------------------------------------------------------
@@ -148,6 +158,21 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
     home_score = row.get("scoreHome")
     away_score = row.get("scoreAway")
     event_text = row.get("DESCRIPTION")
+    # Pass-through IDs: try multiple common key variants to be robust
+    player1_id = _first_present(row, [
+        "player1_id", "PLAYER1_ID", "player1Id", "person1Id", "person1_id", "personId", "player1"
+    ])
+    player2_id = _first_present(row, [
+        "player2_id", "PLAYER2_ID", "player2Id", "person2Id", "person2_id", "assistPlayerId", 
+        "assistPersonId", "foulDrawnPersonId", "player2" # Added assistPersonId, foulDrawnPersonId
+    ])
+    player3_id = _first_present(row, [
+        "player3_id", "PLAYER3_ID", "player3Id", "person3Id", "person3_id", "blockPlayerId", 
+        "blockPersonId", "player3" # Added blockPersonId
+    ])
+    team_id = _first_present(row, [
+        "team_id", "TEAM_ID", "teamId", "TEAMID", "team"
+    ])
     
     # 2. Fallback to Raw Text
     raw_text = row.get("RAW_TEXT") or row.get("RAW") or ""
@@ -184,7 +209,11 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "home_score": home_score,
         "event_text": event_text,
         "event_type": final_event_type,
-        "raw_text": raw_text
+        "raw_text": raw_text,
+        "player1_id": player1_id,
+        "player2_id": player2_id,
+        "player3_id": player3_id,
+        "team_id": team_id
     }
     normalized.update(shot_details)
 
