@@ -1,88 +1,87 @@
 """
 tests/pbp_test.py
-Validates integrity of NBA Play-by-Play data.
-Checks:
-1. Raw Game Counts (Completeness)
-2. Row Density (Quality)
-3. Event Distribution (Normalization Logic, including 2PT vs 3PT)
+Validates integrity of NBA Play-by-Play data across ALL fetched seasons.
 """
 
 import pandas as pd
 import sys
 import os
+import glob
+import re
 from pathlib import Path
 
-# Paths
-RAW_FILE = Path("data/historical/play_by_play_2022-23.parquet")
-NORM_FILE = Path("data/historical/pbp_normalized.parquet")
+DATA_DIR = "data/historical"
+MIN_ROWS_PER_GAME = 300 
 
-# Thresholds
-MIN_ROWS_PER_GAME = 300  # A complete NBA game usually has 400+ events
-
-def check_raw_completeness():
-    print(f"\n--- 1. Raw Data Check ({RAW_FILE}) ---")
-    if not RAW_FILE.exists():
-        print(f"❌ Raw file not found: {RAW_FILE}")
+def check_season(raw_path, norm_path, season_label):
+    print(f"\n=== Testing Season: {season_label} ===")
+    
+    # 1. Raw Check
+    if not os.path.exists(raw_path):
+        print(f"❌ Raw file missing: {raw_path}")
         return
 
-    df = pd.read_parquet(RAW_FILE)
-    n_rows = len(df)
-    n_games = df["GAME_ID"].nunique()
+    df_raw = pd.read_parquet(raw_path)
+    n_games = df_raw["GAME_ID"].nunique() if "GAME_ID" in df_raw.columns else 0
+    print(f"Raw Rows: {len(df_raw):,} | Unique Games: {n_games}")
     
-    print(f"Total Rows:       {n_rows:,}")
-    print(f"Unique Games:     {n_games:,}")
-    print(f"Avg Rows/Game:    {n_rows / n_games:.1f}")
-
-    # Check for low-density games (potential incomplete scrapes)
-    game_counts = df["GAME_ID"].value_counts()
-    incomplete = game_counts[game_counts < MIN_ROWS_PER_GAME]
+    if n_games > 0:
+        density = len(df_raw) / n_games
+        print(f"Avg Rows/Game: {density:.1f}")
+        if density < MIN_ROWS_PER_GAME:
+            print("⚠️  Warning: Low data density.")
     
-    if len(incomplete) > 0:
-        print(f"⚠️  Warning: {len(incomplete)} games have < {MIN_ROWS_PER_GAME} rows.")
-        print(f"    Examples: {incomplete.head(3).to_dict()}")
-    else:
-        print("✅ Data density looks healthy (all games > 300 rows).")
-
-def check_normalization_quality():
-    print(f"\n--- 2. Normalization Check ({NORM_FILE}) ---")
-    if not NORM_FILE.exists():
-        print(f"❌ Normalized file not found. Run 'src/data_normalize/run_normalization.py' first.")
+    # 2. Normalization Check
+    if not os.path.exists(norm_path):
+        print(f"❌ Normalized file missing: {norm_path}")
         return
 
-    df = pd.read_parquet(NORM_FILE)
+    df_norm = pd.read_parquet(norm_path)
     
-    # 1. Check Event Types
-    if "event_type" not in df.columns:
-        print("❌ 'event_type' column missing!")
-        return
-
-    counts = df["event_type"].value_counts()
-    print("Top Event Types:")
-    print(counts.head(10))
-
-    # 2. Verify 2PT vs 3PT Distinction
-    has_3pt = "FIELD_GOAL_3PT" in counts.index
-    has_2pt = "FIELD_GOAL_2PT" in counts.index
-    
-    if has_3pt and has_2pt:
-        print("\n✅ Success: 2PT and 3PT shots are distinguished.")
-        total_shots = counts.get("FIELD_GOAL_2PT", 0) + counts.get("FIELD_GOAL_3PT", 0)
-        p3 = counts.get("FIELD_GOAL_3PT", 0) / total_shots if total_shots else 0
-        print(f"    3PT Rate: {p3:.1%} of all field goals (League Avg is ~39-40%)")
-    else:
-        print("\n⚠️  Warning: 2PT/3PT distinction NOT found.")
-        print("    Ensure you are using the latest 'pbp_parser.py' and have re-run normalization.")
-
-    # 3. Shot Accuracy Check
-    if "is_made" in df.columns:
-        # Filter only for shots
-        shots = df[df["event_type"].str.contains("FIELD_GOAL", na=False)]
+    # Check 3PT vs 2PT
+    if "event_type" in df_norm.columns:
+        counts = df_norm["event_type"].value_counts()
+        has_3pt = "FIELD_GOAL_3PT" in counts
+        has_2pt = "FIELD_GOAL_2PT" in counts
+        
+        if has_3pt and has_2pt:
+            p3_count = counts.get("FIELD_GOAL_3PT", 0)
+            p2_count = counts.get("FIELD_GOAL_2PT", 0)
+            total_shots = p3_count + p2_count
+            rate = p3_count / total_shots if total_shots else 0
+            print(f"✅ 2PT/3PT Distinction: OK. 3PT Rate: {rate:.1%} ({p3_count:,} shots)")
+        else:
+            print("❌ Failed: 2PT/3PT distinction missing.")
+            
+    # Check FG% Accuracy
+    if "is_made" in df_norm.columns and "event_type" in df_norm.columns:
+        # Filter for FG events (including blocks if your logic handles them)
+        shots = df_norm[df_norm["event_type"].str.contains("FIELD_GOAL", na=False)]
         if not shots.empty:
             fg_pct = shots["is_made"].mean()
-            print(f"\n✅ Field Goal % Check: {fg_pct:.1%} (Expected ~47-48%)")
+            print(f"✅ FG% Check: {fg_pct:.1%} (Target: ~46-48%)")
         else:
-            print("\n⚠️  No FIELD_GOAL events found to check accuracy.")
+            print("⚠️  No field goals found to check.")
+
+def main():
+    # Find all raw files
+    raw_pattern = os.path.join(DATA_DIR, "play_by_play_*.parquet")
+    raw_files = sorted(glob.glob(raw_pattern))
+    
+    if not raw_files:
+        print("No data found.")
+        return
+
+    for raw_f in raw_files:
+        # Extract season (e.g. 2022-23)
+        match = re.search(r"play_by_play_(\d{4}-\d{2})\.parquet", raw_f)
+        if match:
+            season = match.group(1)
+            # Construct expected normalized path
+            norm_f = os.path.join(DATA_DIR, f"pbp_normalized_{season}.parquet")
+            check_season(raw_f, norm_f, season)
+        else:
+            print(f"Skipping non-standard file: {raw_f}")
 
 if __name__ == "__main__":
-    check_raw_completeness()
-    check_normalization_quality()
+    main()
