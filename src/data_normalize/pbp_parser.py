@@ -120,14 +120,17 @@ def parse_shot_details(text: str):
     """Extracts shot details: Made/Miss, Points, 3PT status."""
     is_made = bool(RE_PTS.search(text))
     is_miss = bool(RE_MISS.search(text))
+    is_three = "3PT" in text.upper()
     
+    # FIX: Assign points based on logic, not text extraction
     points = 0
     if is_made:
-        m = RE_PTS.search(text)
-        if m:
-            points = int(m.group(1))
-    
-    is_three = "3PT" in text.upper()
+        if is_three:
+            points = 3
+        elif "FREE THROW" in text.upper():
+            points = 1
+        else:
+            points = 2  # Default to 2PT Field Goal
 
     return {
         "is_made": is_made,

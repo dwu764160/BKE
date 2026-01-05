@@ -2,8 +2,8 @@
 set -euo pipefail
 
 mkdir -p docs
-DOT=docs/flow_diagram.dot
-OUT=docs/flow_diagram.png
+DOT=docs/flow_diagram_pre_possessions.dot
+OUT=docs/flow_diagram_pre_possessions.png
 
 if command -v dot >/dev/null 2>&1; then
   echo "Rendering $DOT → $OUT"
