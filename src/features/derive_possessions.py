@@ -1,6 +1,7 @@
 """
 src/features/derive_possessions.py
 Groups atomic PBP events into logical Possessions.
+Includes 'Smart Lineup Selection' and safeguards against IndexErrors.
 """
 
 import pandas as pd
@@ -15,14 +16,19 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 DATA_DIR = "data/historical"
 
 def process_game(game_df):
+    # Ensure sorted by index (chronological)
     game_df = game_df.sort_index()
     
-    # Identify the two teams playing in this specific game
+    if game_df.empty:
+        return pd.DataFrame()
+
+    # Identify the two teams
     valid_teams = game_df['team_id'].dropna().unique()
-    valid_teams = [int(t) for t in valid_teams]
+    valid_teams = [int(t) for t in valid_teams if t != 0]
     
     possessions = []
     
+    # Initialize state
     current_poss = {
         'game_id': game_df['game_id'].iloc[0],
         'period': None,
@@ -30,39 +36,67 @@ def process_game(game_df):
         'off_team_id': None,
         'points': 0,
         'events': 0,
-        'start_index': 0
+        'start_index': game_df.index[0] # FIX: Use actual first index, not 0
     }
     
+    def find_valid_lineup(poss_rows, team_id):
+        """
+        Scans rows to find a valid 5-player lineup.
+        """
+        if poss_rows.empty:
+            return []
+
+        col_name = f'lineup_{int(team_id)}'
+        if col_name not in poss_rows.columns:
+            return []
+            
+        # 1. Prefer gameplay rows
+        gameplay_rows = poss_rows[~poss_rows['event_type'].isin(['SUBSTITUTION'])]
+        for _, row in gameplay_rows.iterrows():
+            lu = row.get(col_name)
+            if isinstance(lu, (list, np.ndarray)) and len(lu) == 5:
+                return lu
+                
+        # 2. Fallback to any row
+        for _, row in poss_rows.iterrows():
+            lu = row.get(col_name)
+            if isinstance(lu, (list, np.ndarray)) and len(lu) == 5:
+                return lu
+                
+        # 3. Last Resort
+        first = poss_rows.iloc[0].get(col_name)
+        return first if isinstance(first, (list, np.ndarray)) else []
+
     def finalize_possession(idx_end, end_reason, next_offense_team):
         if current_poss['off_team_id'] is not None and current_poss['events'] > 0:
-            first_row = game_df.loc[current_poss['start_index']]
-            
-            t_off = int(current_poss['off_team_id'])
-            
-            # Defense is the team that isn't Offense
-            t_def = next((t for t in valid_teams if t != t_off), None)
-            
-            l_off_col = f'lineup_{t_off}'
-            l_def_col = f'lineup_{t_def}' if t_def else None
-            
-            # Retrieve lineups (handle missing columns gracefully)
-            lineup_off = first_row[l_off_col] if l_off_col in first_row else []
-            lineup_def = first_row[l_def_col] if l_def_col and l_def_col in first_row else []
+            # Safe slice
+            try:
+                poss_slice = game_df.loc[current_poss['start_index']:idx_end]
+            except Exception:
+                poss_slice = pd.DataFrame()
 
-            possessions.append({
-                'game_id': current_poss['game_id'],
-                'period': current_poss['period'],
-                'off_team_id': t_off,
-                'def_team_id': t_def,
-                'off_lineup': lineup_off,
-                'def_lineup': lineup_def,
-                'points': current_poss['points'],
-                'start_clock': current_poss['start_clock'],
-                'end_clock': game_df.loc[idx_end, 'clock'],
-                'num_events': current_poss['events'],
-                'end_reason': end_reason
-            })
+            if not poss_slice.empty:
+                t_off = int(current_poss['off_team_id'])
+                t_def = next((t for t in valid_teams if t != t_off), None)
+                
+                lineup_off = find_valid_lineup(poss_slice, t_off)
+                lineup_def = find_valid_lineup(poss_slice, t_def) if t_def else []
 
+                possessions.append({
+                    'game_id': current_poss['game_id'],
+                    'period': current_poss['period'],
+                    'off_team_id': t_off,
+                    'def_team_id': t_def,
+                    'off_lineup': lineup_off,
+                    'def_lineup': lineup_def,
+                    'points': current_poss['points'],
+                    'start_clock': current_poss['start_clock'],
+                    'end_clock': game_df.loc[idx_end, 'clock'],
+                    'num_events': current_poss['events'],
+                    'end_reason': end_reason
+                })
+
+        # Reset
         current_poss['points'] = 0
         current_poss['events'] = 0
         current_poss['start_index'] = idx_end + 1
@@ -81,17 +115,17 @@ def process_game(game_df):
             current_poss['period'] = period
             current_poss['start_clock'] = clock
             current_poss['off_team_id'] = None
+            current_poss['start_index'] = idx # Reset start index to current row
         
         # Determine Offense
-        if current_poss['off_team_id'] is None and pd.notna(team_id):
+        if current_poss['off_team_id'] is None and pd.notna(team_id) and team_id != 0:
             if etype in ['BLOCK', 'STEAL']:
-                pass # Defensive stats
+                pass 
             elif etype == 'REBOUND':
                 current_poss['off_team_id'] = team_id
             else:
                 current_poss['off_team_id'] = team_id
 
-        # Accumulate
         current_poss['events'] += 1
         current_poss['points'] += row.get('points', 0)
         
@@ -103,7 +137,7 @@ def process_game(game_df):
             finalize_possession(idx, "TURNOVER", None)
             
         elif etype == 'REBOUND':
-            if current_poss['off_team_id'] and team_id and team_id != current_poss['off_team_id']:
+            if current_poss['off_team_id'] and team_id and team_id != 0 and team_id != current_poss['off_team_id']:
                 finalize_possession(idx, "DEF_REBOUND", team_id) 
                 current_poss['start_clock'] = clock
                 current_poss['start_index'] = idx 
@@ -126,7 +160,15 @@ def process_file(input_path):
         output_path = input_path.replace("pbp_with_lineups", "possessions")
 
     print(f"\n--- Deriving Possessions for {filename} ---")
-    df = pd.read_parquet(input_path)
+    try:
+        df = pd.read_parquet(input_path)
+    except Exception as e:
+        print(f"Error reading {filename}: {e}")
+        return
+
+    # Standardize IDs locally just in case
+    if 'team_id' in df.columns:
+        df['team_id'] = pd.to_numeric(df['team_id'], errors='coerce').fillna(0).astype(int)
     
     results = []
     grouped = df.groupby('game_id')
