@@ -7,6 +7,8 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+import glob
+
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -18,6 +20,12 @@ THRESHOLDS = {
     "LINEUP_NET_RTG_WARN": 50.0
 }
 
+def clean_id(val):
+    """Normalize numeric/string IDs to string without trailing .0"""
+    if pd.isna(val):
+        return "0"
+    return str(val).replace('.0', '')
+
 def validate_teams():
     path = os.path.join(DATA_DIR, "metrics_teams.parquet")
     if not os.path.exists(path):
@@ -25,6 +33,9 @@ def validate_teams():
 
     print(f"\n=== Validating Team Metrics ({os.path.basename(path)}) ===")
     df = pd.read_parquet(path)
+    # Normalize team_id if present to avoid float/string mismatch
+    if 'team_id' in df.columns:
+        df['clean_team_id'] = df['team_id'].apply(clean_id)
     
     avg_ortg = df['ORTG'].mean()
     print(f"✅ Avg ORTG: {avg_ortg:.1f}")
@@ -41,6 +52,13 @@ def validate_lineups():
 
     print(f"\n=== Validating Lineup Metrics ({os.path.basename(path)}) ===")
     df = pd.read_parquet(path)
+    # Normalize lineup ids (ensure IDs are strings like compute_advanced_metrics)
+    if 'lineup_ids' in df.columns:
+        def norm_lineup(x):
+            if isinstance(x, (list, tuple)):
+                return [clean_id(i) for i in x]
+            return x
+        df['lineup_ids'] = df['lineup_ids'].apply(norm_lineup)
     
     high_vol = df[df['total_poss'] > 100].copy()
     print(f"Analyzed {len(high_vol)} lineups with >100 possessions.")
