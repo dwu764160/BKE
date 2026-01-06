@@ -1,3 +1,10 @@
+"""
+src/utils/db_utils.py
+Database helper utilities for creating and manipulating the local SQLite metadata DB.
+Input: optional db path
+Output: creates/updates SQLite DB at data/player_team_profiles.db by default
+"""
+
 import sqlite3
 from pathlib import Path
 from datetime import datetime

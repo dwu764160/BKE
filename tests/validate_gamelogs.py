@@ -1,3 +1,10 @@
+"""
+tests/validate_gamelogs.py
+Validates player and team game logs for completeness and basic sanity checks.
+Input: data/historical/player_game_logs.parquet (and optionally team_game_logs.parquet)
+Output: printed diagnostics and updates data/historical/data_quality_report.* files
+"""
+
 import os
 
 import pandas as pd

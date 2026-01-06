@@ -1,3 +1,10 @@
+"""
+src/data_fetch/fetch_teams.py
+Fetches NBA team metadata and writes to the local metadata store (DB/parquet).
+Input: nba_api teams endpoint
+Output: updates local DB / teams table used by downstream scripts
+"""
+
 import sys
 from pathlib import Path
 import sqlite3

@@ -1,3 +1,10 @@
+"""
+src/data_fetch/fetch_players.py
+Fetches player game logs and stores them in the local database for later normalization.
+Input: player list (from teams/DB)
+Output: inserts/updates player game logs in SQLite or parquet files
+"""
+
 import sys
 from pathlib import Path
 import sqlite3

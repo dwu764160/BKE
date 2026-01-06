@@ -1,3 +1,10 @@
+"""
+tests/test_pbp_parser_ids.py
+Sanity-checks the PBP row normalization (ID extraction & field filling).
+Input: sample rows (inline) or data/historical/pbp_normalized.parquet
+Output: printed normalized rows and optional ID fill-rate statistics
+"""
+
 from pathlib import Path
 import sys
 

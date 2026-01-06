@@ -1,3 +1,10 @@
+"""
+src/data_fetch/fetch_pbp/capture_nba_headers.py
+Captures NBA site headers (__NEXT_DATA__) required for stable PBP fetching.
+Input: none (opens browser)
+Output: writes data/nba_headers.json with captured headers
+"""
+
 from playwright.sync_api import sync_playwright
 import json
 import time

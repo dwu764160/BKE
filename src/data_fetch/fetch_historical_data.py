@@ -1,3 +1,10 @@
+"""
+src/data_fetch/fetch_historical_data.py
+Utilities for fetching historical play-by-play and game-log data for past seasons.
+Input: season identifiers (e.g., '2022-23')
+Output: saved CSV/Parquet files under data/historical
+"""
+
 import requests
 import os
 import math

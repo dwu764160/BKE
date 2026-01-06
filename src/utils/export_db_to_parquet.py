@@ -1,7 +1,7 @@
 """
 src/utils/export_db_to_parquet.py
 Exports 'players' and 'teams' tables from SQLite to Parquet.
-This bridges the gap between the fetchers (DB) and the metrics computer (Parquet).
+FIXED: Prevents overwriting player_id with team_id.
 """
 
 import sqlite3
@@ -21,12 +21,17 @@ def export_table(conn, table_name, output_filename):
     try:
         df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
         
-        # Standardization: Ensure IDs are strings for consistent merging later
+        # Standardization: Create a common 'id' column for merging
+        # USE ELIF to prevent overwriting!
         if 'player_id' in df.columns:
             df['id'] = df['player_id'].astype(str)
-        if 'team_id' in df.columns:
+        elif 'team_id' in df.columns:
             df['id'] = df['team_id'].astype(str)
             
+        # Clean the ID (remove .0 just in case)
+        if 'id' in df.columns:
+            df['id'] = df['id'].str.replace(r'\.0$', '', regex=True)
+
         output_path = OUTPUT_DIR / output_filename
         df.to_parquet(output_path, index=False)
         print(f"✅ Saved {len(df)} rows to {output_path}")
