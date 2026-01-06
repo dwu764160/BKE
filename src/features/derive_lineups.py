@@ -1,7 +1,7 @@
 """
 src/features/derive_lineups.py
 Infers the 5 players on the court for every event.
-Includes TARGETED DEBUGGING for Game 0022200001.
+Includes safeguards against Bench Technicals and Ejections inflating lineup counts.
 """
 
 import pandas as pd
@@ -15,13 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 DATA_DIR = "data/historical"
 
-# DEBUG CONSTANTS
-DEBUG_GAME_ID = "0022200001"
-DEBUG_TEAM_ID = "1610612738"
-DEBUG_PLAYER_ID = "201143" # Al Horford
-
 def to_id(val):
-    """Standardizes IDs to string integers (removes .0 decimals)."""
     if pd.isna(val) or val == "" or str(val).strip() == "":
         return None
     try:
@@ -59,7 +53,7 @@ def build_player_team_map(game_df):
         if tid and p2 and p2 != '0':
             pt_map[p2] = tid
             
-    # 4. Fallback (Player 1 -> Team ID)
+    # 4. Fallback
     for _, row in game_df.iterrows():
         p1 = row.get('player1_id')
         tid = row.get('team_id')
@@ -86,19 +80,13 @@ def build_player_team_map(game_df):
 
     return pt_map
 
-def get_initial_lineup(period_events, team_id, pt_map, game_id=None):
+def get_initial_lineup(period_events, team_id, pt_map):
     if not team_id:
         return []
 
     starters = set()
     subs_in = set()
     
-    # DEBUG TRACE
-    is_debug = (game_id == DEBUG_GAME_ID and str(team_id) == DEBUG_TEAM_ID)
-    if is_debug:
-        print(f"\n[DEBUG] Solving Starters for {team_id} in Game {game_id} (Period {period_events['period'].iloc[0]})")
-        print(f"[DEBUG] Map check for Horford ({DEBUG_PLAYER_ID}): {pt_map.get(DEBUG_PLAYER_ID)}")
-
     for _, row in period_events.iterrows():
         candidates = []
         if row.get('player1_id'): candidates.append(row['player1_id'])
@@ -111,6 +99,13 @@ def get_initial_lineup(period_events, team_id, pt_map, game_id=None):
         desc = str(row.get('event_text', '')).upper()
         p1 = row.get('player1_id')
         
+        # --- FIX: Ignore Bench/Team Events ---
+        if 'TECHNICAL' in desc or 'EJECTION' in desc or 'VIOLATION' in desc:
+            continue
+        if 'DEFENSIVE 3 SECONDS' in desc:
+            continue
+        # -------------------------------
+
         if etype == 'SUBSTITUTION':
             if p1 in team_candidates:
                 if 'SUB IN' in desc:
@@ -118,24 +113,14 @@ def get_initial_lineup(period_events, team_id, pt_map, game_id=None):
                 elif 'SUB OUT' in desc:
                     if p1 not in subs_in:
                         starters.add(p1)
-                        if is_debug and p1 == DEBUG_PLAYER_ID:
-                            print(f"[DEBUG] Horford SUB OUT -> Added to Starters")
         else:
             for p in team_candidates:
                 if p not in subs_in:
                     starters.add(p)
-                    if is_debug and p == DEBUG_PLAYER_ID and p in starters:
-                        # Only print once to avoid spam
-                        pass
-    
-    if is_debug:
-        print(f"[DEBUG] Final Starters: {starters}")
-        if DEBUG_PLAYER_ID not in starters:
-            print(f"[DEBUG] ❌ Horford MISSING from starters!")
-
+                    
     return list(starters)
 
-def process_game_period(df_gp, pt_map, game_id=None):
+def process_game_period(df_gp, pt_map):
     df_gp = df_gp.sort_index()
     teams = list(set(df_gp['team_id'].dropna().unique()) - {'0'})
     
@@ -144,8 +129,8 @@ def process_game_period(df_gp, pt_map, game_id=None):
 
     team_a, team_b = teams[0], teams[1]
     
-    starters_a = get_initial_lineup(df_gp, team_a, pt_map, game_id)
-    starters_b = get_initial_lineup(df_gp, team_b, pt_map, game_id)
+    starters_a = get_initial_lineup(df_gp, team_a, pt_map)
+    starters_b = get_initial_lineup(df_gp, team_b, pt_map)
     
     current_a = set(starters_a)
     current_b = set(starters_b)
@@ -203,8 +188,7 @@ def process_file(input_path):
         
         period_chunks = []
         for p, period_df in game_df.groupby('period'):
-            # Pass game_id for debugging
-            period_chunks.append(process_game_period(period_df, pt_map, gid))
+            period_chunks.append(process_game_period(period_df, pt_map))
             
         if period_chunks:
             processed_dfs.append(pd.concat(period_chunks))
@@ -216,15 +200,15 @@ def process_file(input_path):
         final_df.to_parquet(output_path, index=False)
         
         # Validation
-        # Check specific broken case if available in this season
-        if DEBUG_GAME_ID in final_df['game_id'].values:
-            debug_rows = final_df[(final_df['game_id'] == DEBUG_GAME_ID) & (final_df['period'] == 1)]
-            if not debug_rows.empty:
-                first_row = debug_rows.iloc[0]
-                col = f'lineup_{DEBUG_TEAM_ID}'
-                if col in first_row:
-                    print(f"  [FINAL VALIDATION] Game {DEBUG_GAME_ID} Team {DEBUG_TEAM_ID} Starters: {first_row[col]}")
-                    print(f"  [FINAL VALIDATION] Length: {len(first_row[col])}")
+        sample = final_df.iloc[len(final_df)//2]
+        tid = sample['team_id']
+        if tid and tid != '0':
+            col = f'lineup_{tid}'
+            if col in sample:
+                lu = sample[col]
+                print(f"  Validation Sample: {lu} (Len: {len(lu)})")
+    else:
+        print("No data processed.")
 
 def main():
     pattern = os.path.join(DATA_DIR, "pbp_normalized_*.parquet")

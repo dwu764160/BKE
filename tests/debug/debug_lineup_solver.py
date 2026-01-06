@@ -9,7 +9,7 @@ import sys
 import os
 
 # Adjust path to import src
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src")))
 from features.derive_lineups import build_player_team_map, get_initial_lineup, to_id
 
 # Target the 2022-23 file
@@ -121,3 +121,4 @@ if __name__ == "__main__":
     gid, per, tid = find_broken_case()
     if gid:
         analyze_case(gid, per, tid)
+
