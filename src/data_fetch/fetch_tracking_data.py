@@ -1,7 +1,7 @@
 """
 src/data_fetch/fetch_tracking_data.py
 Fetches "Style" and "Tracking" data using TLS Impersonation (curl_cffi).
-UPDATED: Implements Strict Referer Matching to fix Status 500 errors.
+UPDATED: Adds fallback for broken 2022-23 CatchShoot endpoint.
 """
 
 import pandas as pd
@@ -22,7 +22,6 @@ SEASONS = ["2022-23", "2023-24", "2024-25"]
 
 # --- CONFIGURATION ---
 
-# Map API Parameter -> Website URL Slug (Strict Referer Matching)
 TRACKING_MEASURES = {
     "Drives": ("Drives", "drives"),
     "CatchShoot": ("CatchShoot", "catch-shoot"),
@@ -34,12 +33,6 @@ TRACKING_MEASURES = {
     "SpeedDistance": ("SpeedDistance", "speed-distance")
 }
 
-SYNERGY_TYPES = [
-    "Isolation", "PRBallHandler", "PRRollman", 
-    "Postup", "Spotup", "Handoff", "OffScreen"
-]
-
-# Map Category -> Slug
 DEFENSE_CATEGORIES = {
     "Overall": "defense-dash-overall",
     "Less Than 6Ft": "defense-dash-lt6",
@@ -60,13 +53,11 @@ def fetch_url_cached(url, params, referer_suffix, cache_name):
         try:
             with open(cache_path, "r") as f:
                 json_data = json.load(f)
-                # Valid cache check
                 if 'resultSets' in json_data:
                     return parse_json(json_data)
         except:
-            pass # corrupted cache, re-fetch
+            pass 
 
-    # Fetch
     headers = {
         'Accept': 'application/json, text/plain, */*',
         'Connection': 'keep-alive',
@@ -78,16 +69,13 @@ def fetch_url_cached(url, params, referer_suffix, cache_name):
     }
     
     try:
-        # Debug URL printing for failed requests
-        # print(f"DEBUG URL: {url}?{requests.compat.urlencode(params)}")
-        
         resp = requests.get(
             url, params=params, headers=headers, 
             impersonate="chrome110", timeout=30
         )
         
         if resp.status_code != 200:
-            print(f"⚠️ Status {resp.status_code}", end=" ")
+            # Return None to signal failure (triggering fallback)
             return None
         
         json_data = resp.json()
@@ -111,6 +99,36 @@ def parse_json(json_data):
     except:
         return pd.DataFrame()
 
+def fetch_fallback_catch_shoot(season):
+    """
+    Fallback: Uses '0 Dribbles' from leaguedashplayerptshot as proxy for Catch & Shoot.
+    """
+    url = "https://stats.nba.com/stats/leaguedashplayerptshot"
+    params = {
+        "LeagueID": "00", "PerMode": "PerGame", "PlayerOrTeam": "Player",
+        "Season": season, "SeasonType": "Regular Season",
+        "DribbleRange": "0 Dribbles" # The Proxy
+    }
+    
+    print("   🚑 Using '0 Dribbles' Proxy...", end=" ")
+    df = fetch_url_cached(url, params, "shots-dribbles", f"tracking_CatchShoot_Fallback_{season}")
+    
+    if df is not None and not df.empty:
+        # RENAME columns to match standard CatchShoot format
+        # e.g. FGM -> CATCH_SHOOT_FGM
+        new_cols = {}
+        for col in df.columns:
+            if col in ['PLAYER_ID', 'PLAYER_NAME', 'TEAM_ID', 'GP', 'G', 'MIN']:
+                continue
+            new_cols[col] = f"CATCH_SHOOT_{col}"
+        
+        df = df.rename(columns=new_cols)
+        # Ensure we have the standard columns expected
+        if 'CATCH_SHOOT_FG3M' in df.columns:
+            return df
+            
+    return None
+
 def fetch_tracking(season):
     print(f"\n🏀 Fetching Tracking Data (PtStats) for {season}...")
     season_dir = DATA_DIR / season
@@ -133,12 +151,17 @@ def fetch_tracking(season):
         
         df = fetch_url_cached(url, params, slug, cache_key)
         
+        # --- FALLBACK LOGIC ---
+        if (df is None or df.empty) and measure_name == "CatchShoot":
+            df = fetch_fallback_catch_shoot(season)
+        # ----------------------
+        
         if df is not None and not df.empty:
             df.columns = [c.upper() for c in df.columns]
             df.to_parquet(outfile, index=False)
             print(f"✅ ({len(df)} rows)")
         else:
-            print("❌ Empty")
+            print("❌ Empty/Failed")
         
         smart_sleep()
 
@@ -221,7 +244,7 @@ def fetch_synergy(season):
             smart_sleep()
 
 def main():
-    print("=== Starting Stream B: Strict Referer Fetch ===")
+    print("=== Starting Stream B: Robust Fetch with Fallbacks ===")
     ensure_dirs()
     
     for season in SEASONS:
