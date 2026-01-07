@@ -1,10 +1,7 @@
 """
 src/data_fetch/fetch_tracking_data.py
 Fetches "Style" and "Tracking" data using TLS Impersonation (curl_cffi).
-UPDATED: 
-- Implements JSON Caching (data/tracking_cache).
-- Fixes Synergy 'Putback' -> 'OffRebound'.
-- Adds 'leaguedashptdefend' for Rim Protection.
+UPDATED: Implements Strict Referer Matching to fix Status 500 errors.
 """
 
 import pandas as pd
@@ -25,33 +22,29 @@ SEASONS = ["2022-23", "2023-24", "2024-25"]
 
 # --- CONFIGURATION ---
 
-# 1. Player Tracking (leaguedashptstats)
+# Map API Parameter -> Website URL Slug (Strict Referer Matching)
 TRACKING_MEASURES = {
-    "Drives": "Drives",
-    # "Defense": "Defense",  <-- REMOVED, we use the specific Dashboard endpoint now
-    "CatchShoot": "CatchShoot",
-    "PullUpShot": "PullUpShot",
-    "Passing": "Passing",
-    "Possessions": "Possessions",
-    "Rebounding": "Rebounding",
-    "Efficiency": "Efficiency",
-    "SpeedDistance": "SpeedDistance"
+    "Drives": ("Drives", "drives"),
+    "CatchShoot": ("CatchShoot", "catch-shoot"),
+    "PullUpShot": ("PullUpShot", "pullup"),
+    "Passing": ("Passing", "passing"),
+    "Possessions": ("Possessions", "touches"),
+    "Rebounding": ("Rebounding", "rebounding"),
+    "Efficiency": ("Efficiency", "shooting-efficiency"),
+    "SpeedDistance": ("SpeedDistance", "speed-distance")
 }
 
-# 2. Synergy Play Types (synergyplaytypes)
 SYNERGY_TYPES = [
     "Isolation", "PRBallHandler", "PRRollman", 
     "Postup", "Spotup", "Handoff", "OffScreen"
 ]
-# NOTE: 'Transition', 'Cut', 'OffRebound', 'Misc' only exist for Offense.
-# We will handle this logic in the fetch loop below.
 
-# 3. Defense Dashboard (leaguedashptdefend)
-DEFENSE_CATEGORIES = [
-    "Overall",        # General DFG%
-    "Less Than 6Ft",  # Rim Protection
-    "3 Pointers"      # Perimeter Defense
-]
+# Map Category -> Slug
+DEFENSE_CATEGORIES = {
+    "Overall": "defense-dash-overall",
+    "Less Than 6Ft": "defense-dash-lt6",
+    "3 Pointers": "defense-dash-3pt"
+}
 
 def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,60 +54,61 @@ def smart_sleep():
     time.sleep(random.uniform(1.0, 2.5))
 
 def fetch_url_cached(url, params, referer_suffix, cache_name):
-    """
-    Checks cache first. If missing, fetches via curl_cffi and saves JSON.
-    Returns DataFrame.
-    """
     cache_path = CACHE_DIR / f"{cache_name}.json"
     
-    # 1. Check Cache
     if cache_path.exists():
-        # print(f"   🔹 Loaded from cache: {cache_name}")
-        with open(cache_path, "r") as f:
-            json_data = json.load(f)
-    else:
-        # 2. Fetch from API
-        headers = {
-            'Accept': 'application/json, text/plain, */*',
-            'Connection': 'keep-alive',
-            'Origin': 'https://www.nba.com',
-            'Referer': f'https://www.nba.com/stats/players/{referer_suffix}',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'x-nba-stats-origin': 'stats',
-            'x-nba-stats-token': 'true',
-        }
-        
         try:
-            resp = requests.get(
-                url, params=params, headers=headers, 
-                impersonate="chrome110", timeout=30
-            )
-            if resp.status_code != 200:
-                print(f"⚠️ Status {resp.status_code}", end=" ")
-                return None
-            
-            json_data = resp.json()
-            
-            # Save to Cache
-            with open(cache_path, "w") as f:
-                json.dump(json_data, f)
-                
-        except Exception as e:
-            print(f"⚠️ Error: {e}", end=" ")
-            return None
+            with open(cache_path, "r") as f:
+                json_data = json.load(f)
+                # Valid cache check
+                if 'resultSets' in json_data:
+                    return parse_json(json_data)
+        except:
+            pass # corrupted cache, re-fetch
 
-    # 3. Parse to DataFrame
+    # Fetch
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'Connection': 'keep-alive',
+        'Origin': 'https://www.nba.com',
+        'Referer': f'https://www.nba.com/stats/players/{referer_suffix}',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'x-nba-stats-origin': 'stats',
+        'x-nba-stats-token': 'true',
+    }
+    
+    try:
+        # Debug URL printing for failed requests
+        # print(f"DEBUG URL: {url}?{requests.compat.urlencode(params)}")
+        
+        resp = requests.get(
+            url, params=params, headers=headers, 
+            impersonate="chrome110", timeout=30
+        )
+        
+        if resp.status_code != 200:
+            print(f"⚠️ Status {resp.status_code}", end=" ")
+            return None
+        
+        json_data = resp.json()
+        
+        with open(cache_path, "w") as f:
+            json.dump(json_data, f)
+            
+        return parse_json(json_data)
+            
+    except Exception as e:
+        print(f"⚠️ Error: {e}", end=" ")
+        return None
+
+def parse_json(json_data):
     try:
         result_sets = json_data.get('resultSets', [])
         if not result_sets: return pd.DataFrame()
-        
-        # Usually index 0 is the main data
         headers = result_sets[0]['headers']
         row_set = result_sets[0]['rowSet']
-        
         return pd.DataFrame(row_set, columns=headers)
-    except Exception as e:
-        print(f"⚠️ Parse Error: {e}", end=" ")
+    except:
         return pd.DataFrame()
 
 def fetch_tracking(season):
@@ -124,7 +118,7 @@ def fetch_tracking(season):
     
     url = "https://stats.nba.com/stats/leaguedashptstats"
     
-    for measure_name, api_param in TRACKING_MEASURES.items():
+    for measure_name, (api_param, slug) in TRACKING_MEASURES.items():
         outfile = season_dir / f"tracking_{measure_name}.parquet"
         cache_key = f"tracking_{measure_name}_{season}"
         
@@ -137,7 +131,7 @@ def fetch_tracking(season):
             "PtMeasureType": api_param, "Season": season, "SeasonType": "Regular Season"
         }
         
-        df = fetch_url_cached(url, params, "drives", cache_key)
+        df = fetch_url_cached(url, params, slug, cache_key)
         
         if df is not None and not df.empty:
             df.columns = [c.upper() for c in df.columns]
@@ -155,11 +149,10 @@ def fetch_defense_dashboard(season):
     
     url = "https://stats.nba.com/stats/leaguedashptdefend"
     
-    for category in DEFENSE_CATEGORIES:
-        # File friendly name
-        cat_slug = category.replace(" ", "").replace("<", "Lt")
-        outfile = season_dir / f"defense_{cat_slug}.parquet"
-        cache_key = f"defense_{cat_slug}_{season}"
+    for category, slug in DEFENSE_CATEGORIES.items():
+        cat_file = category.replace(" ", "").replace("<", "Lt")
+        outfile = season_dir / f"defense_{cat_file}.parquet"
+        cache_key = f"defense_{cat_file}_{season}"
         
         if outfile.exists(): continue
             
@@ -170,7 +163,7 @@ def fetch_defense_dashboard(season):
             "Season": season, "SeasonType": "Regular Season"
         }
         
-        df = fetch_url_cached(url, params, "defense", cache_key)
+        df = fetch_url_cached(url, params, slug, cache_key)
         
         if df is not None and not df.empty:
             df.columns = [c.upper() for c in df.columns]
@@ -188,7 +181,6 @@ def fetch_synergy(season):
     
     url = "https://stats.nba.com/stats/synergyplaytypes"
     
-    # Define valid types per side to avoid "Empty" errors
     OFFENSIVE_TYPES = [
         "Isolation", "Transition", "PRBallHandler", "PRRollman", 
         "Postup", "Spotup", "Handoff", "Cut", "OffScreen", 
@@ -198,11 +190,9 @@ def fetch_synergy(season):
     DEFENSIVE_TYPES = [
         "Isolation", "PRBallHandler", "PRRollman", 
         "Postup", "Spotup", "Handoff", "OffScreen"
-        # Defense does NOT track: Transition, Cut, OffRebound, Misc
     ]
     
     for side in ["Offensive", "Defensive"]:
-        # Select the correct list based on side
         target_types = OFFENSIVE_TYPES if side == "Offensive" else DEFENSIVE_TYPES
         
         for ptype in target_types:
@@ -231,7 +221,7 @@ def fetch_synergy(season):
             smart_sleep()
 
 def main():
-    print("=== Starting Stream B: Cached & Corrected Fetch ===")
+    print("=== Starting Stream B: Strict Referer Fetch ===")
     ensure_dirs()
     
     for season in SEASONS:
@@ -239,7 +229,7 @@ def main():
         fetch_defense_dashboard(season)
         fetch_synergy(season)
         
-    print("\n✅ Stream B Complete. Data saved to data/tracking/")
+    print("\n✅ Stream B Complete.")
 
 if __name__ == "__main__":
     main()
