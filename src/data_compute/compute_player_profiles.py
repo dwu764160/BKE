@@ -1,7 +1,9 @@
 """
 src/data_compute/compute_player_profiles.py
 Stream A: Computes "Box Score Plus" and "Four Factors" profiles.
-FIXED: Calculates USG% using 'Team Plays' (not Possessions) to match B-Ref standards.
+UPDATED: 
+- Excludes 'Team Rebounds' (Dead Ball) from REB% Denominator to match B-Ref.
+- Calculates USG% using Team Plays.
 """
 
 import pandas as pd
@@ -26,25 +28,20 @@ def get_season_from_path(path):
     return base.replace("possessions_clean_", "").replace("pbp_with_lineups_", "").replace(".parquet", "")
 
 def compute_denominators(season):
-    """
-    Loads CLEAN POSSESSIONS to calculate exact Off/Def possessions.
-    Used for Ratings (ORTG/DRTG), but NOT for Usage Rate.
-    """
     path = os.path.join(DATA_DIR, f"possessions_clean_{season}.parquet")
-    if not os.path.exists(path):
-        return pd.DataFrame()
+    if not os.path.exists(path): return pd.DataFrame()
 
     print(f"   Loading Possessions for {season}...")
     df = pd.read_parquet(path)
     
-    # Explode Offense -> Count Possessions
+    # Explode Offense
     off_exploded = df.explode('off_lineup')
     off_stats = off_exploded.groupby('off_lineup').agg(
         POSS_OFF=('game_id', 'count'),
         TEAM_PTS_ON_COURT=('points', 'sum')
     ).reset_index().rename(columns={'off_lineup': 'player_id'})
     
-    # Explode Defense -> Count Possessions
+    # Explode Defense
     def_exploded = df.explode('def_lineup')
     def_stats = def_exploded.groupby('def_lineup').agg(
         POSS_DEF=('game_id', 'count'),
@@ -56,35 +53,26 @@ def compute_denominators(season):
     return denom_df
 
 def compute_numerators_and_plays(season):
-    """
-    Loads PBP EVENTS to calculate:
-    1. Individual Stats (PTS, AST, etc)
-    2. Team Plays on Court (for USG%)
-    3. Team FGM on Court (for AST%)
-    4. Total Rebound Chances on Court (for REB%)
-    """
     path = os.path.join(DATA_DIR, f"pbp_with_lineups_{season}.parquet")
-    if not os.path.exists(path):
-        return pd.DataFrame()
+    if not os.path.exists(path): return pd.DataFrame()
         
     print(f"   Loading PBP Events for {season}...")
     df = pd.read_parquet(path)
     
     df['player1_id'] = df['player1_id'].apply(clean_id)
     df['player2_id'] = df['player2_id'].apply(clean_id)
+    df['team_id'] = df['team_id'].fillna(0).astype(int)
 
-    # --- 1. Identify "Usage Events" (FGA, FTA, TOV) ---
+    # --- 1. Identify Usage Events ---
     is_fga = df['event_type'].str.contains('FIELD_GOAL')
     is_fta = df['event_type'] == 'FREE_THROW'
     is_tov = df['event_type'] == 'TURNOVER'
     
-    # Calculate "Play Weight":
-    # FGA = 1, TOV = 1, FTA = 0.44
     df['play_weight'] = 0.0
     df.loc[is_fga | is_tov, 'play_weight'] = 1.0
     df.loc[is_fta, 'play_weight'] = 0.44
 
-    # --- 2. Calculate TEAM PLAYS (For USG%) ---
+    # --- 2. Calculate TEAM PLAYS (USG Denom) ---
     usage_events = df[df['play_weight'] > 0].copy()
     team_plays_list = []
     
@@ -101,7 +89,7 @@ def compute_numerators_and_plays(season):
     else:
         team_plays = pd.Series(name='TEAM_PLAYS_ON_COURT')
 
-    # --- 3. Calculate TEAM FGM ON COURT (For AST%) ---
+    # --- 3. Calculate TEAM FGM (AST Denom) ---
     made_shots = df[df['event_type'].str.contains('FIELD_GOAL') & (df['is_made'] == True)].copy()
     team_fgm_list = []
     
@@ -118,22 +106,32 @@ def compute_numerators_and_plays(season):
     else:
         team_fgm = pd.Series(name='TEAM_FGM_ON_COURT')
 
-    # --- 4. Calculate TOTAL REBOUND CHANCES (For REB%) ---
-    rebs = df[df['event_type'] == 'REBOUND'].copy()
+    # --- 4. Calculate REBOUND CHANCES (REB Denom) ---
+    # FIX: Exclude Team Rebounds (PlayerID = 0)
+    # These are dead-ball rebounds (e.g. 1st FT miss) that players cannot grab.
+    valid_rebs = df[
+        (df['event_type'] == 'REBOUND') & 
+        (df['player1_id'] != "0") # The Key Fix
+    ].copy()
+    
     total_reb_list = []
     lineup_cols = [c for c in df.columns if c.startswith('lineup_')]
     
+    # We must attribute the rebound opportunity to EVERYONE on the floor (both teams)
+    # So we explode ALL lineup columns for every valid rebound
     for col in lineup_cols:
-        exploded = rebs.explode(col)
-        counts = exploded.groupby(col).size()
-        total_reb_list.append(counts)
+        if col in valid_rebs.columns:
+            exploded = valid_rebs.explode(col)
+            # Only count if the player is actually in that lineup column (not nan)
+            counts = exploded[exploded[col].notna()].groupby(col).size()
+            total_reb_list.append(counts)
 
     if total_reb_list:
         total_rebs = pd.concat(total_reb_list).groupby(level=0).sum().rename('TOTAL_REB_ON_COURT')
     else:
         total_rebs = pd.Series(name='TOTAL_REB_ON_COURT')
 
-    # --- 5. Individual Numerators (Standard) ---
+    # --- 5. Individual Numerators ---
     makes = df[df['event_type'].str.contains('FIELD_GOAL') & (df['is_made'] == True)]
     
     p1_stats = df.groupby('player1_id').agg(
@@ -157,41 +155,34 @@ def compute_numerators_and_plays(season):
 
 def process_season(season):
     print(f"\nProcessing Season: {season}")
-    
     denoms = compute_denominators(season)
     if denoms.empty: return pd.DataFrame()
-    
     nums = compute_numerators_and_plays(season)
     if nums.empty: return pd.DataFrame()
     
     df = pd.merge(denoms, nums, on='player_id', how='left').fillna(0)
     df['season'] = season
     
-    # --- Derived Metrics ---
-    
-    # Efficiency
+    # --- Metrics ---
+    # TS%
     df['TS_PCT'] = df['PTS'] / (2 * (df['FGA'] + 0.44 * df['FTA']))
+    
+    # Four Factors
     df['EFG_PCT'] = (df['FGM'] + 0.5 * df['FG3M']) / df['FGA'].replace(0, 1)
     df['FT_RATE'] = df['FTA'] / df['FGA'].replace(0, 1)
+    df['TOV_PCT'] = df['TOV'] / (df['FGA'] + 0.44 * df['FTA'] + df['TOV']).replace(0, 1) * 100 # Adjusted to match B-Ref scale (0-100)
     
-    # Usage Rate (FIXED)
-    # Formula: (Player Plays) / (Team Plays On Court)
+    # Usage
     player_plays = df['FGA'] + 0.44 * df['FTA'] + df['TOV']
-    
-    # Fallback: If TEAM_PLAYS_ON_COURT is 0 (missing lineup data), use POSS_OFF as approximate
     denom_usg = df['TEAM_PLAYS_ON_COURT'].replace(0, np.nan).fillna(df['POSS_OFF'])
-    
     df['USG_RATE'] = (player_plays / denom_usg) * 100
     
-    # Advanced: Assist Percentage (AST%)
-    # Formula: 100 * AST / (Team FGM - Player FGM)
+    # AST%
     teammate_fgm = df['TEAM_FGM_ON_COURT'] - df['FGM']
     df['AST_PCT'] = (df['AST'] / teammate_fgm.replace(0, 1)) * 100
     
-    # Advanced: Rebound Percentage (REB% / TRB%)
-    # Formula: 100 * REB / (Total Rebounds on Court)
+    # REB%
     df['REB_PCT'] = (df['REB'] / df['TOTAL_REB_ON_COURT'].replace(0, 1)) * 100
-    df['TOV_PCT'] = df['TOV'] / player_plays.replace(0, 1)
     
     # Ratings
     df['ORTG'] = (df['TEAM_PTS_ON_COURT'] / df['POSS_OFF'].replace(0, 1)) * 100
@@ -231,12 +222,11 @@ def main():
         final_df.to_parquet(out_path, index=False)
         print(f"\n✅ Saved Advanced Profiles to {out_path}")
         
-        # Verify Fix
+        # Verify
         pd.set_option('display.max_columns', None)
         pd.set_option('display.width', 1000)
-        print("\n--- Corrected Usage Rates (Top 5) ---")
-        cols = ['player_name', 'season', 'USG_RATE', 'TS_PCT', 'EFG_PCT', 'FT_RATE', 
-                'AST_PCT', 'TOV_PCT', 'REB_PCT', 'ORTG', 'DRTG', 'NET_RTG']
+        print("\n--- Final Validation (Top 5 Usage) ---")
+        cols = ['player_name', 'season', 'USG_RATE', 'TS_PCT', 'AST_PCT', 'REB_PCT', 'TOV_PCT']
         print(final_df[final_df['POSS_OFF'] > 1000].sort_values('USG_RATE', ascending=False)[cols].head(5))
 
 if __name__ == "__main__":
