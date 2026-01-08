@@ -1,10 +1,11 @@
 """
 src/data_compute/compute_player_profiles.py
 Stream A: Computes "Box Score Plus" and "Four Factors" profiles.
-UPDATED: 
-- Reverted STL/BLK logic to use explicit event types (Player 1).
-- Kept OREB Context Fix.
-- Kept Foul/Turnover Fixes.
+FINAL FIX: 
+- Turnovers: Counts 'TURNOVER' + 'VIOLATION' (if text contains "TURNOVER").
+- Steals/Blocks: Counts explicit 'STEAL' and 'BLOCK' event types (Player 1).
+- Fouls: Excludes 'Technical' and 'Defensive 3'.
+- OREB: Uses Context Shifting (Previous Shot Team).
 """
 
 import pandas as pd
@@ -58,7 +59,7 @@ def compute_numerators_and_plays(season):
     print(f"   Loading PBP Events for {season}...")
     df = pd.read_parquet(path)
     
-    # --- 1. Clean IDs & Context ---
+    # 1. Clean Data & Context
     df['player1_id'] = df['player1_id'].apply(clean_id)
     df['player2_id'] = df['player2_id'].apply(clean_id)
     df['team_id'] = df['team_id'].fillna(0).astype(int)
@@ -66,12 +67,12 @@ def compute_numerators_and_plays(season):
     if 'event_text' not in df.columns: df['event_text'] = ""
     df['event_text'] = df['event_text'].fillna("").str.upper()
     
-    # OREB Context: Forward Fill Shooting Team
+    # OREB Context: Who took the last shot?
     df['is_shot'] = df['event_type'].str.contains('FIELD_GOAL', na=False) | (df['event_type'] == 'FREE_THROW')
     df['shooting_team'] = np.where(df['is_shot'], df['team_id'], np.nan)
     df['prev_shooting_team'] = df['shooting_team'].ffill().shift(1).fillna(0).astype(int)
 
-    # --- 2. Identify Usage Events ---
+    # 2. Team Aggregates (Plays/FGM/RebChances)
     is_fga = df['event_type'].str.contains('FIELD_GOAL', na=False)
     is_fta = df['event_type'] == 'FREE_THROW'
     is_tov = df['event_type'] == 'TURNOVER'
@@ -80,7 +81,6 @@ def compute_numerators_and_plays(season):
     df.loc[is_fga | is_tov, 'play_weight'] = 1.0
     df.loc[is_fta, 'play_weight'] = 0.44
 
-    # --- 3. Team Aggregates ---
     usage_events = df[df['play_weight'] > 0].copy()
     team_plays_list = []
     
@@ -117,28 +117,25 @@ def compute_numerators_and_plays(season):
             total_reb_list.append(counts)
     total_rebs = pd.concat(total_reb_list).groupby(level=0).sum().rename('TOTAL_REB_ON_COURT') if total_reb_list else pd.Series(name='TOTAL_REB_ON_COURT')
 
-    # --- 5. INDIVIDUAL STATS ---
+    # --- 5. INDIVIDUAL STATS (Fixed) ---
     
-    # A. Complex Filters (Fouls)
-    # Exclude Technicals and Defensive 3 Seconds from PF
+    # A. Turnovers (Include Violations labeled as Turnovers)
+    is_tov_explicit = df['event_type'] == 'TURNOVER'
+    is_violation_tov = (df['event_type'] == 'VIOLATION') & (df['event_text'].str.contains("TURNOVER", na=False))
+    
+    tov_count = df[is_tov_explicit | is_violation_tov].groupby('player1_id').size().rename('TOV')
+
+    # B. Steals & Blocks (Explicit Types, Player 1)
+    stl_count = df[df['event_type'] == 'STEAL'].groupby('player1_id').size().rename('STL')
+    blk_count = df[df['event_type'] == 'BLOCK'].groupby('player1_id').size().rename('BLK')
+    
+    # C. Personal Fouls (Exclude Techs)
     fouls = df[df['event_type'] == 'FOUL'].copy()
     is_tech = fouls['event_text'].str.contains("TECHNICAL", na=False)
     is_def3 = fouls['event_text'].str.contains("DEFENSIVE 3", na=False)
-    valid_fouls = fouls[~(is_tech | is_def3)]
-    
-    # B. Aggregation (PTS, STL, BLK, TOV, PF)
-    # STL and BLK are explicit event types in this dataset, attributed to Player 1
-    p1_stats = df.groupby('player1_id').agg(
-        PTS=('points', 'sum'),
-        TOV=('event_type', lambda x: (x == 'TURNOVER').sum()),
-        STL=('event_type', lambda x: (x == 'STEAL').sum()),
-        BLK=('event_type', lambda x: (x == 'BLOCK').sum())
-    )
-    
-    # Merge PF separately since we pre-filtered it
-    pf_count = valid_fouls.groupby('player1_id').size().rename('PF')
-    
-    # C. Shooting
+    pf_count = fouls[~(is_tech | is_def3)].groupby('player1_id').size().rename('PF')
+
+    # D. Shooting
     fgm = made_shots.groupby('player1_id').size().rename('FGM')
     fga = df[is_fga].groupby('player1_id').size().rename('FGA')
     
@@ -149,7 +146,7 @@ def compute_numerators_and_plays(season):
     ftm = df[(is_fta) & (df['is_made'] == True)].groupby('player1_id').size().rename('FTM')
     fta = df[is_fta].groupby('player1_id').size().rename('FTA')
     
-    # D. Rebounding (Context Aware)
+    # E. Rebounding
     player_rebs = df[(df['event_type'] == 'REBOUND') & (df['player1_id'] != "0")].copy()
     is_oreb = player_rebs['team_id'] == player_rebs['prev_shooting_team']
     
@@ -157,13 +154,16 @@ def compute_numerators_and_plays(season):
     drb = player_rebs[~is_oreb].groupby('player1_id').size().rename('DRB')
     total_reb = player_rebs.groupby('player1_id').size().rename('REB')
     
-    # E. Assists (Player 2 on Makes)
+    # F. Assists (Player 2 on Makes)
     asts = made_shots[made_shots['player2_id'] != "0"].groupby('player2_id').size().rename('AST')
+    
+    # G. Points
+    pts = df.groupby('player1_id')['points'].sum().rename('PTS')
     
     # Combine
     nums = pd.concat([
-        p1_stats, pf_count, fgm, fga, fg3m, fg3a, ftm, fta, 
-        orb, drb, total_reb, asts, 
+        pts, fgm, fga, fg3m, fg3a, ftm, fta, 
+        orb, drb, total_reb, asts, stl_count, blk_count, tov_count, pf_count,
         team_plays, team_fgm, total_rebs
     ], axis=1).fillna(0)
     
@@ -235,14 +235,14 @@ def main():
         
         pd.set_option('display.max_columns', None)
         pd.set_option('display.width', 2000)
-        print("\n--- Validation (Top 5 Scorers) ---")
+        print("\n--- Validation (Top 5 Scorers — Full Profile Columns) ---")
         
         preferred = ['player_name', 'season', 'player_id']
         raw_columns = ['PTS', 'TOV', 'STL', 'BLK', 'PF',
                        'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA',
                        'ORB', 'DRB', 'REB', 'AST']
 
-        top5 = final_df.sort_values('PTS', ascending=False).head(5).copy()
+        top5 = final_df.sort_values('PTS', ascending=False).head(10).copy()
         display_cols = [c for c in preferred if c in top5.columns] + [c for c in raw_columns if c in top5.columns]
         fmt_df = top5[display_cols].copy()
 
