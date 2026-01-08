@@ -1,11 +1,9 @@
 """
 src/data_compute/compute_player_profiles.py
 Stream A: Computes "Box Score Plus" and "Four Factors" profiles.
-FINAL FIX: 
-- Turnovers: Counts 'TURNOVER' + 'VIOLATION' (if text contains "TURNOVER").
-- Steals/Blocks: Counts explicit 'STEAL' and 'BLOCK' event types (Player 1).
-- Fouls: Excludes 'Technical' and 'Defensive 3'.
-- OREB: Uses Context Shifting (Previous Shot Team).
+FINAL FIX (v3): 
+- Adds 'GP' (Games Played) count for per-game metrics.
+- Retains all previous fixes (Steals, Turnovers, Fouls, OREB).
 """
 
 import pandas as pd
@@ -25,6 +23,16 @@ def clean_id(val):
     if pd.isna(val) or val == "": return "0"
     return str(int(float(val)))
 
+def time_to_seconds(val):
+    if pd.isna(val) or val == "": return 0.0
+    try:
+        parts = str(val).split(':')
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        return float(val)
+    except:
+        return 0.0
+
 def get_season_from_path(path):
     base = os.path.basename(path)
     return base.replace("possessions_clean_", "").replace("pbp_with_lineups_", "").replace(".parquet", "")
@@ -36,20 +44,35 @@ def compute_denominators(season):
     print(f"   Loading Possessions for {season}...")
     df = pd.read_parquet(path)
     
+    # Calculate Duration
+    df['start_sec'] = df['start_clock'].apply(time_to_seconds)
+    df['end_sec'] = df['end_clock'].apply(time_to_seconds)
+    df['duration'] = (df['start_sec'] - df['end_sec']).clip(lower=0)
+    
+    # Explode Offense -> Count Possessions AND Games Played
     off_exploded = df.explode('off_lineup')
     off_stats = off_exploded.groupby('off_lineup').agg(
+        GP=('game_id', 'nunique'),          # <--- NEW: Count unique games
         POSS_OFF=('game_id', 'count'),
+        SECONDS_OFF=('duration', 'sum'),
         TEAM_PTS_ON_COURT=('points', 'sum')
     ).reset_index().rename(columns={'off_lineup': 'player_id'})
     
+    # Explode Defense
     def_exploded = df.explode('def_lineup')
     def_stats = def_exploded.groupby('def_lineup').agg(
         POSS_DEF=('game_id', 'count'),
+        SECONDS_DEF=('duration', 'sum'),
         TEAM_PTS_ALLOWED=('points', 'sum')
     ).reset_index().rename(columns={'def_lineup': 'player_id'})
     
     denom_df = pd.merge(off_stats, def_stats, on='player_id', how='outer').fillna(0)
     denom_df['player_id'] = denom_df['player_id'].apply(clean_id)
+    
+    # Compute Total Minutes
+    denom_df['MIN'] = (denom_df['SECONDS_OFF'] + denom_df['SECONDS_DEF']) / 60.0
+    denom_df['MPG'] = denom_df['MIN'] / denom_df['GP'].replace(0, 1)
+    
     return denom_df
 
 def compute_numerators_and_plays(season):
@@ -67,12 +90,12 @@ def compute_numerators_and_plays(season):
     if 'event_text' not in df.columns: df['event_text'] = ""
     df['event_text'] = df['event_text'].fillna("").str.upper()
     
-    # OREB Context: Who took the last shot?
+    # OREB Context
     df['is_shot'] = df['event_type'].str.contains('FIELD_GOAL', na=False) | (df['event_type'] == 'FREE_THROW')
     df['shooting_team'] = np.where(df['is_shot'], df['team_id'], np.nan)
     df['prev_shooting_team'] = df['shooting_team'].ffill().shift(1).fillna(0).astype(int)
 
-    # 2. Team Aggregates (Plays/FGM/RebChances)
+    # 2. Team Aggregates
     is_fga = df['event_type'].str.contains('FIELD_GOAL', na=False)
     is_fta = df['event_type'] == 'FREE_THROW'
     is_tov = df['event_type'] == 'TURNOVER'
@@ -117,12 +140,11 @@ def compute_numerators_and_plays(season):
             total_reb_list.append(counts)
     total_rebs = pd.concat(total_reb_list).groupby(level=0).sum().rename('TOTAL_REB_ON_COURT') if total_reb_list else pd.Series(name='TOTAL_REB_ON_COURT')
 
-    # --- 5. INDIVIDUAL STATS (Fixed) ---
+    # --- 5. INDIVIDUAL STATS ---
     
     # A. Turnovers (Include Violations labeled as Turnovers)
     is_tov_explicit = df['event_type'] == 'TURNOVER'
     is_violation_tov = (df['event_type'] == 'VIOLATION') & (df['event_text'].str.contains("TURNOVER", na=False))
-    
     tov_count = df[is_tov_explicit | is_violation_tov].groupby('player1_id').size().rename('TOV')
 
     # B. Steals & Blocks (Explicit Types, Player 1)
@@ -137,14 +159,14 @@ def compute_numerators_and_plays(season):
 
     # D. Shooting
     fgm = made_shots.groupby('player1_id').size().rename('FGM')
-    fga = df[is_fga].groupby('player1_id').size().rename('FGA')
+    fga = df[df['event_type'].str.contains('FIELD_GOAL', na=False)].groupby('player1_id').size().rename('FGA')
     
     is_3pt = df['event_type'] == 'FIELD_GOAL_3PT'
     fg3m = df[is_3pt & (df['is_made'] == True)].groupby('player1_id').size().rename('FG3M')
     fg3a = df[is_3pt].groupby('player1_id').size().rename('FG3A')
     
-    ftm = df[(is_fta) & (df['is_made'] == True)].groupby('player1_id').size().rename('FTM')
-    fta = df[is_fta].groupby('player1_id').size().rename('FTA')
+    ftm = df[(df['event_type'] == 'FREE_THROW') & (df['is_made'] == True)].groupby('player1_id').size().rename('FTM')
+    fta = df[df['event_type'] == 'FREE_THROW'].groupby('player1_id').size().rename('FTA')
     
     # E. Rebounding
     player_rebs = df[(df['event_type'] == 'REBOUND') & (df['player1_id'] != "0")].copy()
@@ -234,25 +256,9 @@ def main():
         print(f"\n✅ Saved Advanced Profiles to {out_path}")
         
         pd.set_option('display.max_columns', None)
-        pd.set_option('display.width', 2000)
-        print("\n--- Validation (Top 5 Scorers — Full Profile Columns) ---")
-        
-        preferred = ['player_name', 'season', 'player_id']
-        raw_columns = ['PTS', 'TOV', 'STL', 'BLK', 'PF',
-                       'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA',
-                       'ORB', 'DRB', 'REB', 'AST']
-
-        top5 = final_df.sort_values('PTS', ascending=False).head(10).copy()
-        display_cols = [c for c in preferred if c in top5.columns] + [c for c in raw_columns if c in top5.columns]
-        fmt_df = top5[display_cols].copy()
-
-        for c in display_cols:
-            if c in raw_columns and c in fmt_df.columns:
-                fmt_df[c] = fmt_df[c].apply(lambda x: "{:,d}".format(int(round(x))) if pd.notna(x) else "")
-            else:
-                fmt_df[c] = fmt_df[c].fillna("")
-
-        print(fmt_df.to_string(index=False))
+        pd.set_option('display.float_format', '{:.1f}'.format)
+        print("\n--- Validation (Top 5 Scorers) ---")
+        print(final_df.sort_values('PTS', ascending=False)[['player_name', 'GP', 'MIN', 'MPG', 'PTS', 'TOV', 'STL']].head(5))
 
 if __name__ == "__main__":
     main()
