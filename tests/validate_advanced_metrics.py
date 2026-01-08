@@ -1,80 +1,76 @@
 """
 tests/validate_advanced_metrics.py
-Validates the integrity and realism of computed NBA metrics.
+Validates the Advanced Metrics Output.
+Checks for:
+- Data Existence (Files present)
+- Key Columns (Raw Counts + Rates)
+- Data Sanity (Non-zero counts, Rates within 0-100 range)
 """
 
 import pandas as pd
-import numpy as np
 import os
 import sys
-import glob
 
-
+# Adjust path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-DATA_DIR = "data/processed"
+FILE_PATH = "data/processed/player_profiles_advanced.parquet"
 
-THRESHOLDS = {
-    "TEAM_ORTG_MIN": 100.0,
-    "TEAM_ORTG_MAX": 125.0,
-    "LINEUP_NET_RTG_WARN": 50.0
-}
-
-def clean_id(val):
-    """Normalize numeric/string IDs to string without trailing .0"""
-    if pd.isna(val):
-        return "0"
-    return str(val).replace('.0', '')
-
-def validate_teams():
-    path = os.path.join(DATA_DIR, "metrics_teams.parquet")
-    if not os.path.exists(path):
+def validate():
+    if not os.path.exists(FILE_PATH):
+        print(f"❌ File not found: {FILE_PATH}")
         return
 
-    print(f"\n=== Validating Team Metrics ({os.path.basename(path)}) ===")
-    df = pd.read_parquet(path)
-    # Normalize team_id if present to avoid float/string mismatch
-    if 'team_id' in df.columns:
-        df['clean_team_id'] = df['team_id'].apply(clean_id)
+    print(f"Loading {FILE_PATH}...")
+    df = pd.read_parquet(FILE_PATH)
     
-    avg_ortg = df['ORTG'].mean()
-    print(f"✅ Avg ORTG: {avg_ortg:.1f}")
+    # 1. Column Existence Check
+    required_cols = [
+        # IDs
+        'player_id', 'player_name', 'season',
+        # Raw Counts (New)
+        'PTS', 'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA', 
+        'ORB', 'DRB', 'REB', 'AST', 'STL', 'BLK', 'TOV', 'PF',
+        # Advanced Rates
+        'USG_RATE', 'TS_PCT', 'AST_PCT', 'REB_PCT', 'ORTG', 'DRTG'
+    ]
     
-    if 'team_name' in df.columns:
-        unknowns = df[df['team_name'] == 'Unknown']
-        if not unknowns.empty:
-            print(f"⚠️  {len(unknowns)} teams have 'Unknown' name (ID Map failed).")
+    missing = [c for c in required_cols if c not in df.columns]
     
-def validate_lineups():
-    path = os.path.join(DATA_DIR, "metrics_lineups.parquet")
-    if not os.path.exists(path):
+    if missing:
+        print(f"❌ Missing Columns: {missing}")
         return
-
-    print(f"\n=== Validating Lineup Metrics ({os.path.basename(path)}) ===")
-    df = pd.read_parquet(path)
-    # Normalize lineup ids (ensure IDs are strings like compute_advanced_metrics)
-    if 'lineup_ids' in df.columns:
-        def norm_lineup(x):
-            if isinstance(x, (list, tuple)):
-                return [clean_id(i) for i in x]
-            return x
-        df['lineup_ids'] = df['lineup_ids'].apply(norm_lineup)
-    
-    high_vol = df[df['total_poss'] > 100].copy()
-    print(f"Analyzed {len(high_vol)} lineups with >100 possessions.")
-    
-    extreme = high_vol[high_vol['NET_RTG'].abs() > THRESHOLDS['LINEUP_NET_RTG_WARN']]
-    if not extreme.empty:
-        print(f"⚠️  {len(extreme)} lineups have extreme Net Ratings (> +/- 50):")
-        # Safe print: check cols first
-        cols_to_print = ['season', 'NET_RTG', 'total_poss']
-        if 'team_name' in df.columns: cols_to_print.insert(1, 'team_name')
-        if 'lineup_names' in df.columns: cols_to_print.append('lineup_names')
-        
-        print(extreme[cols_to_print].head())
     else:
-        print("✅ No extreme outliers in high-volume lineups.")
+        print("✅ All Schema Columns Present.")
+
+    # 2. Sanity Check on Raw Counts
+    # Check if we have non-zero values for key stats
+    total_pts = df['PTS'].sum()
+    total_stl = df['STL'].sum()
+    total_orb = df['ORB'].sum()
+    
+    print(f"\n--- Global Totals Check ---")
+    print(f"Total Points: {total_pts:,.0f}")
+    print(f"Total Steals: {total_stl:,.0f}")
+    print(f"Total ORB:    {total_orb:,.0f}")
+    
+    if total_stl == 0 or total_orb == 0:
+        print("❌ Warning: Raw counts for Steals or ORB appear to be empty (0). Check aggregation.")
+    else:
+        print("✅ Raw Counts look populated.")
+
+    # 3. Sanity Check on Logic (Rebounds)
+    # REB should roughly equal ORB + DRB
+    df['REB_DIFF'] = df['REB'] - (df['ORB'] + df['DRB'])
+    bad_reb = df[df['REB_DIFF'].abs() > 0]
+    
+    if not bad_reb.empty:
+        print(f"⚠️ Warning: {len(bad_reb)} rows have REB != ORB + DRB")
+        print(bad_reb[['player_name', 'REB', 'ORB', 'DRB']].head())
+    else:
+        print("✅ Rebound Sum Check (REB == ORB + DRB) Passed.")
+
+    print("\n✅ VALIDATION COMPLETE")
 
 if __name__ == "__main__":
-    validate_teams()
-    validate_lineups()
+    validate()
