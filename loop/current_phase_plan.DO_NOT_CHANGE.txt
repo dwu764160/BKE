@@ -1,0 +1,29 @@
+DO NOT CHANGE — CURRENT PHASE PLAN (Detailed Tasks)
+
+Purpose:
+- This plain-text companion to `current_phase_plan.docx` contains the active phase's
+  granular tasks and checkboxes for automation-friendly status tracking. It is the
+  single source of truth for task-level automation and model handoffs.
+
+Format rules:
+- Each task line begins with a checkbox: "[ ]" incomplete or "[x]" complete.
+- Tasks may include one-line contexts or a short command in parentheses for reproducibility.
+- Do not change existing task text except for the checkbox marker when marking progress.
+
+Required fields per task (if applicable):
+- Task Title: concise description.
+- Owner: (optional) who is responsible.
+- Command: (optional) exact shell or python command to run.
+- Notes: (optional) short clarifying sentence.
+
+Example:
+[ ] Run unit tests (owner: QA)
+    Command: pytest tests/test_module.py::test_function
+    Notes: Fix failing assertion in `module.py` if present.
+
+When adding new tasks, append them at the end of the file to preserve historical order.
+
+DO NOT CHANGE this file's checkbox format or existing task wording; automation relies on
+these exact tokens to parse and advance workflow.
+
+End of file — DO NOT CHANGE

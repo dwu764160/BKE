@@ -1,0 +1,44 @@
+DO NOT CHANGE — IN-PROGRESS CONTEXT (Machine-Readable Guidance)
+
+Purpose:
+- This file captures the full working context when a model or session encounters difficulty.
+- It is intended to be written to by models that are failing on a task so other models can pick up
+  where they left off. Do not manually edit this file unless you are coordinating the handoff.
+
+Required Sections (use these headings exactly; other tools rely on them):
+1) CONTEXT:
+	- Brief summary of the task, current working directory, and any key files or inputs in use.
+2) FAILURE_REASON:
+	- Short, precise description of why the current attempt failed (errors, unexpected outputs).
+3) ATTEMPTED_METHODS:
+	- List the strategies, commands, and code changes that were tried (bullet list).
+4) SOURCES_READ:
+	- Links, files, docs, and commands consulted during troubleshooting.
+5) NEXT_STEPS (explicit):
+	- One-line actionable items the next agent should attempt, ordered by priority.
+
+Formatting rules for automations:
+- Keep each section label (e.g., CONTEXT:) on its own line, followed by content lines.
+- Use plain text only — avoid embedding binary, images, or complex markup.
+- Keep entries concise; prefer short bullet lists and single-line commands for reproducibility.
+
+Example (template):
+CONTEXT:
+- Task: run `src/data_compute/audit_win_shares.py`
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: data/processed/player_profiles_advanced.parquet
+
+FAILURE_REASON:
+- ValueError: ambiguous DataFrame truth value raised at script exit check.
+
+ATTEMPTED_METHODS:
+- Added explicit None/empty check in `if __name__ == "__main__"` block.
+- Re-ran script under venv; verified output.
+
+SOURCES_READ:
+- Local repo files: src/data_compute/audit_win_shares.py
+
+NEXT_STEPS:
+- If error recurs, inspect `load_data()` return value and file path accessibility.
+
+DO NOT CHANGE this file format or the section headings; other automated agents rely on them.

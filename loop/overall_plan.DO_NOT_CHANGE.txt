@@ -1,0 +1,28 @@
+DO NOT CHANGE — OVERALL PLAN (Phase Boxes)
+
+Purpose:
+- This file mirrors the overall project plan stored in `overall_plan.docx` but in plain text
+  for automated agents and reviewers. It lists major phases as checkable boxes; do not edit
+  the phase descriptions or the checkbox markers unless you are intentionally updating the
+  project's official plan and have coordinated with the team.
+
+Format rules:
+- Each major phase is a single line beginning with a checkbox marker: "[ ]" for incomplete,
+  "[x]" for complete.
+- Keep the phase title concise and the optional short description on the following indented line.
+- When marking a phase as complete, do NOT modify the historical description; only change
+  the checkbox marker.
+
+Example:
+[ ] Phase 1: Data Ingestion
+    - Collect raw sources, standardize formats, store in `data/`.
+[x] Phase 2: Data Processing
+    - Normalize, validate, and compute derived features.
+
+DO NOT CHANGE this file structure or the checkbox markers; downstream scripts and models
+expect this exact format to parse progress programmatically.
+
+If you need to add detail, append a separate bullet under the phase but preserve the
+original phase title and checkbox marker.
+
+End of file — DO NOT CHANGE
