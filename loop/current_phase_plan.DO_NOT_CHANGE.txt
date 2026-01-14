@@ -27,3 +27,24 @@ DO NOT CHANGE this file's checkbox format or existing task wording; automation r
 these exact tokens to parse and advance workflow.
 
 End of file — DO NOT CHANGE
+
+---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
+[x] Stream A: Compute Box Score Profile Stats
+    Command: python src/data_compute/compute_player_profiles.py
+    Notes: Aggregates PBP events (PTS, AST, REB, TOV) correctly. Validated against B-Ref.
+
+[ ] Stream A: Compute Linear Metrics (WS, BPM) - **BLOCKER**
+    Command: python src/data_compute/compute_linear_metrics.py
+    Notes: Debugging Win Shares inflation (~1.6x error). Needs correct League Baseline and Credit Split logic.
+
+[ ] Stream A: Compute RAPM (Regression Metric)
+    Command: python src/data_compute/compute_rapm.py
+    Notes: Requires completed/validated Linear Metrics to serve as Bayesian Priors.
+
+[ ] Stream B: Fetch Tracking & Style Data
+    Command: python src/data_fetch/fetch_tracking_data.py
+    Notes: Fetch Drives, Catch & Shoot, and Iso data from `leaguedashptstats` endpoint.
+
+[ ] Stream C: Archetype Classification & Evaluation
+    Command: src/modeling/evaluate_players.py
+    Notes: Merge Metrics + Tracking to classify players (e.g., "Ball Dominant Creator") and regress vs RAPM.

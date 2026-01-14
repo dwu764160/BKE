@@ -26,3 +26,26 @@ If you need to add detail, append a separate bullet under the phase but preserve
 original phase title and checkbox marker.
 
 End of file — DO NOT CHANGE
+
+
+---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
+[x] Phase 1: Environment & Tooling Setup
+    - Set up Git, virtual env, dependencies (pandas, nba_api, xgboost, streamlit).
+
+[x] Phase 2: Data Acquisition & Storage
+    - Fetch historical PBP, Team Logs, and Player stats; clean and store in Parquet/SQLite.
+
+[ ] Phase 3: EDA & Feature Engineering (Active)
+    - Compute Advanced Metrics (WS, BPM, RAPM), fetch Tracking Data, and build player archetypes.
+
+[ ] Phase 4: Model Development
+    - Build Game Outcome (Logistic/XGBoost) and Player Performance (Regression/RF) models.
+
+[ ] Phase 5: Evaluation & Interpretability
+    - Cross-validation, SHAP analysis, and performance logging.
+
+[ ] Phase 6: Web App Development (Streamlit)
+    - Build Dashboards, Game Predictor UI, and Player Forecaster UI.
+
+[ ] Phase 7: Automation & Deployment
+    - Setup weekly auto-fetch scripts (cron/GitHub Actions) and deploy to cloud.

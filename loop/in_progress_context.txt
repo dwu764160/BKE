@@ -42,3 +42,49 @@ NEXT_STEPS:
 - If error recurs, inspect `load_data()` return value and file path accessibility.
 
 DO NOT CHANGE this file format or the section headings; other automated agents rely on them.
+
+
+---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
+CONTEXT:
+- Task: run `src/data_compute/audit_win_shares.py`
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: data/processed/player_profiles_advanced.parquet
+
+FAILURE_REASON:
+- ValueError: ambiguous DataFrame truth value raised at script exit check.
+ATTEMPTED_METHODS:
+- Added explicit None/empty check in `if __name__ == "__main__"` block.
+- Re-ran script under venv; verified output.
+SOURCES_READ:
+- Local repo files: src/data_compute/audit_win_shares.py
+
+NEXT_STEPS:
+- If error recurs, inspect `load_data()` return value and file path accessibility.
+DO NOT CHANGE this file format or the section headings; other automated agents rely on them.
+
+CONTEXT:
+- Task: Compute Win Shares in `src/data_compute/compute_linear_metrics.py`.
+- Status: Output is mathematically inflated. Jokic WS ~28.7 (Real ~17.0).
+- Root Cause: Baseline Scaling Error.
+
+FAILURE_REASON:
+- The "Points Per Win" constant (~17.0) was too low because `League_PPG` was derived from Player Sums (Games=26k) rather than Team Sums (Games=2.4k).
+- Points Produced (PProd) calculation may double-count creation if not using strict Credit Splitting.
+
+ATTEMPTED_METHODS:
+- Switched `L_PPP` calculation to use `TEAM_PTS_ON_COURT` sums (Method B).
+- Updated `Ind_Poss` to include ORB to penalize efficiency for missed putbacks.
+- Tuned `Ind_DRtg` stop-rate multiplier from 2.5 -> 1.2 to prevent unrealistic defensive ratings (<90).
+
+SOURCES_READ:
+- Basketball-Reference "NBA Win Shares" Methodology (Sections III & IV).
+- Dean Oliver's "Basketball on Paper" Logic:
+    * **Points Produced**: Must split credit. Scorer gets ~75% (unassisted portion), Passer gets ~25% (created portion).
+    * **Marginal Offense**: `PProd - 0.92 * L_PPP * Poss`.
+    * **Marginal Pts Per Win**: `0.32 * League_PPG * (Pace_Adj)`. 
+    * **L_PPG**: Must be normalized to Pace ~100 (approx 115.0 in 2024).
+
+NEXT_STEPS:
+- Hardcode or Robustly Derive `Pts_Per_Win` to be ~37.0 (for 2024). Do not let it float below 30.0.
+- Ensure `League_Games` is calculated as `Total_Player_Games / 5` or derived from Team Logs directly.
+- Verify `PProd` formula follows: `(PTS - FTM)*0.75 + FTM + 0.5*AST*2.3 + ORB*L_PPP`.
