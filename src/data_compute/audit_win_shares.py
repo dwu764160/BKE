@@ -1,8 +1,10 @@
 """
 src/data_compute/audit_win_shares.py
-Deep Debugger for Win Shares.
-1. Calculates Total League WS (Target: ~1230 for 82-game season x 30 teams).
-2. Breaks down Jokic's PProd and DRtg into atomic components.
+Deep Debugger for Win Shares - Validates output from compute_linear_metrics.py
+
+Validates against B-REF targets:
+- Jokić 2023-24: OWS ~12.0, DWS ~5.1, WS ~17.0
+- League Total WS: ~1230 (30 teams * 41 avg wins)
 """
 
 import pandas as pd
@@ -10,110 +12,91 @@ import numpy as np
 import os
 import sys
 
-# Adjust path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 DATA_DIR = "data/processed"
+HISTORICAL_DIR = "data/historical"
 
-def load_data():
-    path = os.path.join(DATA_DIR, "player_profiles_advanced.parquet")
-    if not os.path.exists(path): return None
+
+def load_metrics():
+    """Load the computed metrics from compute_linear_metrics.py output."""
+    path = os.path.join(DATA_DIR, "metrics_linear.parquet")
+    if not os.path.exists(path):
+        return None
     return pd.read_parquet(path)
 
-def audit_win_shares(df):
-    # Filter for 2023-24 only for clean math
-    df = df[df['season'] == '2023-24'].copy()
+
+def load_player_data():
+    """Load full player data for additional context."""
+    path = os.path.join(DATA_DIR, "player_profiles_advanced.parquet")
+    if not os.path.exists(path):
+        return None
+    return pd.read_parquet(path)
+
+
+def audit_win_shares():
+    """
+    Audit Win Shares by loading the output from compute_linear_metrics.py
+    and comparing against B-REF targets.
+    """
+    metrics = load_metrics()
+    if metrics is None:
+        print("ERROR: metrics_linear.parquet not found. Run compute_linear_metrics.py first.")
+        return
     
-    # --- 1. GLOBAL CONSTANTS ---
-    # We calculate these strictly from the data provided to check internal consistency
-    total_pts = df['TEAM_PTS_ON_COURT'].sum() # Sum of 5-man units
-    total_poss = df['POSS_OFF'].sum()         # Sum of 5-man units
-    total_gp = df['GP'].sum()
+    player_data = load_player_data()
     
-    L_PPP = total_pts / total_poss
+    print("\n" + "=" * 60)
+    print("WIN SHARES AUDIT - Validating compute_linear_metrics.py output")
+    print("=" * 60)
     
-    # Estimate League Pace (Poss per Team-Game)
-    # Total Team Games approx = Total Player Games / 5
-    est_team_games = total_gp / 5.0
-    L_PACE = (total_poss / 5.0) / est_team_games
+    for season in sorted(metrics['season'].unique()):
+        season_df = metrics[metrics['season'] == season].copy()
+        
+        print(f"\n--- {season} ---")
+        print(f"Total OWS: {season_df['OWS'].sum():.1f}")
+        print(f"Total DWS: {season_df['DWS'].sum():.1f}")
+        print(f"Total WS:  {season_df['WS'].sum():.1f} (Target: ~1230)")
+        
+        # Jokić validation
+        jokic = season_df[season_df['player_name'].str.contains("Jok", case=False, na=False)]
+        if len(jokic) > 0:
+            j = jokic.iloc[0]
+            
+            # Get B-REF targets based on season
+            if season == '2023-24':
+                target_ows, target_dws, target_ws = 12.0, 5.1, 17.0
+            elif season == '2022-23':
+                target_ows, target_dws, target_ws = 11.2, 3.8, 14.9
+            elif season == '2024-25':
+                target_ows, target_dws, target_ws = 9.9, 3.3, 13.3  # Partial season estimate
+            else:
+                target_ows, target_dws, target_ws = 0, 0, 0
+            
+            print(f"\n  Jokić Validation:")
+            print(f"  {'Metric':<12} {'Calculated':>10} {'B-REF Target':>12} {'Error':>10}")
+            print(f"  {'-'*46}")
+            print(f"  {'OWS':<12} {j['OWS']:>10.2f} {target_ows:>12.1f} {j['OWS']-target_ows:>+10.2f}")
+            print(f"  {'DWS':<12} {j['DWS']:>10.2f} {target_dws:>12.1f} {j['DWS']-target_dws:>+10.2f}")
+            print(f"  {'WS':<12} {j['WS']:>10.2f} {target_ws:>12.1f} {j['WS']-target_ws:>+10.2f}")
+            
+            if 'PProd' in j.index and 'TotPoss' in j.index:
+                print(f"\n  Additional metrics:")
+                print(f"  PProd: {j['PProd']:.1f}")
+                print(f"  TotPoss: {j['TotPoss']:.1f}")
+                if 'qAST' in j.index:
+                    print(f"  qAST: {j['qAST']:.3f}")
     
-    # Marginal Points Per Win
-    # Formula: 0.32 * L_PPG
-    L_PPG = L_PPP * L_PACE
-    PTS_PER_WIN = 0.32 * L_PPG
+    # Top 10 overall for latest season
+    latest = metrics['season'].max()
+    latest_df = metrics[metrics['season'] == latest].nlargest(10, 'WS')
     
-    print("\n--- GLOBAL CONSTANTS AUDIT ---")
-    print(f"Total Player Games: {total_gp}")
-    print(f"Est Team Games:     {est_team_games:.1f} (Target: 1230)")
-    print(f"League PPP:         {L_PPP:.4f}")
-    print(f"League Pace:        {L_PACE:.2f}")
-    print(f"League PPG:         {L_PPG:.2f}")
-    print(f"Pts Per Win:        {PTS_PER_WIN:.2f} (Target: ~34-37)")
-    
-    # --- 2. OFFENSIVE COMPONENT ---
-    # Recalculate Ind_Poss
-    df['Ind_Poss'] = df['FGA'] + 0.44 * df['FTA'] + df['TOV']
-    
-    # Recalculate PProd (B-Ref Logic)
-    # Scorer Credit: PTS * (1 - 0.5 * qAST) + FTM (unassisted) -> Simplified to 0.75 FG factor
-    scorer_pts = (df['PTS'] - df['FTM']) * 0.75 + df['FTM']
-    passer_pts = df['AST'] * 2.3 * 0.5
-    orb_pts = df['ORB'] * L_PPP
-    
-    df['PProd'] = scorer_pts + passer_pts + orb_pts
-    
-    # Marginal Offense
-    expected_off = 0.92 * L_PPP * df['Ind_Poss']
-    df['Marginal_Off'] = df['PProd'] - expected_off
-    df['OWS'] = df['Marginal_Off'] / PTS_PER_WIN
-    
-    # --- 3. DEFENSIVE COMPONENT ---
-    # Stops
-    df['Stops'] = df['STL'] + df['BLK'] + 0.6 * df['DRB']
-    df['Stop_Rate'] = df['Stops'] / df['POSS_DEF'] * 100
-    avg_stop_rate = df['Stop_Rate'].mean()
-    
-    # Ind DRTG
-    # 2.0 multiplier for Stop Rate diff
-    df['Ind_DRtg'] = df['DRTG'] - (df['Stop_Rate'] - avg_stop_rate) * 2.0
-    
-    # Marginal Defense
-    baseline_drtg = 1.08 * L_PPP * 100
-    ind_def_poss = df['POSS_DEF'] / 5.0
-    
-    df['Marginal_Def'] = (ind_def_poss / 100) * (baseline_drtg - df['Ind_DRtg'])
-    df['DWS'] = df['Marginal_Def'] / PTS_PER_WIN
-    
-    df['WS'] = df['OWS'] + df['DWS']
-    
-    # --- 4. AUDIT RESULTS ---
-    print("\n--- WIN SHARES SUM CHECK ---")
-    print(f"Total OWS Sum: {df['OWS'].sum():.1f}")
-    print(f"Total DWS Sum: {df['DWS'].sum():.1f}")
-    print(f"Total WS Sum:  {df['WS'].sum():.1f}")
-    print(f"Target WS:     {est_team_games:.1f}")
-    print(f"Inflation Factor: {df['WS'].sum() / est_team_games:.2f}x")
-    
-    # --- 5. JOKIC BREAKDOWN ---
-    try:
-        jokic = df[df['player_name'].str.contains("Jok")].iloc[0]
-        print("\n--- JOKIC BREAKDOWN ---")
-        print(f"PTS: {jokic['PTS']} | Scorer Credit: {scorer_pts[jokic.name]:.1f}")
-        print(f"AST: {jokic['AST']} | Passer Credit: {passer_pts[jokic.name]:.1f}")
-        print(f"ORB: {jokic['ORB']} | ORB Credit:    {orb_pts[jokic.name]:.1f}")
-        print(f"TOTAL PProd: {jokic['PProd']:.1f}")
-        print(f"Expected Prod: {expected_off[jokic.name]:.1f}")
-        print(f"Marginal Off: {jokic['Marginal_Off']:.1f} -> OWS: {jokic['OWS']:.2f}")
-        print("-" * 20)
-        print(f"Team DRTG: {jokic['DRTG']:.1f}")
-        print(f"Stop Rate: {jokic['Stop_Rate']:.2f}% (Avg: {avg_stop_rate:.2f}%)")
-        print(f"Ind DRTG: {jokic['Ind_DRtg']:.1f} (Baseline: {baseline_drtg:.1f})")
-        print(f"Marginal Def: {jokic['Marginal_Def']:.1f} -> DWS: {jokic['DWS']:.2f}")
-    except: pass
+    print(f"\n{'='*60}")
+    print(f"TOP 10 BY WIN SHARES ({latest})")
+    print(f"{'='*60}")
+    cols = ['player_name', 'GP', 'WS', 'OWS', 'DWS']
+    print(latest_df[cols].to_string(index=False))
+
 
 if __name__ == "__main__":
-    df = load_data()
-    if df is None or (hasattr(df, 'empty') and df.empty):
-        print("No data loaded or DataFrame is empty.")
-    else:
-        audit_win_shares(df)
+    audit_win_shares()
