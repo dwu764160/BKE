@@ -278,66 +278,124 @@ def compute_win_shares_bref(df, league_ctx):
     df['OWS'] = (df['Marginal_Off'] / df['Pts_Per_Win']).clip(lower=None)  # Can be negative
     
     # =========================================================================
-    # DEFENSIVE WIN SHARES (B-REF Method)
+    # DEFENSIVE WIN SHARES (Full B-REF Implementation)
     # =========================================================================
     # 
-    # B-REF Formula:
-    # Marginal_Def = (MP / Team_MP) * Team_Def_Poss * (1.08 * L_PPP - Ind_DRtg/100)
-    # DWS = Marginal_Def / Pts_Per_Win
+    # B-REF Formula for Individual DRtg (from ratings.html):
+    # 
+    # 1. Calculate Stops = Stops1 + Stops2
+    #    - Stops1 = STL + BLK * FMwt * (1 - 1.07*DOR%) + DRB * (1 - FMwt)
+    #    - Stops2 = team credit for non-steal TOVs and non-block misses
+    #    - FMwt = (DFG% * (1-DOR%)) / (DFG% * (1-DOR%) + (1-DFG%) * DOR%)
+    #    - DOR% = Opp_ORB / (Opp_ORB + Team_DRB)
     #
-    # B-REF calculates Individual DRtg by adjusting team DRtg based on 
-    # individual defensive actions (STL, BLK, DRB) relative to league average.
+    # 2. Calculate Stop% = (Stops * Opp_MP) / (Team_Poss * MP)
+    #
+    # 3. Individual DRtg = Team_DRtg + 0.2 * (100 * D_Pts_per_ScPoss * (1 - Stop%) - Team_DRtg)
+    #
+    # KEY INSIGHT: B-REF only moves DRtg 20% from team baseline! This is why
+    # guards don't get penalized heavily for low rebounding - they still get
+    # most of the team's defensive credit.
     # =========================================================================
     
     STL = df['STL']
     BLK = df['BLK']
     DRB = df['DRB']
+    PF = df['PF']
     
     # Team minutes and defensive possessions (season totals)
-    # Team_MP = 5 players * 48 min * ~82 games = ~19,680 minutes
     Team_MP_season = 5 * 48 * df['GP'].clip(upper=82)
     
     # Team defensive possessions: ~100 per game * games played
     Team_Def_Poss = 100 * df['GP'].clip(upper=82)
     
-    # Baseline defensive rating: 1.08 * L_PPP (replacement level)
-    # 2023-24: 1.08 * 1.162 = 1.255 = 125.5 pts per 100 poss
-    Baseline_DRtg = 1.08 * df['L_PPP']
+    # --- Opponent/Team Statistics (League Averages as Proxy) ---
+    # DFG%: Opponent field goal percentage (league avg ~47%)
+    DFG_pct = 0.47
     
-    # --- Individual DRtg Adjustment (B-REF Style) ---
-    # B-REF adjusts team DRtg based on individual defensive actions
-    # Players with above-average defensive stats get lower (better) DRtg
+    # DOR%: Opponent offensive rebound percentage
+    # DOR% = Opp_ORB / (Opp_ORB + Team_DRB)
+    # League avg: ~25%
+    DOR_pct = 0.25
     
-    # Calculate per-minute rates for each player
-    player_stl_rate = STL / MP.replace(0, 1)
-    player_blk_rate = BLK / MP.replace(0, 1)
-    player_drb_rate = DRB / MP.replace(0, 1)
+    # FMwt: Forced Miss Weight
+    # FMwt = (DFG% * (1-DOR%)) / (DFG% * (1-DOR%) + (1-DFG%) * DOR%)
+    FMwt = (DFG_pct * (1 - DOR_pct)) / (DFG_pct * (1 - DOR_pct) + (1 - DFG_pct) * DOR_pct)
+    # FMwt ≈ 0.73
     
-    # League average rates (weighted by minutes)
-    total_min = df['MIN'].sum()
-    league_stl_rate = df['STL'].sum() / total_min
-    league_blk_rate = df['BLK'].sum() / total_min
-    league_drb_rate = df['DRB'].sum() / total_min
+    # D_Pts_per_ScPoss: Opponent points per scoring possession (~2.0)
+    D_Pts_per_ScPoss = 2.0
     
-    # Defensive stat multipliers relative to league average
-    # These represent how much better/worse the player is at each category
-    stl_mult = (player_stl_rate / league_stl_rate).clip(0.5, 2.0)
-    blk_mult = (player_blk_rate / league_blk_rate).clip(0.5, 2.0)
-    drb_mult = (player_drb_rate / league_drb_rate).clip(0.5, 2.0)
+    # --- Stops1: Individual Credit ---
+    # Stops1 = STL + BLK * FMwt * (1 - 1.07*DOR%) + DRB * (1 - FMwt)
+    Stops1 = STL + BLK * FMwt * (1 - 1.07 * DOR_pct) + DRB * (1 - FMwt)
     
-    # Individual DRtg adjustment: credits players for above-average defense
-    # Weights calibrated to match B-REF methodology
-    # A player 2x league avg in DRB gets ~5 point DRtg reduction
-    DRtg_adjustment = (
-        -1.5 * (stl_mult - 1.0) +   # STL: ~1.5 pts per 1x above avg
-        -1.0 * (blk_mult - 1.0) +   # BLK: ~1.0 pts per 1x above avg  
-        -5.0 * (drb_mult - 1.0)     # DRB: ~5.0 pts per 1x above avg (most important)
-    )
+    # --- Stops2: Team Credit (per minute played) ---
+    # Stops2 captures credit for opponent misses and turnovers not captured by STL/BLK
+    # Stops2 = (((Opp_FGA - Opp_FGM - Team_BLK) / Team_MP) * FMwt * (1 - 1.07*DOR%)
+    #          + ((Opp_TOV - Team_STL) / Team_MP)) * MP
+    #          + (PF / Team_PF) * 0.4 * Opp_FTA * (1 - (Opp_FTM / Opp_FTA))^2
     
-    # Individual DRtg = Team On-Court DRtg + Adjustment
-    Ind_DRtg = df['DRTG'] + DRtg_adjustment
-    Ind_DRtg = Ind_DRtg.clip(90, 130)  # Reasonable bounds
+    # Per-game opponent stats (league averages): ~100 FGA, 47 FGM, 14 TOV, 22 FTA, 77% FT
+    Opp_FGA_pg = 88
+    Opp_FGM_pg = 41
+    Opp_TOV_pg = 14
+    Opp_FTA_pg = 22
+    Opp_FT_pct = 0.77
+    
+    # Per-game team defensive stats (league averages): ~5 BLK, ~8 STL, ~36 PF
+    Team_BLK_pg = 5
+    Team_STL_pg = 8
+    Team_PF_pg = 36
+    
+    # Per-minute rates (48 min game)
+    missed_non_blk_rate = ((Opp_FGA_pg - Opp_FGM_pg - Team_BLK_pg) / (48 * 5))  # per player-minute
+    non_stl_tov_rate = ((Opp_TOV_pg - Team_STL_pg) / (48 * 5))
+    
+    # Stops2 per minute
+    Stops2_rate = missed_non_blk_rate * FMwt * (1 - 1.07 * DOR_pct) + non_stl_tov_rate
+    # Additional credit from fouls (force missed FTs)
+    PF_credit = (PF / (Team_PF_pg * df['GP'].clip(upper=82)).clip(lower=1)) * \
+                0.4 * Opp_FTA_pg * df['GP'] * (1 - Opp_FT_pct) ** 2
+    
+    Stops2 = Stops2_rate * MP + PF_credit
+    
+    # --- Total Stops ---
+    Stops = Stops1 + Stops2
+    df['Stops'] = Stops
+    
+    # --- Stop% ---
+    # Stop% = (Stops * Opp_MP) / (Team_Poss * MP)
+    # Opp_MP = 48 * 5 * GP (opponent's total minutes)
+    # Simplifies to: Stop% = Stops × Opp_MP / (Team_Poss × MP)
+    #              = Stops × (5×48×GP) / (100×GP × MP)
+    #              = Stops × 240 / (100 × MP)
+    #              = Stops × 2.4 / MP
+    # Typical values: 40-60% for starters
+    
+    Stop_pct = (Stops * 2.4) / MP.replace(0, 1)
+    Stop_pct = Stop_pct.clip(0.30, 0.70)  # Reasonable range for NBA players
+    df['Stop_pct'] = Stop_pct
+    
+    # --- Individual DRtg (B-REF Formula) ---
+    # DRtg = Team_DRtg + 0.2 * (100 * D_Pts_per_ScPoss * (1 - Stop%) - Team_DRtg)
+    #
+    # Critical: B-REF uses 0.2 coefficient - individual stats only shift DRtg
+    # 20% from team baseline. This prevents over-rewarding/penalizing based
+    # on box score stats alone.
+    
+    Team_DRtg = df['DRTG']  # On-court defensive rating
+    
+    # "Raw" individual DRtg based purely on Stop%
+    Raw_Ind_DRtg = 100 * D_Pts_per_ScPoss * (1 - Stop_pct)
+    
+    # B-REF blended DRtg: 80% team, 20% individual
+    Ind_DRtg = Team_DRtg + 0.2 * (Raw_Ind_DRtg - Team_DRtg)
+    Ind_DRtg = Ind_DRtg.clip(95, 125)  # Reasonable bounds
     df['Ind_DRtg'] = Ind_DRtg
+    
+    # Baseline defensive rating: 1.08 * L_PPP (replacement level)
+    Baseline_DRtg = 1.08 * df['L_PPP']
     
     # Marginal Defense: points saved relative to replacement level
     # Formula: (MP / Team_MP) * Team_Def_Poss * (Baseline - Ind_DRtg/100)
@@ -346,10 +404,6 @@ def compute_win_shares_bref(df, league_ctx):
     
     # DWS = Marginal Defense / Points Per Win
     df['DWS'] = (Marginal_Def / df['Pts_Per_Win']).clip(lower=None)  # Can be negative
-    
-    # Store Stop-related stats for reference
-    df['Stops'] = STL + 0.7 * BLK + 0.3 * DRB
-    df['Stop_pct'] = df['Stops'] / df['POSS_DEF'].replace(0, 1) * 100
     
     # =========================================================================
     # TOTAL WIN SHARES

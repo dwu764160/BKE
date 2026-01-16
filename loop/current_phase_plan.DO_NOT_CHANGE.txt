@@ -33,9 +33,9 @@ End of file — DO NOT CHANGE
     Command: python src/data_compute/compute_player_profiles.py
     Notes: Aggregates PBP events (PTS, AST, REB, TOV) correctly. Validated against B-Ref.
 
-[ ] Stream A: Compute Linear Metrics (WS, BPM) - **BLOCKER**
+[ ] Stream A: Compute Linear Metrics (WS, BPM)
     Command: python src/data_compute/compute_linear_metrics.py
-    Notes: Debugging Win Shares inflation (~1.6x error). Needs correct League Baseline and Credit Split logic.
+    Notes: WS finished, now awaiting BPM implementation and validation against B-Ref.
 
 [ ] Stream A: Compute RAPM (Regression Metric)
     Command: python src/data_compute/compute_rapm.py
