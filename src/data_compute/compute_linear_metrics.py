@@ -782,6 +782,27 @@ def compute_bpm_bref(df):
     df['BPM'] = df['BPM'].clip(-10, 15)
     
     # =========================================================================
+    # STEP 7b: Minutes-Based BPM Regression
+    # =========================================================================
+    # B-REF applies regression-to-mean for low-minute players, pulling them
+    # toward replacement level. Players with fewer minutes have noisier stats
+    # and tend to be overrated by box-score metrics.
+    #
+    # Formula: Subtract a penalty proportional to minutes deficit
+    # - At 0 minutes: subtract full penalty (1.0 BPM)
+    # - At threshold (2000 min): subtract nothing
+    # - Linear interpolation in between
+    
+    MIN_REGRESSION_THRESHOLD = 2000  # Minutes at which regression stops
+    MIN_REGRESSION_STRENGTH = 1.0    # Maximum penalty at 0 minutes
+    
+    # Calculate penalty factor: 0 at threshold, 1 at 0 minutes
+    penalty_factor = np.clip(1.0 - (df['MIN'] / MIN_REGRESSION_THRESHOLD), 0, 1)
+    
+    # Apply penalty
+    df['BPM'] = df['BPM'] - MIN_REGRESSION_STRENGTH * penalty_factor
+    
+    # =========================================================================
     # STEP 8: VORP (Value Over Replacement Player)
     # =========================================================================
     # VORP = [BPM - (-2.0)] * (% of minutes played) * (games/82)

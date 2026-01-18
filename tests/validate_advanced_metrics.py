@@ -3,9 +3,11 @@ tests/validate_advanced_metrics.py
 Validates BPM, VORP, and Win Shares against confirmed Basketball-Reference data.
 
 Reference players chosen to represent diverse player types:
-- Superstars: Giannis Antetokounmpo, Nikola Jokić
-- Role players: Tobias Harris, Daniel Gafford
-- Young players: Brandin Podziemski
+- Superstars: Giannis Antetokounmpo, Nikola Jokić, Jimmy Butler
+- All-Stars: Trae Young, Julius Randle
+- Veteran role players: Tobias Harris, Chris Paul, Eric Gordon, Aaron Gordon
+- Young players: Daniel Gafford, Brandin Podziemski, Jonathan Kuminga, Mark Williams
+- Shooters: Michael Porter Jr., Corey Kispert
 """
 
 import pandas as pd
@@ -25,11 +27,24 @@ TRUTH_DATA = {
         "Nikola Jokić":          [14.9, 11.2, 3.8, 13.0, 10.6],
         "Tobias Harris":         [5.9, 2.8, 3.1, 0.7, 1.7],
         "Daniel Gafford":        [6.0, 4.2, 1.9, 1.6, 1.3],
-        # New validation players
+        # Existing validation players
         "Jonathan Kuminga":      [1.4, 1.0, 0.5, -1.7, 0.1],
         "Trae Young":            [6.7, 5.3, 1.4, 3.3, 3.4],
         "Michael Porter Jr.":    [4.3, 2.6, 1.8, 0.2, 1.0],
         "Julius Randle":         [8.1, 5.0, 3.1, 3.9, 3.9],
+        # Batch 2 validation players
+        "Corey Kispert":         [3.8, 2.9, 0.9, -1.5, 0.2],
+        "Mark Williams":         [2.8, 1.5, 1.3, 0.1, 0.4],
+        "Chris Paul":            [6.2, 3.7, 2.5, 3.2, 3.2],
+        "Jimmy Butler":          [12.3, 9.4, 2.9, 8.7, 5.8],
+        "Aaron Gordon":          [6.8, 4.6, 2.2, 2.1, 2.1],
+        # Batch 3 validation players (includes low-minute players)
+        "Stephen Curry":         [7.8, 5.8, 2.0, 7.5, 4.7],
+        "Alperen Sengun":        [5.2, 3.4, 1.8, 1.4, 1.9],
+        "Jordan Clarkson":       [1.7, 0.9, 0.8, -1.4, 0.5],
+        "Dominick Barlow":       [0.7, 0.2, 0.5, -4.6, -0.3],  # 408 min
+        "Aaron Holiday":         [0.9, 0.6, 0.6, -2.0, 0.0],
+        "Moussa Diabaté":        [0.4, 0.2, 0.2, -2.8, 0.0],   # 195 min
     },
     "2023-24": {
         "Giannis Antetokounmpo": [13.2, 9.5, 3.7, 9.0, 7.2],
@@ -37,12 +52,25 @@ TRUTH_DATA = {
         "Brandin Podziemski":    [4.1, 2.1, 2.0, -0.1, 0.9],
         "Tobias Harris":         [5.9, 3.2, 2.7, 0.9, 1.2],
         "Daniel Gafford":        [7.8, 5.2, 2.5, 2.6, 2.1],
-        # New validation players
+        # Existing validation players
         "Jonathan Kuminga":      [2.7, 1.9, 0.8, -0.4, 0.8],
         "Trae Young":            [4.6, 4.0, 0.6, 2.6, 2.2],
         "Eric Gordon":           [2.5, 1.5, 1.0, -1.7, 0.1],
         "Michael Porter Jr.":    [6.2, 3.1, 3.1, 0.1, 1.3],
         "Julius Randle":         [3.8, 1.9, 1.9, 1.9, 1.6],
+        # Batch 2 validation players
+        "Corey Kispert":         [2.1, 1.7, 0.4, -2.1, -0.1],
+        "Mark Williams":         [2.1, 1.6, 0.5, 0.8, 0.3],
+        "Chris Paul":            [4.3, 2.6, 1.7, 1.0, 1.2],
+        "Jimmy Butler":          [9.1, 6.4, 2.7, 4.6, 3.4],
+        "Aaron Gordon":          [7.1, 4.5, 2.6, 1.3, 1.3],
+        # Batch 3 validation players (includes low-minute players)
+        "Stephen Curry":         [7.2, 5.2, 2.0, 7.2, 4.4],
+        "Alperen Sengun":        [6.9, 3.8, 3.1, 4.9, 3.5],
+        "Jordan Clarkson":       [0.2, 0.1, 0.1, -4.5, -1.1],
+        "Dominick Barlow":       [1.1, 0.4, 0.7, -1.7, 0.0],   # 420 min
+        "Gui Santos":            [0.7, 0.2, 0.5, -0.5, 0.1],   # 192 min
+        "Aaron Holiday":         [2.5, 1.2, 1.3, -1.5, 0.2],
     },
     "2024-25": {
         "Giannis Antetokounmpo": [11.5, 7.8, 3.7, 9.5, 6.6],
@@ -50,12 +78,26 @@ TRUTH_DATA = {
         "Brandin Podziemski":    [4.2, 1.9, 2.3, 0.7, 1.2],
         "Tobias Harris":         [5.2, 2.9, 2.3, 0.1, 1.2],
         "Daniel Gafford":        [5.9, 4.4, 1.5, 3.8, 1.8],
-        # New validation players
+        # Existing validation players
         "Jonathan Kuminga":      [1.9, 1.5, 0.5, -0.6, 0.4],
         "Trae Young":            [5.7, 4.4, 1.3, 0.5, 1.7],
         "Eric Gordon":           [0.9, 0.7, 0.2, -1.6, 0.1],
         "Michael Porter Jr.":    [6.4, 4.6, 1.8, -0.1, 1.2],
         "Julius Randle":         [6.2, 3.6, 2.6, 1.3, 1.8],
+        # Batch 2 validation players
+        "Corey Kispert":         [1.1, 1.0, 0.1, -3.7, -0.7],
+        "Mark Williams":         [4.7, 3.1, 1.6, 3.5, 1.6],
+        "Chris Paul":            [5.7, 4.2, 1.6, 0.8, 1.6],
+        "Jimmy Butler":          [8.7, 6.6, 2.0, 4.9, 3.4],
+        "Aaron Gordon":          [4.3, 3.6, 0.7, 1.2, 1.2],
+        # Batch 3 validation players (includes low-minute players)
+        "Stephen Curry":         [7.9, 5.2, 2.7, 7.9, 4.8],
+        "Alperen Sengun":        [8.3, 4.2, 4.1, 4.4, 3.9],
+        "Jordan Clarkson":       [0.4, 0.2, 0.2, -1.5, 0.0],
+        "Dominick Barlow":       [1.0, 0.3, 0.7, -2.2, 0.0],   # 375 min
+        "Gui Santos":            [1.7, 0.9, 0.8, -1.7, 0.0],   # 762 min
+        "Aaron Holiday":         [2.0, 0.8, 1.2, -0.2, 0.3],
+        "Moussa Diabaté":        [3.2, 1.5, 1.8, -1.9, 0.6],   # 1241 min
     }
 }
 
