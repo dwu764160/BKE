@@ -1,0 +1,252 @@
+================================================================================
+BPM (BOX PLUS/MINUS) FORMULA DOCUMENTATION & TRENDS
+================================================================================
+Last Updated: January 2026
+Validation Set: 56 player-seasons across 23 players
+Current BPM MAE: 0.61 (Target: < 1.0)
+
+================================================================================
+SECTION 1: BPM FORMULA OVERVIEW
+================================================================================
+
+BPM 2.0 is a box-score estimate of player contribution per 100 possessions.
+0.0 = league average, +10 = superstar, -5 = below replacement
+
+Formula Flow:
+1. Calculate percentage stats (%TRB, %STL, %AST, %BLK, %PF)
+2. Derive Position (1-5) from percentage stats
+3. Derive Offensive Role (1-5) from AST% and efficiency
+4. Calculate per-100 stats (PTS, AST, TRB, STL, BLK, TOV, FGA, FTA, PF)
+5. Apply position-adjusted coefficients to per-100 stats
+6. Add position constant and role constant
+7. Add regression intercept and center at league level
+8. Apply custom adjustments (AST bonus, NET_RTG, minutes regression)
+9. Compress and offset final result
+
+================================================================================
+SECTION 2: INPUT STATS & COEFFICIENTS
+================================================================================
+
+STEP 1: PERCENTAGE CALCULATIONS
+--------------------------------
+%TRB = (TRB/MIN) / (LEAGUE_TRB/LEAGUE_MIN) * 0.20   [Clamp: 0.05-0.40]
+%STL = (STL/MIN) / (LEAGUE_STL/LEAGUE_MIN) * 0.20   [Clamp: 0.02-0.35]
+%AST = (AST/MIN) / (LEAGUE_AST/LEAGUE_MIN) * 0.20   [Clamp: 0.02-0.50]
+%BLK = (BLK/MIN) / (LEAGUE_BLK/LEAGUE_MIN) * 0.20   [Clamp: 0.00-0.50]
+%PF  = (PF/MIN)  / (LEAGUE_PF/LEAGUE_MIN)  * 0.20   [Clamp: 0.05-0.30]
+
+STEP 2: POSITION REGRESSION
+---------------------------
+Position = 2.130 + 8.668*%TRB - 2.486*%STL + 0.992*%PF - 3.536*%AST + 1.667*%BLK
+[Clamp: 1.0 (PG) to 5.0 (C)]
+
+STEP 3: OFFENSIVE ROLE REGRESSION
+---------------------------------
+Role = 6.00 - 6.642*%AST - 8.544*ThresholdPts
+ThresholdPts = %PTS * (1 + (TS% - 0.54) * 2)
+[Clamp: 1.0 to 5.0]
+
+STEP 4: PER-100 STATS
+---------------------
+All box score stats converted to per-100 possessions:
+- pts_per100, fga_per100, fta_per100, fg3m_per100
+- ast_per100, tov_per100, orb_per100, drb_per100
+- stl_per100, blk_per100, pf_per100
+
+STEP 5: POSITION-ADJUSTED COEFFICIENTS
+--------------------------------------
+Variable          | Coef @ Pos 1 (PG) | Coef @ Pos 5 (C) | Notes
+------------------|-------------------|------------------|------------------
+PTS (adjusted)    | 0.860             | 0.860            | Fixed across positions
+3PM               | 0.389             | 0.389            | Fixed across positions
+AST               | 0.580             | 1.034            | Bigs get more credit
+TOV               | -0.964            | -0.964           | Fixed (always bad)
+ORB               | 0.613             | 0.181            | Guards get more credit
+DRB               | 0.116             | 0.181            | Slight variation
+STL               | 1.369             | 1.008            | Guards get more credit
+BLK               | 1.327             | 0.703            | Guards get more credit
+PF                | -0.367            | -0.367           | Fixed (always bad)
+
+Role-Adjusted Coefficients:
+Variable | Coef @ Role 1 | Coef @ Role 5 | Notes
+---------|---------------|---------------|------------------
+FGA      | -0.560        | -0.780        | Receivers penalized more
+FTA      | -0.246        | -0.343        | Receivers penalized more
+
+Linear interpolation: coef = coef_1 + (coef_5 - coef_1) * (pos - 1) / 4
+
+STEP 6: CONSTANTS
+-----------------
+Position Constant: 
+  - 0 for Position >= 3.0
+  - Linear from 0 to -0.818 as Position goes from 3.0 to 1.0
+  - Guards are penalized because box score overvalues them
+
+Role Constant:
+  - Linear from -2.774 (creator, role=1) to +2.774 (receiver, role=5)
+  - Adjusts for low-usage players being undervalued by box score
+
+STEP 7: CENTERING
+-----------------
+1. Add REGRESSION_INTERCEPT = -8.0
+2. Center each season to mean = 0 (weighted by possessions)
+
+================================================================================
+SECTION 3: CUSTOM ADJUSTMENTS (OUR IMPLEMENTATION)
+================================================================================
+
+A) AST-BASED BIG BONUS
+----------------------
+Triggers when: Position > 3.0 AND AST/MIN > 0.20
+Formula: 14.0 * (Position - 3.0) * (AST/MIN - 0.10)
+Purpose: Jokić-style playmaking bigs are undervalued by standard formula
+
+B) NET_RTG ADJUSTMENT
+---------------------
+Formula: 0.11 * NET_RTG (player's on-court plus/minus)
+Purpose: Incorporates team context - players on good teams are slightly boosted
+
+C) COMPRESSION & OFFSET
+-----------------------
+Final BPM = (adjusted_bpm * 0.89) + 0.60
+Purpose: Scale results to match B-REF distribution
+
+D) MINUTES REGRESSION (STEP 7b)
+-------------------------------
+Threshold: 2000 minutes
+Strength: 1.0 BPM
+Formula: BPM = BPM - 1.0 * max(0, 1 - MIN/2000)
+Purpose: Low-minute players regress toward replacement level
+
+================================================================================
+SECTION 4: VORP CALCULATION
+================================================================================
+
+VORP = (BPM - (-2.0)) * (MIN / (GP * 48)) * (GP / 82)
+
+Where:
+- -2.0 = replacement level BPM
+- MIN / (GP * 48) = percentage of team minutes played
+- GP / 82 = games adjustment
+
+================================================================================
+SECTION 5: VALIDATION RESULTS - SYSTEMIC TRENDS
+================================================================================
+
+ERROR BY POSITION CATEGORY
+--------------------------
+Position      | Count | Mean Error | MAE  | Std Dev | Trend
+--------------|-------|------------|------|---------|---------------------------
+PG (1-2)      |   7   |   +0.31    | 0.61 |  0.92   | Slight overestimate
+SG/SF (2-3)   |  14   |   +0.30    | 0.96 |  1.18   | ⚠️ OVERESTIMATE + HIGH VAR
+SF/PF (3-4)   |  19   |   -0.13    | 0.46 |  0.63   | ✅ Best category
+PF/C (4-5)    |  19   |   +0.05    | 0.60 |  0.83   | Near-zero bias
+
+SYSTEMIC ISSUE: SG/SF (Position 2-3) has BOTH highest bias (+0.30) AND highest
+variance (1.18). This is the biggest source of error in the validation set.
+
+ERROR BY MINUTES BUCKET
+-----------------------
+Minutes    | Count | Mean Error | MAE  | Trend
+-----------|-------|------------|------|---------------------------
+<500       |   5   |   +0.43    | 0.56 | Slight overestimate (expected)
+500-1000   |   7   |   +0.16    | 0.67 | Acceptable
+1000-1500  |   7   |   +0.24    | 0.93 | Moderate overestimate
+1500-2000  |  15   |   +0.29    | 0.68 | Moderate overestimate
+2000+      |  25   |   -0.18    | 0.54 | ✅ Slight underestimate (best)
+
+Minutes regression is working - high-minute players are no longer overestimated.
+However, there's still a positive bias in the 1000-2000 minute range.
+
+================================================================================
+SECTION 6: WORST INDIVIDUAL ERRORS (abs > 1.0)
+================================================================================
+
+Player                Season   Pos  MIN   Computed  B-REF  Error  Issue
+---------------------|--------|-----|------|---------|------|------|------------
+Jordan Clarkson      |2023-24 | 2.0 | 1674 |  -2.4   | -4.5 | +2.1 | Low eff SG
+Stephen Curry        |2024-25 | 2.0 | 2260 |  +5.9   | +7.9 | -2.0 | Elite PG under
+Dominick Barlow      |2022-23 | 4.9 |  400 |  -2.6   | -4.6 | +2.0 | Low min big
+Corey Kispert        |2023-24 | 2.7 | 2060 |  -0.2   | -2.1 | +1.9 | Off-ball wing
+Stephen Curry        |2023-24 | 2.4 | 2429 |  +5.4   | +7.2 | -1.8 | Elite PG under
+Corey Kispert        |2024-25 | 2.9 | 1597 |  -2.0   | -3.7 | +1.7 | Off-ball wing
+Jordan Clarkson      |2024-25 | 2.2 |  963 |  +0.1   | -1.5 | +1.6 | Low eff SG
+Jonathan Kuminga     |2024-25 | 3.4 | 1138 |  +0.8   | -0.6 | +1.4 | Athletic wing
+Mark Williams        |2022-23 | 5.0 |  826 |  +1.4   | +0.1 | +1.3 | Young center
+
+================================================================================
+SECTION 7: PLAYER-LEVEL SYSTEMATIC BIAS
+================================================================================
+
+MOST UNDERRATED (We compute LOWER than B-REF)
+---------------------------------------------
+Player               | Pos | Avg MIN | Mean Err | Analysis
+---------------------|-----|---------|----------|---------------------------
+Stephen Curry        | 2.3 |  2210   |  -1.19   | Elite PG/SG consistently under
+Julius Randle        | 3.7 |  2193   |  -0.76   | High-usage PF under
+Aaron Gordon         | 3.4 |  1933   |  -0.73   | Role player SF/PF under
+Daniel Gafford       | 5.0 |  1551   |  -0.67   | Efficient rim runner under
+Alperen Sengun       | 4.3 |  2203   |  -0.47   | Playmaking big slightly under
+
+MOST OVERRATED (We compute HIGHER than B-REF)
+---------------------------------------------
+Player               | Pos | Avg MIN | Mean Err | Analysis
+---------------------|-----|---------|----------|---------------------------
+Jordan Clarkson      | 2.2 |  1538   |  +1.50   | Low-efficiency SG massively over
+Corey Kispert        | 2.8 |  1917   |  +1.36   | Off-ball shooter massively over
+Jonathan Kuminga     | 3.4 |  1490   |  +0.90   | Athletic but raw wing over
+Dominick Barlow      | 4.7 |   397   |  +0.76   | Low-minute big over
+Moussa Diabaté       | 4.9 |   714   |  +0.62   | Low-minute big over
+
+================================================================================
+SECTION 8: IDENTIFIED SYSTEMIC ISSUES
+================================================================================
+
+ISSUE 1: SG/SF OVERESTIMATION (Positions 2.0-3.0)
+-------------------------------------------------
+- Mean error: +0.30 with 0.96 MAE
+- Players affected: Clarkson (+1.50), Kispert (+1.36), Podziemski (+0.54)
+- Pattern: Off-ball shooters and low-efficiency scorers are overrated
+- Possible cause: Role constant not properly penalizing inefficient volume
+
+ISSUE 2: ELITE POINT GUARD UNDERESTIMATION
+------------------------------------------
+- Stephen Curry: -1.19 mean error (consistently underrated)
+- His on-ball impact may not be captured by box score alone
+- Possible cause: Gravity effects, team spacing not in box score
+
+ISSUE 3: EFFICIENT RIM RUNNERS SLIGHTLY UNDERRATED
+--------------------------------------------------
+- Daniel Gafford: -0.67 mean error
+- High FG% bigs who don't score much get less credit
+- Their defensive rim protection value may be missed
+
+ISSUE 4: VOLATILE LOW-MINUTE PLAYER ESTIMATES
+----------------------------------------------
+- Mark Williams, Dominick Barlow, Moussa Diabaté have high variance
+- Minutes regression helps but small samples remain noisy
+- This is expected behavior for limited data
+
+================================================================================
+SECTION 9: RECOMMENDED FIXES
+================================================================================
+
+1. SG/SF EFFICIENCY PENALTY
+   - Add penalty for low-efficiency scorers in SG/SF range
+   - Target: reduce Clarkson/Kispert overestimation
+
+2. ELITE PLAYMAKER BOOST
+   - Steph Curry-type players need additional AST rate credit
+   - Current AST bonus only triggers for bigs (Position > 3)
+
+3. OFF-BALL ROLE ADJUSTMENT
+   - Players with low AST% and moderate scoring may need adjustment
+   - Kispert-type 3&D wings are systematically overrated
+
+4. CONSIDER EFFICIENCY FLOOR
+   - Players with very low TS% relative to role should get penalty
+   - This would fix Clarkson's overestimation
+
+================================================================================
+END OF DOCUMENT
+================================================================================
