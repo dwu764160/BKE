@@ -25,6 +25,11 @@ TRUTH_DATA = {
         "Nikola Jokić":          [14.9, 11.2, 3.8, 13.0, 10.6],
         "Tobias Harris":         [5.9, 2.8, 3.1, 0.7, 1.7],
         "Daniel Gafford":        [6.0, 4.2, 1.9, 1.6, 1.3],
+        # New validation players
+        "Jonathan Kuminga":      [1.4, 1.0, 0.5, -1.7, 0.1],
+        "Trae Young":            [6.7, 5.3, 1.4, 3.3, 3.4],
+        "Michael Porter Jr.":    [4.3, 2.6, 1.8, 0.2, 1.0],
+        "Julius Randle":         [8.1, 5.0, 3.1, 3.9, 3.9],
     },
     "2023-24": {
         "Giannis Antetokounmpo": [13.2, 9.5, 3.7, 9.0, 7.2],
@@ -32,6 +37,12 @@ TRUTH_DATA = {
         "Brandin Podziemski":    [4.1, 2.1, 2.0, -0.1, 0.9],
         "Tobias Harris":         [5.9, 3.2, 2.7, 0.9, 1.2],
         "Daniel Gafford":        [7.8, 5.2, 2.5, 2.6, 2.1],
+        # New validation players
+        "Jonathan Kuminga":      [2.7, 1.9, 0.8, -0.4, 0.8],
+        "Trae Young":            [4.6, 4.0, 0.6, 2.6, 2.2],
+        "Eric Gordon":           [2.5, 1.5, 1.0, -1.7, 0.1],
+        "Michael Porter Jr.":    [6.2, 3.1, 3.1, 0.1, 1.3],
+        "Julius Randle":         [3.8, 1.9, 1.9, 1.9, 1.6],
     },
     "2024-25": {
         "Giannis Antetokounmpo": [11.5, 7.8, 3.7, 9.5, 6.6],
@@ -39,6 +50,12 @@ TRUTH_DATA = {
         "Brandin Podziemski":    [4.2, 1.9, 2.3, 0.7, 1.2],
         "Tobias Harris":         [5.2, 2.9, 2.3, 0.1, 1.2],
         "Daniel Gafford":        [5.9, 4.4, 1.5, 3.8, 1.8],
+        # New validation players
+        "Jonathan Kuminga":      [1.9, 1.5, 0.5, -0.6, 0.4],
+        "Trae Young":            [5.7, 4.4, 1.3, 0.5, 1.7],
+        "Eric Gordon":           [0.9, 0.7, 0.2, -1.6, 0.1],
+        "Michael Porter Jr.":    [6.4, 4.6, 1.8, -0.1, 1.2],
+        "Julius Randle":         [6.2, 3.6, 2.6, 1.3, 1.8],
     }
 }
 

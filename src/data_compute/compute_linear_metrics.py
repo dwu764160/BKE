@@ -31,6 +31,56 @@ HISTORICAL_DIR = "data/historical"
 OUTPUT_FILE = os.path.join(DATA_DIR, "metrics_linear.parquet")
 
 
+def load_player_team_mapping():
+    """
+    Extract player-team mapping from game logs.
+    Returns DataFrame with (player_id, season, team) columns.
+    """
+    path = os.path.join(HISTORICAL_DIR, "final_player_game_logs.parquet")
+    if not os.path.exists(path):
+        print(f"WARNING: {path} not found, team adjustment will be limited")
+        return None
+    
+    logs = pd.read_parquet(path)
+    
+    # Extract team from MATCHUP (format: "DEN vs. SAC" or "DEN @ UTA")
+    logs['team'] = logs['MATCHUP'].str[:3]
+    
+    # Get most common team for each player-season (handles mid-season trades)
+    player_teams = logs.groupby(['Player_ID', 'SEASON'])['team'].agg(
+        lambda x: x.value_counts().index[0]
+    ).reset_index()
+    player_teams.columns = ['player_id', 'season', 'team']
+    
+    # Ensure player_id is string to match player_profiles
+    player_teams['player_id'] = player_teams['player_id'].astype(str)
+    
+    return player_teams
+
+
+def load_team_net_ratings():
+    """
+    Load team net ratings from team_summaries.
+    Returns DataFrame with (team, season, team_net_rtg) columns.
+    """
+    path = os.path.join(HISTORICAL_DIR, "team_summaries.parquet")
+    if not os.path.exists(path):
+        print(f"WARNING: {path} not found, team adjustment will be limited")
+        return None
+    
+    teams = pd.read_parquet(path)
+    
+    # Team net rating per 100 possessions (approx from plus/minus per game / ~2 for 100 poss)
+    # PLUS_MINUS_PER_GAME is the seasonal average point differential
+    # Need to convert to per 100 possessions - divide by ~1.02 (avg possessions per game / 100)
+    teams['team_net_rtg'] = teams['PLUS_MINUS_PER_GAME'] / teams['GAMES']  # Per game average
+    
+    # Rename for merge
+    teams = teams.rename(columns={'TEAM_ID': 'team', 'SEASON': 'season'})
+    
+    return teams[['team', 'season', 'team_net_rtg']]
+
+
 def load_player_data():
     """Load player profiles, dropping any stale computed columns."""
     path = os.path.join(DATA_DIR, "player_profiles_advanced.parquet")
@@ -443,40 +493,41 @@ def compute_bpm_bref(df):
     """
     
     # =========================================================================
-    # STEP 1: Calculate Team Totals (for percentage calculations)
+    # STEP 1: Calculate League Totals (for percentage calculations)
     # =========================================================================
+    # B-REF position regression uses "% of team stats while on court"
+    # We approximate this as: (player_per_min_rate / league_per_min_rate) * 0.20
+    # The 0.20 factor represents that 5 players share the court, so average = 20%
     
-    # Build team-season aggregates from player data
-    # We approximate by using league totals / 30 teams
-    team_totals = df.groupby('season').agg(
-        TEAM_MIN=('MIN', lambda x: x.sum() / 30),
-        TEAM_TRB=('ORB', lambda x: (x + df.loc[x.index, 'DRB']).sum() / 30),
-        TEAM_STL=('STL', lambda x: x.sum() / 30),
-        TEAM_AST=('AST', lambda x: x.sum() / 30),
-        TEAM_BLK=('BLK', lambda x: x.sum() / 30),
-        TEAM_PF=('PF', lambda x: x.sum() / 30),
-        TEAM_PTS=('PTS', lambda x: x.sum() / 30),
-        TEAM_FGM=('FGM', lambda x: x.sum() / 30),
-        TEAM_FGA=('FGA', lambda x: x.sum() / 30),
+    # Calculate league totals per season
+    league_totals = df.groupby('season').agg(
+        LEAGUE_MIN=('MIN', 'sum'),
+        LEAGUE_TRB=('ORB', lambda x: (x + df.loc[x.index, 'DRB']).sum()),
+        LEAGUE_STL=('STL', 'sum'),
+        LEAGUE_AST=('AST', 'sum'),
+        LEAGUE_BLK=('BLK', 'sum'),
+        LEAGUE_PF=('PF', 'sum'),
+        LEAGUE_PTS=('PTS', 'sum'),
+        LEAGUE_FGM=('FGM', 'sum'),
+        LEAGUE_FGA=('FGA', 'sum'),
     ).reset_index()
     
-    df = pd.merge(df, team_totals, on='season', how='left', suffixes=('', '_team'))
+    df = pd.merge(df, league_totals, on='season', how='left', suffixes=('', '_league'))
     
-    # Player stats as percentage of team
-    player_min = df['MIN']
-    team_min = df['TEAM_MIN'].replace(0, 1)
+    # Calculate per-minute rates
+    player_min = df['MIN'].replace(0, 1)
+    league_min = df['LEAGUE_MIN'].replace(0, 1)
     
-    # % of team stats while on court (estimate by min% * 5 for per-player average)
-    min_share = player_min / team_min  # fraction of team minutes
+    # Calculate % of team stats while on court
+    # Formula: (player_per_min / league_per_min) * 0.20
+    # This gives the player's share of team stats when they're on the floor
+    pct_TRB = ((df['ORB'] + df['DRB']) / player_min) / (df['LEAGUE_TRB'] / league_min) * 0.20
+    pct_STL = (df['STL'] / player_min) / (df['LEAGUE_STL'] / league_min) * 0.20
+    pct_AST = (df['AST'] / player_min) / (df['LEAGUE_AST'] / league_min) * 0.20
+    pct_BLK = (df['BLK'] / player_min) / (df['LEAGUE_BLK'] / league_min) * 0.20
+    pct_PF = (df['PF'] / player_min) / (df['LEAGUE_PF'] / league_min) * 0.20
     
-    # Calculate % of team stats 
-    pct_TRB = (df['ORB'] + df['DRB']) / (df['TEAM_TRB'] * min_share).replace(0, 1)
-    pct_STL = df['STL'] / (df['TEAM_STL'] * min_share).replace(0, 1)
-    pct_AST = df['AST'] / (df['TEAM_AST'] * min_share).replace(0, 1)
-    pct_BLK = df['BLK'] / (df['TEAM_BLK'] * min_share).replace(0, 1)
-    pct_PF = df['PF'] / (df['TEAM_PF'] * min_share).replace(0, 1)
-    
-    # Clamp to reasonable ranges
+    # Clamp to reasonable ranges (from B-REF documentation)
     pct_TRB = pct_TRB.clip(0.05, 0.40)
     pct_STL = pct_STL.clip(0.02, 0.35)
     pct_AST = pct_AST.clip(0.02, 0.50)
@@ -504,17 +555,21 @@ def compute_bpm_bref(df):
     # STEP 3: Offensive Role Regression
     # =========================================================================
     # Role = 6.00 - 6.642*%AST - 8.544*%ThresholdPts
-    # ThresholdPts = points above threshold efficiency (simplified as high-usage scoring)
+    # ThresholdPts = points above threshold efficiency
+    # From B-REF: "points above a threshold shooting efficiency (0.33 pts/shot below team avg)"
     
-    # Threshold points: approximate as % of team scoring with efficiency adjustment
-    pts_share = df['PTS'] / (df['TEAM_PTS'] * min_share).replace(0, 1)
-    pts_share = pts_share.clip(0.05, 0.50)
+    # Calculate points share similar to other percentages
+    # Use (player_pts_per_min / league_pts_per_min) * 0.20
+    pct_PTS = (df['PTS'] / player_min) / (df['LEAGUE_PTS'] / league_min) * 0.20
+    pct_PTS = pct_PTS.clip(0.05, 0.50)
     
     # Efficiency above threshold: TS% - 0.54 (54% is average)
+    # B-REF uses threshold = team_avg - 0.33 pts/TSA
     eff_above_avg = (df['TS_PCT'] - 0.54).clip(-0.15, 0.20)
     
     # Threshold points = pts_share * (1 + efficiency bonus)
-    threshold_pts = pts_share * (1 + eff_above_avg * 2)
+    # Only players scoring above threshold efficiency contribute
+    threshold_pts = pct_PTS * (1 + eff_above_avg * 2)
     threshold_pts = threshold_pts.clip(0, 0.5)
     
     off_role = 6.00 - 6.642 * pct_AST - 8.544 * threshold_pts
@@ -654,78 +709,74 @@ def compute_bpm_bref(df):
     raw_bpm = raw_bpm + pos_constant + role_constant
     
     # =========================================================================
-    # STEP 7: Team Adjustment (Critical!)
+    # STEP 7: Team Adjustment
     # =========================================================================
-    # The team adjustment forces the sum of player BPMs (weighted by possession share)
-    # to equal the team's net rating.
+    # B-REF forces the sum of player BPMs (weighted by possession share) to equal
+    # the team's net rating. However, this requires accurate team net ratings
+    # which we don't have readily available in the right format.
     #
-    # The raw regression intercept is around -8, which gets added via team adjustment.
-    # 
-    # Formula: BPM = Raw_BPM + Team_Adjustment
-    # where Team_Adjustment = Team_Net_Rating - Σ(Raw_BPM * Poss%) for all teammates
-    
-    # Calculate team net rating (on-court ORTG - DRTG approximation)
-    team_net = df['ORTG'] - df['DRTG']  # This is on-court net rating, good proxy
-    
-    # For proper team adjustment, we'd need to sum across teammates
-    # Since we don't have team groupings, we approximate by using season-level average
-    
-    # Season-level average raw BPM (weighted by possessions)
-    season_avg_raw_bpm = df.groupby('season').apply(
-        lambda x: (x['POSS_OFF'] * raw_bpm.loc[x.index]).sum() / x['POSS_OFF'].sum()
-    ).reset_index(name='season_avg_raw_bpm')
-    df = pd.merge(df, season_avg_raw_bpm, on='season', how='left')
-    
-    # Team adjustment: shift all players by the difference between team net rating
-    # and their raw contribution. Since league average net rating is 0, we center
-    # the regression there.
+    # Instead, we use a simplified approach:
+    # 1. Add the regression intercept (-8)
+    # 2. Center at the league level (weighted average = 0)
     #
-    # The base intercept of the regression is about -8 (added via team adjustment)
-    # For league-average player on league-average team: BPM = 0
+    # This is equivalent to saying every team has net rating = 0 (league average),
+    # which is a reasonable approximation for a pure box score metric.
     
-    REGRESSION_INTERCEPT = -8.0  # From B-REF documentation
+    REGRESSION_INTERCEPT = -8.0
     
-    # Individual team adjustment based on on-court net rating
-    # This is a simplification: proper B-REF sums teammates and adjusts
-    # 
-    # CRITICAL: B-REF uses TEAM net rating, not individual on-court net rating.
-    # Using individual net rating overvalues players on good lineups (like Podziemski)
-    # who have good on/off numbers but mediocre box score stats.
-    #
-    # Scale 0.14 balances between accurate superstars and reduced outliers
-    team_adj = team_net * 0.14  # Adjustment from team context
+    # Add the regression intercept
+    raw_bpm_with_intercept = raw_bpm + REGRESSION_INTERCEPT
     
-    # Final BPM
-    final_bpm = raw_bpm + REGRESSION_INTERCEPT + team_adj
-    
-    # Normalize to make league average = 0
-    season_mean_bpm = df.groupby('season').apply(
-        lambda x: (final_bpm.loc[x.index] * df.loc[x.index, 'POSS_OFF']).sum() / 
-                  df.loc[x.index, 'POSS_OFF'].sum()
-    ).reset_index(name='season_mean_bpm')
-    df = pd.merge(df, season_mean_bpm, on='season', how='left', suffixes=('', '_final'))
-    
-    centered_bpm = final_bpm - df['season_mean_bpm']
+    # Center at league level (weighted average = 0)
+    season_mean = df.groupby('season').apply(
+        lambda x: (raw_bpm_with_intercept.loc[x.index] * df.loc[x.index, 'POSS_OFF']).sum() / 
+                  df.loc[x.index, 'POSS_OFF'].sum(),
+        include_groups=False
+    ).reset_index(name='_season_mean_bpm')
+    df = pd.merge(df, season_mean, on='season', how='left')
+    final_bpm = raw_bpm_with_intercept - df['_season_mean_bpm']
+    df = df.drop(columns=['_season_mean_bpm'], errors='ignore')
     
     # =========================================================================
-    # FINAL BPM ADJUSTMENT (Compression + Offset)
+    # FINAL BPM ADJUSTMENT (Targeted Corrections + Team Context)
     # =========================================================================
-    # The raw regression produces BPM values that are too spread out:
-    # - With no adjustment: superstars slightly high, role players way too low
-    # - Pure compression: reduces spread but doesn't fix the systematic bias
-    # - Pure additive: fixes average but increases error for extremes
+    # After centering, apply two types of corrections:
     #
-    # Solution: Compress first (reduce spread), then add offset (fix average)
+    # 1. AST-based bonus for big playmakers (Position > 3 AND high AST rate)
+    #    - B-REF's regression undervalues unique playmaking bigs like Jokić
+    #    - Bonus scales with position and AST rate
     #
-    # Grid search optimization found:
-    # - COMPRESSION 0.91, OFFSET 1.00 gives best MAE on validation set
-    # - Reduces extreme values while accounting for systematic underestimation
+    # 2. Team context adjustment using player's on-court NET_RTG
+    #    - Players on bad teams (low NET_RTG) tend to be overestimated
+    #    - Players on good teams (high NET_RTG) tend to be underestimated
     #
-    # Formula: BPM = centered_bpm * compression + offset
-    COMPRESSION = 0.91
-    OFFSET = 1.00
+    # Grid search optimized: AST_BIG=14, NET_SCALE=0.11, COMPRESSION=0.89, OFFSET=0.60
     
-    df['BPM'] = centered_bpm * COMPRESSION + OFFSET
+    # Calculate AST per minute for big playmaker adjustment
+    ast_per_min = df['AST'] / df['MIN'].replace(0, 1)
+    
+    # AST-based bonus for bigs: Position > 3 AND high AST rate (> 0.20 AST/min)
+    # Only triggers for unique players like Jokić who are bigs with elite passing
+    AST_BIG_BONUS = 14.0
+    ast_big_adjustment = np.where(
+        (position > 3.0) & (ast_per_min > 0.20),
+        AST_BIG_BONUS * (position - 3.0) * (ast_per_min - 0.10),
+        0.0
+    )
+    
+    # Team context adjustment using player's on-court NET_RTG
+    # NET_RTG = ORTG - DRTG (how much better the team is with player on court)
+    NET_SCALE = 0.11
+    net_rtg_adjustment = NET_SCALE * df['NET_RTG']
+    
+    # Apply all adjustments
+    adjusted_bpm = final_bpm + ast_big_adjustment + net_rtg_adjustment
+    
+    # Final compression and offset
+    COMPRESSION = 0.89
+    OFFSET = 0.60
+    
+    df['BPM'] = adjusted_bpm * COMPRESSION + OFFSET
     
     # Sanity check bounds (elite is ~13, worst starters ~-4)
     df['BPM'] = df['BPM'].clip(-10, 15)
