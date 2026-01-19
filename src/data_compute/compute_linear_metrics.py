@@ -738,6 +738,50 @@ def compute_bpm_bref(df):
     )
     
     # =========================================================================
+    # OBPM CALCULATION (Offensive Box Plus/Minus)
+    # =========================================================================
+    # OBPM uses different coefficients from BPM, optimized to predict offensive value.
+    # DBPM = BPM - OBPM (defensive is the residual)
+    # Source: https://www.basketball-reference.com/about/bpm2.html
+    #
+    # Key differences from BPM:
+    # - Points coefficient is lower (0.605 vs 0.860)
+    # - 3PM bonus is higher (0.477 vs 0.389) - spacing is more valuable on offense
+    # - AST coefficient is uniform (0.476) vs position-varying for BPM
+    # - Blocks for guards are HIGH (0.725) - indicates good offensive awareness
+    # - Personal fouls are MORE negative (-0.439 vs -0.367)
+    
+    # OBPM Position-adjusted coefficients (from B-REF documentation)
+    obpm_coef_pts = 0.605
+    obpm_coef_3pm = 0.477
+    obpm_coef_ast = 0.476  # Uniform across positions for OBPM
+    obpm_coef_tov = pos_coef(position, -0.579, -0.882)  # Higher penalty for bigs
+    obpm_coef_orb = pos_coef(position, 0.606, 0.422)
+    obpm_coef_drb = pos_coef(position, -0.112, 0.103)   # Guards slightly hurt by DRB on offense!
+    obpm_coef_stl = pos_coef(position, 0.177, 0.294)
+    obpm_coef_blk = pos_coef(position, 0.725, 0.097)    # Blocks are big indicator for guards
+    obpm_coef_pf = -0.439
+    
+    # OBPM Role-adjusted coefficients
+    obpm_coef_fga = role_coef(off_role, -0.330, -0.472)
+    obpm_coef_fta = role_coef(off_role, -0.145, -0.208)
+    
+    # Raw OBPM calculation
+    raw_obpm = (
+        obpm_coef_pts * adj_pts +
+        obpm_coef_3pm * per100_fg3m +
+        obpm_coef_ast * per100_ast +
+        obpm_coef_tov * per100_tov +
+        obpm_coef_orb * per100_orb +
+        obpm_coef_drb * per100_drb +
+        obpm_coef_stl * per100_stl +
+        obpm_coef_blk * per100_blk +
+        obpm_coef_pf * per100_pf +
+        obpm_coef_fga * per100_fga +
+        obpm_coef_fta * per100_fta
+    )
+    
+    # =========================================================================
     # STEP 6: Position and Role Adjustment Constants
     # =========================================================================
     # Position constant: 0 for positions > 3, linear to -0.818 at position 1
@@ -755,6 +799,25 @@ def compute_bpm_bref(df):
     
     # Add constants to raw BPM
     raw_bpm = raw_bpm + pos_constant + role_constant
+    
+    # -------------------------------------------------------------------------
+    # OBPM Position and Role Constants (different from BPM)
+    # -------------------------------------------------------------------------
+    # OBPM has a STEEPER position penalty for guards: -1.698 at position 1
+    # OBPM has a SMALLER role adjustment: ±0.860 (vs ±2.774 for BPM)
+    # This means much of the non-box-score value is on DEFENSE, not offense
+    
+    obpm_pos_constant = np.where(
+        position >= 3.0,
+        0.0,
+        (3.0 - position) * (-1.698 / 2)
+    )
+    
+    # OBPM offensive role constant: -0.860 (creator) to +0.860 (receiver)
+    obpm_role_constant = (off_role - 3.0) * (0.860 / 2)
+    
+    # Add constants to raw OBPM
+    raw_obpm = raw_obpm + obpm_pos_constant + obpm_role_constant
     
     # =========================================================================
     # STEP 7: Team Adjustment
@@ -784,6 +847,25 @@ def compute_bpm_bref(df):
     df = pd.merge(df, season_mean, on='season', how='left')
     final_bpm = raw_bpm_with_intercept - df['_season_mean_bpm']
     df = df.drop(columns=['_season_mean_bpm'], errors='ignore')
+    
+    # -------------------------------------------------------------------------
+    # OBPM Team Adjustment (same process as BPM)
+    # -------------------------------------------------------------------------
+    # OBPM uses the same intercept and centering approach
+    # Note: The OBPM regression intercept is different from BPM in B-REF,
+    # but we use the same for simplicity since we're centering anyway.
+    
+    raw_obpm_with_intercept = raw_obpm + REGRESSION_INTERCEPT
+    
+    # Center OBPM at league level
+    season_mean_obpm = df.groupby('season').apply(
+        lambda x: (raw_obpm_with_intercept.loc[x.index] * df.loc[x.index, 'POSS_OFF']).sum() / 
+                  df.loc[x.index, 'POSS_OFF'].sum(),
+        include_groups=False
+    ).reset_index(name='_season_mean_obpm')
+    df = pd.merge(df, season_mean_obpm, on='season', how='left')
+    final_obpm = raw_obpm_with_intercept - df['_season_mean_obpm']
+    df = df.drop(columns=['_season_mean_obpm'], errors='ignore')
     
     # =========================================================================
     # FINAL BPM ADJUSTMENT (Targeted Corrections + Team Context)
@@ -820,14 +902,22 @@ def compute_bpm_bref(df):
     # Apply all adjustments
     adjusted_bpm = final_bpm + ast_big_adjustment + net_rtg_adjustment
     
+    # Apply adjustments to OBPM (AST bonus is primarily offensive)
+    # The AST big adjustment should apply MORE to OBPM since it's an offensive skill
+    adjusted_obpm = final_obpm + ast_big_adjustment + (net_rtg_adjustment * 0.5)  # Half NET_RTG adjustment to offense
+    
     # Final compression and offset
     COMPRESSION = 0.89
     OFFSET = 0.60
     
     df['BPM'] = adjusted_bpm * COMPRESSION + OFFSET
     
+    # Apply same compression to OBPM for consistency
+    df['OBPM'] = adjusted_obpm * COMPRESSION + (OFFSET * 0.5)  # Smaller offset for OBPM
+    
     # Sanity check bounds (elite is ~13, worst starters ~-4)
     df['BPM'] = df['BPM'].clip(-10, 15)
+    df['OBPM'] = df['OBPM'].clip(-8, 12)
     
     # =========================================================================
     # STEP 7b: Minutes-Based BPM Regression
@@ -849,6 +939,7 @@ def compute_bpm_bref(df):
     
     # Apply penalty
     df['BPM'] = df['BPM'] - MIN_REGRESSION_STRENGTH * penalty_factor
+    df['OBPM'] = df['OBPM'] - MIN_REGRESSION_STRENGTH * penalty_factor  # Same regression for OBPM
     
     # =========================================================================
     # STEP 7c: Efficiency-Based Adjustments (January 2026)
@@ -928,6 +1019,23 @@ def compute_bpm_bref(df):
     )
     
     df['BPM'] = df['BPM'] + high_eff_bonus
+    
+    # Apply efficiency adjustments to OBPM as well
+    # Low efficiency penalty is primarily an OFFENSIVE issue (scoring inefficiently)
+    df['OBPM'] = df['OBPM'] - low_eff_penalty
+    
+    # High efficiency bonus is also primarily OFFENSIVE (efficient scoring)
+    df['OBPM'] = df['OBPM'] + high_eff_bonus
+    
+    # =========================================================================
+    # DBPM CALCULATION (Defensive Box Plus/Minus)
+    # =========================================================================
+    # DBPM = BPM - OBPM
+    # This is how B-REF calculates it: the residual after removing offensive contribution
+    df['DBPM'] = df['BPM'] - df['OBPM']
+    
+    # Sanity check DBPM bounds (elite defenders ~4-5, worst ~-3)
+    df['DBPM'] = df['DBPM'].clip(-5, 6)
 
     # =========================================================================
     # STEP 8: VORP (Value Over Replacement Player)
@@ -1028,7 +1136,7 @@ def main():
     
     # Save output
     output_cols = ['player_id', 'player_name', 'season', 'GP', 'MIN',
-                   'WS', 'OWS', 'DWS', 'BPM', 'VORP', 'GMSC_AVG',
+                   'WS', 'OWS', 'DWS', 'BPM', 'OBPM', 'DBPM', 'VORP', 'GMSC_AVG',
                    'PProd', 'TotPoss', 'qAST', 'Marginal_Off', 'Marginal_Def',
                    'Position', 'OffRole']
     
