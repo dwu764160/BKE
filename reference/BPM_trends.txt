@@ -466,6 +466,75 @@ BATCH 4 SUMMARY:
   ⚠️ PARTIAL: Low minute inflation (mixed results, position-dependent)
   ⚠️ PARTIAL: Elite playmaker (Luka overrated, not underrated)
 
+================================================================================
+SECTION 11: DETAILED ROOT CAUSE ANALYSIS - UNCONFIRMED CATEGORIES
+================================================================================
+Updated after efficiency adjustments (Step 7c) and deep investigation.
+
+UNCONFIRMED CATEGORY 1: LOW-MINUTE PLAYERS
+------------------------------------------
+FINDING: NOT a uniform pattern. The issue is DEFENSIVE VALUE not being captured.
+
+Gary Payton II (UNDERRATED by 2.7-3.5 BPM):
+  - Elite TS%: 70%, 62%, 63% - gets HIGH_EFF_BONUS correctly
+  - Elite steals: 2.1/36 - defensive specialist
+  - NET_RTG: +3.2, +10.0, +1.9 - makes team better
+  - Why underrated? His VALUE is defensive disruption, not box score stats
+  - BPM can't capture "elite perimeter defender" without tracking data
+
+Luka Garza (OVERRATED by 1.9-3.7 BPM):
+  - Moderate TS%: 65%, 58%, 57% - doesn't trigger efficiency penalties
+  - Terrible defense: 0.3-0.5 BLK/36 for a CENTER (should be 1.5+)
+  - Position ~4.3 = PF/C - formula expects rim protection
+  - Why overrated? Position inflation + no defensive penalty
+  - His scoring output (27 PTS/36) looks great but ignores defensive hole
+
+CONCLUSION: The "low minute" category was a red herring. The real issue:
+  - DEFENSIVE SPECIALISTS (GP2-type) need defense tracking to value correctly
+  - DEFENSIVE LIABILITIES (Garza-type) aren't penalized for low BLK/STL
+
+UNCONFIRMED CATEGORY 2: OFF-BALL WING OVERRATE
+----------------------------------------------
+FINDING: NOT A CONSISTENT PATTERN - Kispert may be an outlier.
+
+Moses Moody errors:
+  2022-23: -2.1 (underrated, not overrated!)
+  2023-24: +0.9 (slight overrate)
+  2024-25: +1.3 (slight overrate)
+
+The Kispert hypothesis doesn't generalize. Off-ball wings have mixed errors.
+
+UNCONFIRMED CATEGORY 3: ELITE PLAYMAKER
+---------------------------------------
+FINDING: OPPOSITE PATTERNS for Curry vs Luka. Not a single "elite playmaker" issue.
+
+Stephen Curry (UNDERRATED by 2.0 BPM in 2023-24, 2024-25):
+  - TS%: 61.6%, 61.8% - above average but not elite (no high bonus)
+  - AST/36: 5.6, 6.7 - LOWER than Luka's 7.8-9.4
+  - NET_RTG: +2.5, +4.1 - positive team impact
+  - Position: 2.05-2.17 - guard, no AST big bonus
+  
+  ROOT CAUSE: "GRAVITY" not captured. Curry's off-ball movement, screens,
+  and threat of shooting opens up the entire offense. This creates value
+  that doesn't show up in AST%. He doesn't need to PASS to create value.
+
+Luka Dončić (OVERRATED by 1.9 BPM in 2022-23, now correct):
+  - TS%: 60.9% to 58.7% - average to below-average
+  - AST/36: 7.8-9.4 - ELITE playmaking volume
+  - NET_RTG: -1.3 in 2022-23! - team was WORSE with him on court
+  
+  ROOT CAUSE (2022-23): Negative NET_RTG should penalize more. He gets
+  +10.2 BPM but team was -1.3 with him on court. Either defensive metrics
+  or turnover-heavy play style not penalized enough.
+  
+  CURRENT (2023-24, 2024-25): Errors now +0.2 and +0.5 = acceptable.
+  His NET_RTG improved to +3.8 and +5.2.
+
+INSIGHT: The Curry/Luka difference suggests:
+  1. Need a "gravity" adjustment for elite shooters (Position < 3, FG3A high)
+  2. Need to penalize negative NET_RTG more heavily
+  3. The existing NET_RTG adjustment (0.11 * NET_RTG) may be too weak
+
 Previous - Initial BPM Implementation
 -------------------------------------
 - Full B-REF BPM 2.0 formula

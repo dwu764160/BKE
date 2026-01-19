@@ -4,10 +4,16 @@ Validates BPM, VORP, and Win Shares against confirmed Basketball-Reference data.
 
 Reference players chosen to represent diverse player types:
 - Superstars: Giannis Antetokounmpo, Nikola Jokić, Jimmy Butler
-- All-Stars: Trae Young, Julius Randle
+- All-Stars: Trae Young, Julius Randle, Luka Dončić
 - Veteran role players: Tobias Harris, Chris Paul, Eric Gordon, Aaron Gordon
 - Young players: Daniel Gafford, Brandin Podziemski, Jonathan Kuminga, Mark Williams
-- Shooters: Michael Porter Jr., Corey Kispert
+- Shooters: Michael Porter Jr., Corey Kispert, A.J. Green
+- Root cause validation (Batch 4):
+  - Low-minute: Gary Payton II, Luka Garza
+  - Low-efficiency volume: Jaden Ivey
+  - Off-ball wings: Moses Moody, A.J. Green
+  - Elite playmakers: Luka Dončić, Stephen Curry
+  - Efficient dunkers: Jarrett Allen, Jericho Sims
 """
 
 import pandas as pd
@@ -40,7 +46,7 @@ TRUTH_DATA = {
         "Aaron Gordon":          [6.8, 4.6, 2.2, 2.1, 2.1],
         # Batch 3 validation players (includes low-minute players)
         "Stephen Curry":         [7.8, 5.8, 2.0, 7.5, 4.7],
-        "Alperen Sengun":        [5.2, 3.4, 1.8, 1.4, 1.9],
+        "Alperen Şengün":        [5.2, 3.4, 1.8, 1.4, 1.9],
         "Jordan Clarkson":       [1.7, 0.9, 0.8, -1.4, 0.5],
         "Dominick Barlow":       [0.7, 0.2, 0.5, -4.6, -0.3],  # 408 min
         "Aaron Holiday":         [0.9, 0.6, 0.6, -2.0, 0.0],
@@ -75,7 +81,7 @@ TRUTH_DATA = {
         "Aaron Gordon":          [7.1, 4.5, 2.6, 1.3, 1.3],
         # Batch 3 validation players (includes low-minute players)
         "Stephen Curry":         [7.2, 5.2, 2.0, 7.2, 4.4],
-        "Alperen Sengun":        [6.9, 3.8, 3.1, 4.9, 3.5],
+        "Alperen Şengün":        [6.9, 3.8, 3.1, 4.9, 3.5],
         "Jordan Clarkson":       [0.2, 0.1, 0.1, -4.5, -1.1],
         "Dominick Barlow":       [1.1, 0.4, 0.7, -1.7, 0.0],   # 420 min
         "Gui Santos":            [0.7, 0.2, 0.5, -0.5, 0.1],   # 192 min
@@ -110,7 +116,7 @@ TRUTH_DATA = {
         "Aaron Gordon":          [4.3, 3.6, 0.7, 1.2, 1.2],
         # Batch 3 validation players (includes low-minute players)
         "Stephen Curry":         [7.9, 5.2, 2.7, 7.9, 4.8],
-        "Alperen Sengun":        [8.3, 4.2, 4.1, 4.4, 3.9],
+        "Alperen Şengün":        [8.3, 4.2, 4.1, 4.4, 3.9],
         "Jordan Clarkson":       [0.4, 0.2, 0.2, -1.5, 0.0],
         "Dominick Barlow":       [1.0, 0.3, 0.7, -2.2, 0.0],   # 375 min
         "Gui Santos":            [1.7, 0.9, 0.8, -1.7, 0.0],   # 762 min

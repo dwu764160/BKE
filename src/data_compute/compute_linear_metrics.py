@@ -851,6 +851,63 @@ def compute_bpm_bref(df):
     df['BPM'] = df['BPM'] - MIN_REGRESSION_STRENGTH * penalty_factor
     
     # =========================================================================
+    # STEP 7c: Efficiency-Based Adjustments (January 2026)
+    # =========================================================================
+    # Two targeted fixes based on validation analysis:
+    #
+    # 1. LOW EFFICIENCY VOLUME PENALTY
+    #    Players with below-average TS% AND high scoring volume are overrated
+    #    by box-score metrics. They get credit for points but no penalty for
+    #    inefficiency. Example: Jaden Ivey (TS% 53%, overrated by +1.6 BPM)
+    #
+    # 2. HIGH EFFICIENCY BONUS (Efficient Dunker Bonus)
+    #    Elite-efficiency players (TS% > 62%) are underrated because their
+    #    efficiency isn't fully captured. Example: Jarrett Allen (TS% 72%,
+    #    underrated by -2.1 BPM)
+    
+    # Get TS% and scoring volume
+    ts_pct = df['TS_PCT'].fillna(0.55)
+    scoring_volume = per100_pts  # Already calculated per-100 possessions
+    
+    # --- FIX 1: Low Efficiency Volume Penalty ---
+    # For players with TS% < 54% (league average):
+    # Penalty = (54% - TS%) * scoring_volume * scale
+    # This penalizes high-volume inefficient scorers
+    
+    LOW_EFF_THRESHOLD = 0.54   # League average TS%
+    LOW_EFF_PENALTY_SCALE = 0.12  # Penalty multiplier
+    
+    ts_below_avg = np.clip(LOW_EFF_THRESHOLD - ts_pct, 0, 0.10)  # Cap at 10% below
+    low_eff_penalty = ts_below_avg * scoring_volume * LOW_EFF_PENALTY_SCALE
+    
+    # Only apply to players with meaningful minutes (avoid noise)
+    low_eff_penalty = np.where(df['MIN'] > 500, low_eff_penalty, 0.0)
+    
+    df['BPM'] = df['BPM'] - low_eff_penalty
+    
+    # --- FIX 2: High Efficiency Bonus (Efficient Dunker) ---
+    # For players with TS% > 62% (elite efficiency):
+    # Bonus = (TS% - 60%) * scale
+    # This rewards elite-efficiency role players (rim runners, etc.)
+    
+    HIGH_EFF_THRESHOLD = 0.62  # Elite efficiency threshold
+    HIGH_EFF_BONUS_SCALE = 8.0  # Bonus multiplier
+    HIGH_EFF_CAP = 1.5          # Maximum bonus
+    
+    ts_above_elite = np.clip(ts_pct - 0.60, 0, 0.15)  # Only bonus above 60%
+    high_eff_bonus = ts_above_elite * HIGH_EFF_BONUS_SCALE
+    high_eff_bonus = np.clip(high_eff_bonus, 0, HIGH_EFF_CAP)
+    
+    # Only apply to players with TS% > threshold and meaningful minutes
+    high_eff_bonus = np.where(
+        (ts_pct > HIGH_EFF_THRESHOLD) & (df['MIN'] > 500),
+        high_eff_bonus,
+        0.0
+    )
+    
+    df['BPM'] = df['BPM'] + high_eff_bonus
+
+    # =========================================================================
     # STEP 8: VORP (Value Over Replacement Player)
     # =========================================================================
     # VORP = [BPM - (-2.0)] * (% of minutes played) * (games/82)
