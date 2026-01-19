@@ -45,6 +45,15 @@ TRUTH_DATA = {
         "Dominick Barlow":       [0.7, 0.2, 0.5, -4.6, -0.3],  # 408 min
         "Aaron Holiday":         [0.9, 0.6, 0.6, -2.0, 0.0],
         "Moussa Diabaté":        [0.4, 0.2, 0.2, -2.8, 0.0],   # 195 min
+        # Batch 4: Root cause validation players
+        "Gary Payton II":        [1.5, 0.5, 0.9, 1.5, 0.5],    # Low-minute category (645 min)
+        "Luka Garza":            [0.9, 0.7, 0.2, -2.6, -0.1],  # Low-minute category (458 min)
+        "Jaden Ivey":            [0.9, 0.4, 0.5, -3.3, 0.0],   # Low-efficiency volume (1902 min)
+        "Moses Moody":           [0.6, 0.3, 0.3, -2.6, 0.1],   # Off-ball wing (1287 min)
+        "AJ Green":              [0.9, 1.0, -0.1, -0.9, 0.1],  # Off-ball wing (1159 min)
+        "Luka Dončić":           [8.9, 7.1, 1.8, 8.3, 4.9],    # Elite playmaker
+        "Jarrett Allen":         [7.7, 3.9, 3.8, 2.4, 2.5],    # Efficient dunker
+        "Jericho Sims":          [0.5, 0.3, 0.2, -0.5, 0.1],   # Efficient dunker (353 min)
     },
     "2023-24": {
         "Giannis Antetokounmpo": [13.2, 9.5, 3.7, 9.0, 7.2],
@@ -71,6 +80,15 @@ TRUTH_DATA = {
         "Dominick Barlow":       [1.1, 0.4, 0.7, -1.7, 0.0],   # 420 min
         "Gui Santos":            [0.7, 0.2, 0.5, -0.5, 0.1],   # 192 min
         "Aaron Holiday":         [2.5, 1.2, 1.3, -1.5, 0.2],
+        # Batch 4: Root cause validation players
+        "Gary Payton II":        [2.0, 0.6, 1.4, 2.2, 0.6],    # Low-minute category (660 min)
+        "Luka Garza":            [0.5, 0.4, 0.1, -2.7, -0.1],  # Low-minute category (386 min)
+        "Jaden Ivey":            [2.6, 1.0, 1.5, -3.1, -0.2],  # Low-efficiency volume (2274 min)
+        "Moses Moody":           [2.9, 1.9, 1.0, 0.1, 0.8],    # Off-ball wing (1851 min)
+        "AJ Green":              [2.1, 1.9, 0.2, -2.0, 0.0],   # Off-ball wing (1669 min)
+        "Luka Dončić":           [10.5, 7.6, 2.9, 9.9, 7.0],   # Elite playmaker
+        "Jarrett Allen":         [9.1, 4.5, 4.6, 3.0, 3.0],    # Efficient dunker
+        "Jericho Sims":          [0.4, 0.1, 0.3, -1.8, -0.1],  # Efficient dunker (506 min)
     },
     "2024-25": {
         "Giannis Antetokounmpo": [11.5, 7.8, 3.7, 9.5, 6.6],
@@ -98,6 +116,15 @@ TRUTH_DATA = {
         "Gui Santos":            [1.7, 0.9, 0.8, -1.7, 0.0],   # 762 min
         "Aaron Holiday":         [2.0, 0.8, 1.2, -0.2, 0.3],
         "Moussa Diabaté":        [3.2, 1.5, 1.8, -1.9, 0.6],   # 1241 min
+        # Batch 4: Root cause validation players
+        "Gary Payton II":        [1.9, 0.8, 1.1, 0.0, 0.3],    # Low-minute category (927 min)
+        "Luka Garza":            [0.2, 0.2, 0.0, -2.3, -0.1],  # Low-minute category (219 min)
+        "Jaden Ivey":            [0.8, 0.5, 0.3, 0.0, 0.2],    # Low-efficiency volume (898 min)
+        "Moses Moody":           [1.5, 0.8, 0.7, 0.0, 0.4],    # Off-ball wing (1649 min)
+        "AJ Green":              [1.9, 1.8, 0.1, -2.0, 0.0],   # Off-ball wing (1659 min)
+        "Luka Dončić":           [6.8, 4.7, 2.1, 6.7, 3.9],    # Elite playmaker (1769 min DAL + 984 min LAL)
+        "Jarrett Allen":         [10.5, 5.9, 4.6, 4.2, 4.0],   # Efficient dunker
+        "Jericho Sims":          [0.4, 0.1, 0.3, -3.0, -0.2],  # Efficient dunker (632 min 2TM)
     }
 }
 

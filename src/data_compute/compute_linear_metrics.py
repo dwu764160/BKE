@@ -549,6 +549,54 @@ def compute_bpm_bref(df):
         1.667 * pct_BLK
     )
     position = position.clip(1.0, 5.0)
+    
+    # -------------------------------------------------------------------------
+    # STEP 2b: Team Position Adjustment (B-REF requirement)
+    # -------------------------------------------------------------------------
+    # From B-REF: "Next, the team sum is calculated to make sure that the
+    # minutes-weighted team average is 3.0"
+    # This forces each team's position average to equal 3.0 (middle position)
+    
+    # Load team mapping if available
+    player_teams = load_player_team_mapping()
+    if player_teams is not None:
+        # Merge team info into df
+        df_with_team = df.merge(
+            player_teams[['player_id', 'season', 'team']],
+            on=['player_id', 'season'],
+            how='left'
+        )
+        
+        # Calculate team-level adjustments
+        # For each team-season, calculate minutes-weighted position average
+        df_with_team['_pos_raw'] = position.values
+        df_with_team['_min_x_pos'] = df_with_team['MIN'] * df_with_team['_pos_raw']
+        
+        team_pos_avg = df_with_team.groupby(['team', 'season']).apply(
+            lambda g: g['_min_x_pos'].sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 3.0,
+            include_groups=False
+        ).reset_index(name='team_pos_avg')
+        
+        # Merge team average back
+        df_with_team = df_with_team.merge(team_pos_avg, on=['team', 'season'], how='left')
+        df_with_team['team_pos_avg'] = df_with_team['team_pos_avg'].fillna(3.0)
+        
+        # Calculate offset to bring team average to 3.0
+        df_with_team['_team_offset'] = 3.0 - df_with_team['team_pos_avg']
+        
+        # Apply offset to each player's position
+        position_adjusted = df_with_team['_pos_raw'] + df_with_team['_team_offset']
+        position_adjusted = position_adjusted.clip(1.0, 5.0)
+        
+        # Update position with team-adjusted values
+        position = position_adjusted.values
+        
+        # Debug: log team adjustment stats
+        print(f"  Team position adjustment applied to {len(team_pos_avg)} team-seasons")
+        print(f"  Avg adjustment magnitude: {df_with_team['_team_offset'].abs().mean():.3f}")
+    else:
+        print("  WARNING: No team data available - skipping team position adjustment")
+    
     df['Position'] = position
     
     # =========================================================================
