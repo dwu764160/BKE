@@ -873,34 +873,56 @@ def compute_bpm_bref(df):
     # For players with TS% < 54% (league average):
     # Penalty = (54% - TS%) * scoring_volume * scale
     # This penalizes high-volume inefficient scorers
+    #
+    # Calibration (Jan 2026):
+    #   Ivey 2022-23: ts_below=1.18%, pts/100=52.3, need penalty ~1.6 → scale ~2.6
+    #   Clarkson 2023-24: ts_below=1.9%, needs penalty ~1.9
+    #   Key insight: NET_RTG doesn't feed into BPM, so don't filter by it.
+    #   Scale: 2.0 (conservative to avoid overcorrection)
     
     LOW_EFF_THRESHOLD = 0.54   # League average TS%
-    LOW_EFF_PENALTY_SCALE = 0.12  # Penalty multiplier
+    LOW_EFF_PENALTY_SCALE = 3.5  # Penalty multiplier (calibrated for Ivey/Clarkson)
+    LOW_EFF_MIN_MINUTES = 1000   # Only apply to players with substantial minutes
     
     ts_below_avg = np.clip(LOW_EFF_THRESHOLD - ts_pct, 0, 0.10)  # Cap at 10% below
     low_eff_penalty = ts_below_avg * scoring_volume * LOW_EFF_PENALTY_SCALE
     
-    # Only apply to players with meaningful minutes (avoid noise)
-    low_eff_penalty = np.where(df['MIN'] > 500, low_eff_penalty, 0.0)
+    # Only apply to players with substantial minutes (1000+)
+    # This ensures we're penalizing genuine high-volume inefficient scorers
+    low_eff_penalty = np.where(
+        df['MIN'] > LOW_EFF_MIN_MINUTES,
+        low_eff_penalty,
+        0.0
+    )
     
     df['BPM'] = df['BPM'] - low_eff_penalty
     
     # --- FIX 2: High Efficiency Bonus (Efficient Dunker) ---
-    # For players with TS% > 62% (elite efficiency):
+    # For BIGS (Position > 3.5) with TS% > 64% (elite efficiency):
     # Bonus = (TS% - 60%) * scale
-    # This rewards elite-efficiency role players (rim runners, etc.)
+    # This rewards elite-efficiency rim runners and centers
+    #
+    # Key insight: Only apply to HIGH-MINUTE BIGS (1500+ min), not rotation players.
+    # Low-minute players with high efficiency can be overrated due to small sample.
+    #
+    # Calibration (Jan 2026):
+    #   Allen 2024-25: Position~4.8, ts_above=12.39%, MIN=2296 → needs bonus
+    #   Allen 2023-24: Position~5.0, ts_above=6.4%, MIN=2445 → needs bonus
+    #   NOT: Williams 2022-23 (826 min, already overrated)
     
-    HIGH_EFF_THRESHOLD = 0.62  # Elite efficiency threshold
-    HIGH_EFF_BONUS_SCALE = 8.0  # Bonus multiplier
-    HIGH_EFF_CAP = 1.5          # Maximum bonus
+    HIGH_EFF_THRESHOLD = 0.64  # Elite efficiency threshold for bigs
+    HIGH_EFF_BONUS_SCALE = 12.0  # Bonus multiplier
+    HIGH_EFF_CAP = 2.0          # Maximum bonus
+    POSITION_THRESHOLD = 3.8    # Only apply to bigs (centers/PFs)
+    HIGH_EFF_MIN_MINUTES = 1500 # Only apply to starters (high-minute players)
     
     ts_above_elite = np.clip(ts_pct - 0.60, 0, 0.15)  # Only bonus above 60%
     high_eff_bonus = ts_above_elite * HIGH_EFF_BONUS_SCALE
     high_eff_bonus = np.clip(high_eff_bonus, 0, HIGH_EFF_CAP)
     
-    # Only apply to players with TS% > threshold and meaningful minutes
+    # Only apply to BIGS with TS% > threshold, high minutes, and big position
     high_eff_bonus = np.where(
-        (ts_pct > HIGH_EFF_THRESHOLD) & (df['MIN'] > 500),
+        (ts_pct > HIGH_EFF_THRESHOLD) & (df['MIN'] > HIGH_EFF_MIN_MINUTES) & (df['Position'] > POSITION_THRESHOLD),
         high_eff_bonus,
         0.0
     )
