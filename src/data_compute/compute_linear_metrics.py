@@ -594,8 +594,27 @@ def compute_bpm_bref(df):
         # Debug: log team adjustment stats
         print(f"  Team position adjustment applied to {len(team_pos_avg)} team-seasons")
         print(f"  Avg adjustment magnitude: {df_with_team['_team_offset'].abs().mean():.3f}")
+        
+        # =====================================================================
+        # Calculate team-level NET_RTG for BPM team adjustment (B-REF style)
+        # =====================================================================
+        # Sum (NET_RTG * MIN) / sum(MIN) per team-season gives team's avg on-court rating
+        # This approximates B-REF's team adjustment where all players get same boost
+        team_net_rtg_calc = df_with_team.groupby(['team', 'season']).apply(
+            lambda g: (g['NET_RTG'] * g['MIN']).sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 0,
+            include_groups=False
+        ).reset_index(name='team_avg_net_rtg')
+        
+        df_with_team = df_with_team.merge(team_net_rtg_calc, on=['team', 'season'], how='left')
+        df_with_team['team_avg_net_rtg'] = df_with_team['team_avg_net_rtg'].fillna(0)
+        
+        # Store team avg NET_RTG in main df for later use in BPM adjustment
+        df['team_avg_net_rtg'] = df_with_team['team_avg_net_rtg'].values
+        
+        print(f"  Team NET_RTG calculated: range [{df['team_avg_net_rtg'].min():.1f}, {df['team_avg_net_rtg'].max():.1f}]")
     else:
         print("  WARNING: No team data available - skipping team position adjustment")
+        df['team_avg_net_rtg'] = 0  # Fallback
     
     df['Position'] = position
     
@@ -876,11 +895,16 @@ def compute_bpm_bref(df):
     #    - B-REF's regression undervalues unique playmaking bigs like Jokić
     #    - Bonus scales with position and AST rate
     #
-    # 2. Team context adjustment using player's on-court NET_RTG
-    #    - Players on bad teams (low NET_RTG) tend to be overestimated
-    #    - Players on good teams (high NET_RTG) tend to be underestimated
+    # 2. Team context adjustment using TEAM-LEVEL NET_RTG (B-REF style)
+    #    - B-REF adds the SAME constant to all players on a team
+    #    - Uses team's overall efficiency, not individual on-court rating
+    #    - This distributes "hidden" value (defense, spacing) to all players
     #
-    # Grid search optimized: AST_BIG=14, NET_SCALE=0.11, COMPRESSION=0.89, OFFSET=0.60
+    # 3. Individual on-court adjustment (residual)
+    #    - Small bonus/penalty based on how much better/worse player is vs team avg
+    #    - Captures individual impact beyond team context
+    #
+    # Grid search optimized: AST_BIG=14, TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.06
     
     # Calculate AST per minute for big playmaker adjustment
     ast_per_min = df['AST'] / df['MIN'].replace(0, 1)
@@ -894,10 +918,21 @@ def compute_bpm_bref(df):
         0.0
     )
     
-    # Team context adjustment using player's on-court NET_RTG
-    # NET_RTG = ORTG - DRTG (how much better the team is with player on court)
-    NET_SCALE = 0.11
-    net_rtg_adjustment = NET_SCALE * df['NET_RTG']
+    # Team context adjustment using TEAM-level NET_RTG (B-REF style)
+    # This gives all players on good teams a boost, all on bad teams a penalty
+    # Scale: Boston (+9) gets +2.25, Washington (-9) gets -2.25
+    TEAM_NET_SCALE = 0.25
+    team_net_adjustment = TEAM_NET_SCALE * df['team_avg_net_rtg']
+    
+    # Individual on-court adjustment (how player differs from team average)
+    # This captures individual impact beyond team context
+    # Small scale since team adjustment captures most of the effect
+    IND_NET_SCALE = 0.06
+    individual_net_diff = df['NET_RTG'] - df['team_avg_net_rtg']
+    individual_adjustment = IND_NET_SCALE * individual_net_diff
+    
+    # Combined NET_RTG adjustment
+    net_rtg_adjustment = team_net_adjustment + individual_adjustment
     
     # Apply all adjustments
     adjusted_bpm = final_bpm + ast_big_adjustment + net_rtg_adjustment
@@ -930,6 +965,14 @@ def compute_bpm_bref(df):
     # - At 0 minutes: subtract full penalty (1.0 BPM)
     # - At threshold (2000 min): subtract nothing
     # - Linear interpolation in between
+    #
+    # ENHANCED (Jan 2026): Two-tier regression system:
+    # 1. Standard regression: 0-2000 min, 1.0 BPM penalty at 0 min
+    # 2. Very low minute penalty FOR BIGS: <500 min gets ADDITIONAL penalty
+    #    - Garza at 120-239 min was overrated by +2.2 to +3.7 (position ~4.3)
+    #    - Sims at 353-811 min was overrated by ~1.3 (position ~4.7)
+    #    - Low-min BIGS have much noisier stats because they play easy situations
+    #    - Guards with low minutes (GP2) may be legitimate defensive specialists
     
     MIN_REGRESSION_THRESHOLD = 2000  # Minutes at which regression stops
     MIN_REGRESSION_STRENGTH = 1.0    # Maximum penalty at 0 minutes
@@ -937,9 +980,36 @@ def compute_bpm_bref(df):
     # Calculate penalty factor: 0 at threshold, 1 at 0 minutes
     penalty_factor = np.clip(1.0 - (df['MIN'] / MIN_REGRESSION_THRESHOLD), 0, 1)
     
-    # Apply penalty
+    # Apply base penalty
     df['BPM'] = df['BPM'] - MIN_REGRESSION_STRENGTH * penalty_factor
     df['OBPM'] = df['OBPM'] - MIN_REGRESSION_STRENGTH * penalty_factor  # Same regression for OBPM
+    
+    # --- VERY LOW MINUTE PENALTY (BIGS ONLY) ---
+    # Additional regression for BIGS (Position > 3.5) under 500 minutes
+    # Low-minute bigs are often overrated because they only play easy situations
+    # (garbage time, favorable matchups, dunks on offense)
+    # 
+    # Key insight: Only apply to BIGS, not guards. Guards like GP2 may be
+    # legitimate defensive specialists even with low minutes.
+    #
+    # Penalty: scales from 0 at 500 min to 3.0 at 0 min, for positions > 3.5
+    # Increased from 2.0 to 3.0 to counteract team adjustment boost for garbage time
+    VERY_LOW_MIN_THRESHOLD = 500
+    VERY_LOW_MIN_PENALTY = 3.0  # Additional BPM penalty at 0 minutes (was 2.0)
+    BIG_POSITION_THRESHOLD = 3.5  # Only apply to bigs
+    
+    very_low_min_factor = np.clip(1.0 - (df['MIN'] / VERY_LOW_MIN_THRESHOLD), 0, 1)
+    very_low_min_penalty = VERY_LOW_MIN_PENALTY * very_low_min_factor
+    
+    # Only apply to BIGS under 500 minutes
+    very_low_min_penalty = np.where(
+        df['Position'] > BIG_POSITION_THRESHOLD,
+        very_low_min_penalty,
+        0.0
+    )
+    
+    df['BPM'] = df['BPM'] - very_low_min_penalty
+    df['OBPM'] = df['OBPM'] - very_low_min_penalty
     
     # =========================================================================
     # STEP 7c: Efficiency-Based Adjustments (January 2026)
