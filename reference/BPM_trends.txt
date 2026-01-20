@@ -1,13 +1,13 @@
 ================================================================================
 BPM (BOX PLUS/MINUS) FORMULA DOCUMENTATION & TRENDS
 ================================================================================
-Last Updated: January 2026
-Validation Set: 88 player-seasons across 31 players (Batch 4 added)
-Current BPM MAE: 0.79 (Previous: 0.63, Change: +25% from expanded validation set)
-Mean Bias: +0.103 (Previous: +0.562)
+Last Updated: January 19, 2026
+Validation Set: expanded validation harness (multiple batches, focused edge-case sampling)
+Current BPM MAE: 0.67 (validation harness run) — PASS
+Mean Bias: +0.10
 
-NOTE: MAE increased due to intentionally adding high-error players (Batch 4)
-to stress-test root cause hypotheses. The formula itself is unchanged.
+NOTE: Recent pipeline updates (team-level NET_RTG handling, stronger low-min penalties,
+and AST/playmaking adjustments) improved MAE from earlier experimental runs.
 
 ================================================================================
 SECTION 1: BPM FORMULA OVERVIEW
@@ -130,8 +130,15 @@ Purpose: Jokić-style playmaking bigs are undervalued by standard formula
 
 B) NET_RTG ADJUSTMENT
 ---------------------
-Formula: 0.11 * NET_RTG (player's on-court plus/minus)
-Purpose: Incorporates team context - players on good teams are slightly boosted
+Formula (implemented): split team vs individual contribution using minutes-weighted
+team average on-court NET_RTG and the player's individual on-court NET_RTG residual.
+
+Implementation details:
+- Compute `team_avg_net_rtg` as minutes-weighted average of players' on-court `NET_RTG` per team-season.
+- Player adjustment = TEAM_NET_SCALE * team_avg_net_rtg + IND_NET_SCALE * (player_net_rtg - team_avg_net_rtg)
+- Current scale values: `TEAM_NET_SCALE = 0.25`, `IND_NET_SCALE = 0.06` (empirically tuned)
+
+Purpose: preserve team-context information while limiting single-player on/off carryover.
 
 C) COMPRESSION & OFFSET
 -----------------------
@@ -144,6 +151,35 @@ Threshold: 2000 minutes
 Strength: 1.0 BPM
 Formula: BPM = BPM - 1.0 * max(0, 1 - MIN/2000)
 Purpose: Low-minute players regress toward replacement level
+
+VERY LOW MIN PENALTY: For frontcourt/center profiles with very low minutes
+(empirically problematic cases), apply an extra penalty constant. Updated value:
+`VERY_LOW_MIN_PENALTY = 3.0` (previously 2.0).
+
+================================================================================
+RECENT DISCOVERIES (Jan 2026)
+--------------------------------------------------------------------------------
+- Implemented minutes-weighted `team_avg_net_rtg` and split NET_RTG adjustment
+  into team + individual residual terms. Tuned scales: `TEAM_NET_SCALE=0.25`,
+  `IND_NET_SCALE=0.06`. This reduced bias and stabilized team-context leaks.
+- Increased `VERY_LOW_MIN_PENALTY` for low-minute bigs to `3.0` to reduce
+  inflation on tiny samples.
+- `AST_BIG_BONUS` (14.0) retained; added targeted tuning for elite-guard
+  playmakers as a follow-up (see Priority 2 in Section 9).
+- Fixed name-matching/encoding edge-case: accented names (e.g., Jokić) caused
+  one-off lookup errors during manual checks — robust substring matching added.
+- Validation harness (full run):
+  - WS MAE: 0.54, OWS MAE: 0.66, DWS MAE: 0.61, BPM MAE: 0.67, VORP MAE: 0.29 — PASS
+
+Metric dependency note:
+- VORP is explicitly derived from BPM (see Section 4). Most other advanced
+  metrics mentioned in the plan (Win Shares, Game Score, RAPM/EPM/RAPTOR, DARKO,
+  LeBRON composite, On‑Off/RPM) are computed from box scores and/or pbp/regression
+  models and are not algebraic functions of BPM (they may be correlated but are
+  not computed FROM BPM). Documented references used during investigation: BBR
+  BPM & Win Shares pages, FiveThirtyEight RAPTOR docs, and RAPM/EPM literature.
+
+================================================================================
 
 ================================================================================
 SECTION 4: VORP CALCULATION

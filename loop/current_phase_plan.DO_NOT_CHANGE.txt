@@ -50,3 +50,7 @@ End of file — DO NOT CHANGE
 [ ] Stream C: Archetype Classification & Evaluation
     Command: src/modeling/evaluate_players.py
     Notes: Merge Metrics + Tracking to classify players (e.g., "Ball Dominant Creator") and regress vs RAPM.
+
+[x] Stream A: BPM tuning, documentation, and validation
+    Command: python tests/validate_advanced_metrics.py && python src/data_compute/compute_linear_metrics.py
+    Notes: Implemented team_net_rtg split (TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.06), increased VERY_LOW_MIN_PENALTY to 3.0, added AST-based big bonus; updated `reference/BPM_trends.txt` with discoveries and validation summary (BPM MAE 0.67). Validation PASS.

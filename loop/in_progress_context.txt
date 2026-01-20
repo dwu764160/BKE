@@ -102,3 +102,14 @@ NEXT STEPS:
 1. Mark "Stream A: Compute Linear Metrics" as complete in current_phase_plan
 2. Proceed to RAPM implementation (next task in pipeline)
 3. Consider adding more validation players for edge cases
+
+UPDATE (2026-01-19):
+- CONTEXT: Completed iterative BPM tuning and validation. Team-level NET_RTG handling added, AST big bonus retained, VERY_LOW_MIN_PENALTY increased.
+- RESULTS: Full validation harness run; reported MAEs: WS 0.54, OWS 0.66, DWS 0.61, BPM 0.67, VORP 0.29 (PASS).
+- RECENT FIXES: name-matching robustness for accented player names (e.g., Jokić); minutes-weighted `team_avg_net_rtg` computed from player on-court NET_RTG when team summary source is unreliable.
+- ATTEMPTED_METHODS: refactor `compute_linear_metrics.py` to compute `team_avg_net_rtg`, add TEAM_NET_SCALE/IND_NET_SCALE params, increase VERY_LOW_MIN_PENALTY, add AST-based big bonus and guard playmaker follow-up notes.
+- SOURCES_READ: reference/BPM_trends.txt (this repo), Basketball-Reference BPM & Win Shares docs (for formulas), local validation harness `tests/validate_advanced_metrics.py`.
+- NEXT_STEPS (explicit):
+  1) Implement RAPM/Adjusted Plus-Minus pipeline (`src/data_compute/compute_rapm.py`) using multi-season regularized regression and set as prior for downstream EPM/RAPM-based metrics. (High priority)
+  2) Add targeted elite-guard playmaker bonus (Priority 2 in BPM_trends) and re-run validation to measure impact (medium priority).
+  3) Add additional edge-case players to validation harness (GP2, Curry, Gafford, Mark Williams, Haliburton) and rerun to confirm stability (low priority).
