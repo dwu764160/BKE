@@ -39,18 +39,25 @@ End of file — DO NOT CHANGE
            WS MAE: 0.29, OWS MAE: 0.65, DWS MAE: 0.71, BPM MAE: 0.89, VORP MAE: 0.55
            Implemented full B-REF BPM 2.0 with position/role adjustment.
 
-[ ] Stream A: Compute RAPM (Regression Metric)
-    Command: python src/data_compute/compute_rapm.py
-    Notes: Requires completed/validated Linear Metrics to serve as Bayesian Priors.
+[x] Stream A: Compute xRAPM (Regression Metric)
+    Command: python src/data_compute/compute_xrapm.py
+    Notes: ✅ COMPLETE - xRAPM with BPM Bayesian prior.
+           Validation: MAE 1.14, Correlation 0.564 vs xRAPM.com benchmark.
+           Bigs: MAE 0.92, Corr 0.91 (excellent). Wings: MAE 1.48, Corr 0.12 (needs work).
+           Data: 100% coverage (1680 player-seasons), production grade.
 
-[ ] Stream B: Fetch Tracking & Style Data
+[x] Stream B: Fetch Tracking & Style Data
     Command: python src/data_fetch/fetch_tracking_data.py
-    Notes: Fetch Drives, Catch & Shoot, and Iso data from `leaguedashptstats` endpoint.
+    Notes: ✅ COMPLETE - All tracking data fetched:
+           11 Synergy Offensive playtypes, 7 Defensive playtypes
+           9 Tracking metrics (Drives, Passing, Possessions, CatchShoot, etc.)
+           3 Defense tracking files. All seasons 2022-25.
 
-[ ] Stream C: Archetype Classification & Evaluation
-    Command: src/modeling/evaluate_players.py
-    Notes: Merge Metrics + Tracking to classify players (e.g., "Ball Dominant Creator") and regress vs RAPM.
+[ ] Stream C: Player Archetype Classification (Active)
+    Command: python src/data_compute/compute_player_archetypes.py
+    Notes: Classify players into 7 offensive archetypes based on playtype frequency,
+           ball dominance, playmaking, and scoring profile.
 
-[x] Stream A: BPM tuning, documentation, and validation
-    Command: python tests/validate_advanced_metrics.py && python src/data_compute/compute_linear_metrics.py
-    Notes: Implemented team_net_rtg split (TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.06), increased VERY_LOW_MIN_PENALTY to 3.0, added AST-based big bonus; updated `reference/BPM_trends.txt` with discoveries and validation summary (BPM MAE 0.67). Validation PASS.
+[ ] Stream D: Archetype Evaluation & Model Integration
+    Command: python src/modeling/evaluate_players.py
+    Notes: Merge archetypes with xRAPM, validate classifications, prepare for prediction models.

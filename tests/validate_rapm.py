@@ -51,6 +51,40 @@ OFFENSIVE_STARS = {
     "1628369": {"name": "Jayson Tatum", "expected_orapm_min": 2.0},
 }
 
+# xRAPM.com 2023-24 benchmark data (from xrapm.com/table_pages/xRAPM_2024.html)
+# Note: xRAPM DRAPM is negative = good defense; our DRAPM is positive = good defense
+# We store xRAPM values as-is and flip sign when comparing
+XRAPM_2023_24_BENCHMARK = {
+    "Nikola Jokić":              {"orapm": 6.1, "drapm": -2.5, "total": 8.6},
+    "Joel Embiid":               {"orapm": 3.4, "drapm": -3.7, "total": 7.1},
+    "Shai Gilgeous-Alexander":   {"orapm": 4.7, "drapm": -1.9, "total": 6.6},
+    "Luka Dončić":               {"orapm": 5.4, "drapm": -0.8, "total": 6.2},
+    "Kyrie Irving":              {"orapm": 5.0, "drapm": -1.0, "total": 6.0},
+    "Kawhi Leonard":             {"orapm": 2.9, "drapm": -2.8, "total": 5.7},
+    "Paul George":               {"orapm": 3.3, "drapm": -2.2, "total": 5.5},
+    "LeBron James":              {"orapm": 3.7, "drapm": -1.4, "total": 5.1},
+    "Anthony Davis":             {"orapm": 1.3, "drapm": -3.8, "total": 5.1},
+    "Donovan Mitchell":          {"orapm": 3.4, "drapm": -1.6, "total": 5.0},
+    "Damian Lillard":            {"orapm": 4.4, "drapm": -0.5, "total": 4.9},
+    "Giannis Antetokounmpo":     {"orapm": 3.2, "drapm": -1.7, "total": 4.9},
+    "Stephen Curry":             {"orapm": 4.2, "drapm": -0.4, "total": 4.6},
+    "Jayson Tatum":              {"orapm": 3.5, "drapm": -1.0, "total": 4.5},
+    "Anthony Edwards":           {"orapm": 2.4, "drapm": -2.0, "total": 4.4},
+    "Jimmy Butler":              {"orapm": 3.2, "drapm": -1.0, "total": 4.2},
+    "Draymond Green":            {"orapm": -0.5, "drapm": -4.7, "total": 4.2},
+    "Kristaps Porziņģis":        {"orapm": 1.8, "drapm": -2.4, "total": 4.2},
+    "Jalen Brunson":             {"orapm": 4.4, "drapm": 0.3, "total": 4.1},
+    "Devin Booker":              {"orapm": 4.4, "drapm": 0.3, "total": 4.1},
+    "Derrick White":             {"orapm": 1.4, "drapm": -2.7, "total": 4.1},
+    "Chet Holmgren":             {"orapm": 1.6, "drapm": -2.4, "total": 4.0},
+    "Jrue Holiday":              {"orapm": 2.2, "drapm": -1.8, "total": 4.0},
+    "Fred VanVleet":             {"orapm": 1.8, "drapm": -2.0, "total": 3.8},
+    "Franz Wagner":              {"orapm": 1.4, "drapm": -2.4, "total": 3.8},
+    "Tyrese Haliburton":         {"orapm": 4.4, "drapm": 0.7, "total": 3.7},
+    "Kevin Durant":              {"orapm": 2.8, "drapm": -0.9, "total": 3.7},
+    "Herbert Jones":             {"orapm": 0.9, "drapm": -2.6, "total": 3.5},
+}
+
 
 def load_rapm_data():
     """Load the computed RAPM data."""
@@ -388,6 +422,393 @@ def validate_top_rankings(df, report):
     return report
 
 
+def validate_against_xrapm(df, report):
+    """Validate 2023-24 RAPM against xRAPM.com benchmark data."""
+    print("\n" + "="*60)
+    print("7. xRAPM.com 2023-24 BENCHMARK COMPARISON")
+    print("="*60)
+    
+    report["xrapm_benchmark"] = {"matches": [], "correlations": {}}
+    
+    # Get our 2023-24 pooled data
+    season = "2023-24"
+    pooled = df[(df['season'] == season) & (df['RAPM_type'] == 'pooled')].copy()
+    pooled_split = df[(df['season'] == season) & (df['RAPM_type'] == 'pooled_split')].copy()
+    
+    if pooled.empty:
+        print(f"   ⚠️ No pooled RAPM data for {season}")
+        return report
+    
+    print(f"\n   Comparing {len(XRAPM_2023_24_BENCHMARK)} xRAPM leaders against our {season} data:")
+    print(f"   (xRAPM DRAPM: negative=good defense | Ours: positive=good defense)\n")
+    print(f"   {'Player':<28} {'xRAPM':>7} {'Ours':>7} {'Δ':>6}  {'xO':>5} {'O':>5} {'xD':>6} {'D':>6}")
+    print(f"   {'-'*28} {'-'*7} {'-'*7} {'-'*6}  {'-'*5} {'-'*5} {'-'*6} {'-'*6}")
+    
+    comparison_rows = []
+    
+    for player_name, xrapm in XRAPM_2023_24_BENCHMARK.items():
+        # Find player in our data
+        player_pooled = pooled[pooled['player_name'] == player_name]
+        player_split = pooled_split[pooled_split['player_name'] == player_name]
+        
+        if player_pooled.empty:
+            print(f"   {player_name:<28} {xrapm['total']:>+7.1f}    --      --")
+            continue
+        
+        our_rapm = player_pooled['RAPM'].values[0]
+        delta = our_rapm - xrapm['total']
+        
+        our_orapm = player_split['ORAPM'].values[0] if not player_split.empty and 'ORAPM' in player_split.columns else None
+        our_drapm = player_split['DRAPM'].values[0] if not player_split.empty and 'DRAPM' in player_split.columns else None
+        
+        # xRAPM DRAPM is negative=good, ours is positive=good, so flip for comparison
+        xrapm_drapm_flipped = -xrapm['drapm']
+        
+        o_str = f"{our_orapm:>+5.1f}" if our_orapm is not None else "   --"
+        d_str = f"{our_drapm:>+6.1f}" if our_drapm is not None else "    --"
+        xd_str = f"{xrapm['drapm']:>+6.1f}"
+        
+        status = "✅" if abs(delta) < 2.0 else "⚠️"
+        print(f"   {player_name:<28} {xrapm['total']:>+7.1f} {our_rapm:>+7.2f} {delta:>+6.2f}  {xrapm['orapm']:>+5.1f} {o_str} {xd_str} {d_str} {status}")
+        
+        comparison_rows.append({
+            "player": player_name,
+            "xrapm_total": xrapm['total'],
+            "our_rapm": our_rapm,
+            "delta": delta,
+            "xrapm_orapm": xrapm['orapm'],
+            "our_orapm": our_orapm,
+            "xrapm_drapm": xrapm['drapm'],
+            "our_drapm": our_drapm,
+        })
+    
+    report["xrapm_benchmark"]["matches"] = comparison_rows
+    
+    # Compute correlations if we have enough matches
+    if len(comparison_rows) >= 10:
+        xrapm_totals = [r['xrapm_total'] for r in comparison_rows]
+        our_totals = [r['our_rapm'] for r in comparison_rows]
+        
+        pearson = np.corrcoef(xrapm_totals, our_totals)[0, 1]
+        
+        # Spearman rank correlation
+        from scipy.stats import spearmanr
+        spearman, _ = spearmanr(xrapm_totals, our_totals)
+        
+        report["xrapm_benchmark"]["correlations"] = {
+            "pearson": float(pearson),
+            "spearman": float(spearman),
+            "n_matched": len(comparison_rows),
+        }
+        
+        print(f"\n   Correlation with xRAPM (n={len(comparison_rows)}):")
+        print(f"      Pearson r:  {pearson:.3f} {'✅' if pearson > 0.7 else '⚠️' if pearson > 0.5 else '❌'}")
+        print(f"      Spearman ρ: {spearman:.3f} {'✅' if spearman > 0.7 else '⚠️' if spearman > 0.5 else '❌'}")
+        
+        # Mean absolute error
+        mae = np.mean([abs(r['delta']) for r in comparison_rows])
+        print(f"      MAE:        {mae:.2f}")
+        
+        # Top-10 overlap
+        xrapm_top10 = list(XRAPM_2023_24_BENCHMARK.keys())[:10]
+        our_top10 = pooled.nlargest(10, 'RAPM')['player_name'].tolist()
+        overlap = len(set(xrapm_top10) & set(our_top10))
+        print(f"      Top-10 overlap: {overlap}/10 {'✅' if overlap >= 6 else '⚠️'}")
+        
+        report["xrapm_benchmark"]["mae"] = float(mae)
+        report["xrapm_benchmark"]["top10_overlap"] = overlap
+    
+    return report
+
+
+def diagnose_xrapm_discrepancy(df, report):
+    """Investigate why our RAPM differs from xRAPM and suggest fixes."""
+    print("\n" + "="*60)
+    print("8. xRAPM DISCREPANCY DIAGNOSIS")
+    print("="*60)
+    
+    report["diagnosis"] = {}
+    season = "2023-24"
+    
+    pooled = df[(df['season'] == season) & (df['RAPM_type'] == 'pooled')].copy()
+    pooled_split = df[(df['season'] == season) & (df['RAPM_type'] == 'pooled_split')].copy()
+    
+    if pooled.empty:
+        print("   ⚠️ No data for diagnosis")
+        return report
+    
+    # Build comparison data
+    comparison_rows = []
+    for player_name, xrapm in XRAPM_2023_24_BENCHMARK.items():
+        player_pooled = pooled[pooled['player_name'] == player_name]
+        player_split = pooled_split[pooled_split['player_name'] == player_name]
+        if player_pooled.empty:
+            continue
+        our_rapm = player_pooled['RAPM'].values[0]
+        our_orapm = player_split['ORAPM'].values[0] if not player_split.empty else None
+        our_drapm = player_split['DRAPM'].values[0] if not player_split.empty else None
+        comparison_rows.append({
+            "player": player_name,
+            "xrapm_total": xrapm['total'],
+            "our_rapm": our_rapm,
+            "xrapm_orapm": xrapm['orapm'],
+            "our_orapm": our_orapm,
+            "xrapm_drapm_flipped": -xrapm['drapm'],  # flip to our convention
+            "our_drapm": our_drapm,
+        })
+    
+    if len(comparison_rows) < 10:
+        print("   ⚠️ Not enough matched players")
+        return report
+    
+    xrapm_totals = np.array([r['xrapm_total'] for r in comparison_rows])
+    our_totals = np.array([r['our_rapm'] for r in comparison_rows])
+    deltas = our_totals - xrapm_totals
+    
+    # 1. SYSTEMATIC BIAS CHECK
+    print("\n   1️⃣  SYSTEMATIC BIAS ANALYSIS")
+    mean_delta = np.mean(deltas)
+    std_delta = np.std(deltas)
+    print(f"      Mean Δ (ours - xRAPM): {mean_delta:+.2f}")
+    print(f"      Std Δ:                 {std_delta:.2f}")
+    report["diagnosis"]["mean_delta"] = float(mean_delta)
+    report["diagnosis"]["std_delta"] = float(std_delta)
+    
+    if mean_delta < -1.5:
+        print(f"      → Our values are systematically LOWER by ~{abs(mean_delta):.1f} points")
+        print(f"      → Likely cause: Over-regularization (alpha too high)")
+    elif mean_delta > 1.5:
+        print(f"      → Our values are systematically HIGHER")
+    else:
+        print(f"      → No major systematic bias")
+    
+    # 2. SCALE/VARIANCE CHECK
+    print("\n   2️⃣  VARIANCE COMPARISON")
+    our_std = np.std(our_totals)
+    xrapm_std = np.std(xrapm_totals)
+    variance_ratio = our_std / xrapm_std
+    print(f"      Our std:   {our_std:.2f}")
+    print(f"      xRAPM std: {xrapm_std:.2f}")
+    print(f"      Ratio:     {variance_ratio:.2f}")
+    report["diagnosis"]["variance_ratio"] = float(variance_ratio)
+    
+    if variance_ratio < 0.7:
+        print(f"      → Our RAPM is too compressed (over-regularized)")
+        print(f"      → Fix: Lower alpha values in RidgeCV")
+    elif variance_ratio > 1.3:
+        print(f"      → Our RAPM has more spread (under-regularized)")
+    else:
+        print(f"      → Variance is similar ✅")
+    
+    # 3. LINEAR RESCALING TEST
+    print("\n   3️⃣  LINEAR RESCALING TEST")
+    from scipy.stats import linregress
+    slope, intercept, r_value, _, _ = linregress(our_totals, xrapm_totals)
+    print(f"      Best fit: xRAPM ≈ {slope:.2f} × Ours + {intercept:.2f}")
+    print(f"      R² = {r_value**2:.3f}")
+    report["diagnosis"]["rescale_slope"] = float(slope)
+    report["diagnosis"]["rescale_intercept"] = float(intercept)
+    report["diagnosis"]["rescale_r2"] = float(r_value**2)
+    
+    # Apply rescaling and check improvement
+    rescaled = slope * our_totals + intercept
+    rescaled_mae = np.mean(np.abs(rescaled - xrapm_totals))
+    original_mae = np.mean(np.abs(deltas))
+    print(f"      Original MAE:  {original_mae:.2f}")
+    print(f"      Rescaled MAE:  {rescaled_mae:.2f}")
+    
+    if rescaled_mae < original_mae * 0.6:
+        print(f"      → Rescaling helps significantly!")
+        print(f"      → This suggests a consistent scale/offset difference")
+    
+    # 4. ORAPM/DRAPM COMPONENT ANALYSIS
+    print("\n   4️⃣  COMPONENT ANALYSIS (ORAPM/DRAPM)")
+    orapm_pairs = [(r['our_orapm'], r['xrapm_orapm']) for r in comparison_rows if r['our_orapm'] is not None]
+    drapm_pairs = [(r['our_drapm'], r['xrapm_drapm_flipped']) for r in comparison_rows if r['our_drapm'] is not None]
+    
+    if len(orapm_pairs) >= 10:
+        our_o, xrapm_o = zip(*orapm_pairs)
+        o_corr = np.corrcoef(our_o, xrapm_o)[0, 1]
+        o_mae = np.mean(np.abs(np.array(our_o) - np.array(xrapm_o)))
+        print(f"      ORAPM correlation: {o_corr:.3f}, MAE: {o_mae:.2f}")
+        report["diagnosis"]["orapm_corr"] = float(o_corr)
+    
+    if len(drapm_pairs) >= 10:
+        our_d, xrapm_d = zip(*drapm_pairs)
+        d_corr = np.corrcoef(our_d, xrapm_d)[0, 1]
+        d_mae = np.mean(np.abs(np.array(our_d) - np.array(xrapm_d)))
+        print(f"      DRAPM correlation: {d_corr:.3f}, MAE: {d_mae:.2f}")
+        report["diagnosis"]["drapm_corr"] = float(d_corr)
+    
+    # 5. METHODOLOGY DIFFERENCE HYPOTHESIS
+    print("\n   5️⃣  METHODOLOGY HYPOTHESIS")
+    print("""
+      xRAPM likely uses enhancements we don't:
+      
+      a) BOX-SCORE PRIOR (most likely cause)
+         - xRAPM = RAPM + Bayesian prior from box stats
+         - This inflates star players' values
+         - Our pure RAPM is more conservative
+         
+      b) MULTI-YEAR WEIGHTING
+         - They may use 5+ years with different decay
+         - We use 3 years with 100%/65%/40% decay
+         
+      c) MINUTES-WEIGHTING
+         - They may weight possessions by player minutes
+         - This amplifies high-minute player signals
+         
+      d) LOWER REGULARIZATION
+         - They may use lower alpha (less shrinkage)
+         - Our alpha=7500 is quite aggressive
+""")
+    
+    # 6. RECOMMENDED FIXES
+    print("   6️⃣  RECOMMENDED FIXES")
+    print("""
+      To better match xRAPM:
+      
+      1. REDUCE REGULARIZATION (Quick fix)
+         - In compute_rapm.py, try alphas = [50, 100, 250, 500, 1000]
+         - Lower alpha = less shrinkage = higher values for stars
+         
+      2. ADD BOX-SCORE PRIOR (Best fix)
+         - Compute BPM-like prior for each player
+         - Use as Bayesian prior in ridge regression
+         - This is what ESPN RPM and xRAPM do
+         
+      3. APPLY LINEAR RESCALING (Simplest fix)
+         - Multiply our RAPM by {slope:.2f} and add {intercept:.2f}
+         - Quick calibration to match xRAPM scale
+         
+      4. EXTEND POOLING WINDOW
+         - Use 5 years instead of 3
+         - More data = less regularization needed
+""".format(slope=slope, intercept=intercept))
+    
+    report["diagnosis"]["recommendations"] = [
+        f"Reduce alpha: try [50, 100, 250, 500, 1000]",
+        f"Add box-score prior (BPM-based)",
+        f"Apply rescaling: {slope:.2f} × RAPM + {intercept:.2f}",
+        f"Extend to 5-year pooling",
+    ]
+    
+    return report
+
+
+def load_xrapm_data():
+    """Load our computed xRAPM data (with BPM prior)."""
+    path = os.path.join(DATA_DIR, "player_xrapm.parquet")
+    if not os.path.exists(path):
+        path = os.path.join(DATA_DIR, "player_xrapm.csv")
+    
+    if not os.path.exists(path):
+        return None
+    
+    df = pd.read_parquet(path) if path.endswith('.parquet') else pd.read_csv(path)
+    return df
+
+
+def validate_xrapm_vs_benchmark(report):
+    """Compare our xRAPM (with BPM prior) against xRAPM.com benchmark."""
+    print("\n" + "="*60)
+    print("9. OUR xRAPM (BPM Prior) vs xRAPM.com BENCHMARK")
+    print("="*60)
+    
+    report["xrapm_comparison"] = {}
+    
+    xrapm_df = load_xrapm_data()
+    if xrapm_df is None:
+        print("   ⚠️ No xRAPM data found. Run compute_xrapm.py first.")
+        return report
+    
+    season = "2023-24"
+    
+    # Get pooled xRAPM with prior
+    pooled = xrapm_df[(xrapm_df['season'] == season) & (xrapm_df['xRAPM_type'] == 'pooled_with_prior')].copy()
+    pooled_split = xrapm_df[(xrapm_df['season'] == season) & (xrapm_df['xRAPM_type'] == 'pooled_split_with_prior')].copy()
+    
+    if pooled.empty:
+        print(f"   ⚠️ No xRAPM data for {season}")
+        return report
+    
+    print(f"\n   Comparing against {len(XRAPM_2023_24_BENCHMARK)} xRAPM.com players:\n")
+    print(f"   {'Player':<28} {'xRAPM.com':>10} {'Ours':>8} {'Δ':>7}  {'Prior':>6}")
+    print(f"   {'-'*28} {'-'*10} {'-'*8} {'-'*7}  {'-'*6}")
+    
+    comparison_rows = []
+    
+    for player_name, xrapm in XRAPM_2023_24_BENCHMARK.items():
+        player_row = pooled[pooled['player_name'] == player_name]
+        
+        if player_row.empty:
+            print(f"   {player_name:<28} {xrapm['total']:>+10.1f}       --      --")
+            continue
+        
+        our_xrapm = player_row['xRAPM'].values[0]
+        bpm_prior = player_row['BPM_prior'].values[0] if 'BPM_prior' in player_row.columns else 0
+        delta = our_xrapm - xrapm['total']
+        
+        status = "✅" if abs(delta) < 2.0 else "⚠️" if abs(delta) < 3.0 else "❌"
+        print(f"   {player_name:<28} {xrapm['total']:>+10.1f} {our_xrapm:>+8.2f} {delta:>+7.2f}  {bpm_prior:>+6.2f} {status}")
+        
+        comparison_rows.append({
+            "player": player_name,
+            "xrapm_com": xrapm['total'],
+            "our_xrapm": our_xrapm,
+            "delta": delta,
+            "bpm_prior": bpm_prior,
+        })
+    
+    report["xrapm_comparison"]["matches"] = comparison_rows
+    
+    # Compute statistics
+    if len(comparison_rows) >= 10:
+        xrapm_vals = np.array([r['xrapm_com'] for r in comparison_rows])
+        our_vals = np.array([r['our_xrapm'] for r in comparison_rows])
+        
+        pearson = np.corrcoef(xrapm_vals, our_vals)[0, 1]
+        from scipy.stats import spearmanr
+        spearman, _ = spearmanr(xrapm_vals, our_vals)
+        mae = np.mean(np.abs(our_vals - xrapm_vals))
+        
+        # Top-10 overlap
+        xrapm_top10 = list(XRAPM_2023_24_BENCHMARK.keys())[:10]
+        our_top10 = pooled.nlargest(10, 'xRAPM')['player_name'].tolist()
+        overlap = len(set(xrapm_top10) & set(our_top10))
+        
+        report["xrapm_comparison"]["stats"] = {
+            "pearson": float(pearson),
+            "spearman": float(spearman),
+            "mae": float(mae),
+            "top10_overlap": overlap,
+            "n_matched": len(comparison_rows),
+        }
+        
+        print(f"\n   STATISTICS:")
+        print(f"      Pearson r:      {pearson:.3f} {'✅' if pearson > 0.7 else '⚠️' if pearson > 0.5 else '❌'}")
+        print(f"      Spearman ρ:     {spearman:.3f} {'✅' if spearman > 0.7 else '⚠️' if spearman > 0.5 else '❌'}")
+        print(f"      MAE:            {mae:.2f} {'✅' if mae < 1.5 else '⚠️' if mae < 2.5 else '❌'}")
+        print(f"      Top-10 overlap: {overlap}/10 {'✅' if overlap >= 6 else '⚠️'}")
+        
+        # Compare to pure RAPM performance
+        print(f"\n   IMPROVEMENT OVER PURE RAPM:")
+        if "xrapm_benchmark" in report and "correlations" in report["xrapm_benchmark"]:
+            pure_pearson = report["xrapm_benchmark"]["correlations"].get("pearson", 0)
+            pure_mae = report["xrapm_benchmark"].get("mae", 999)
+            pure_overlap = report["xrapm_benchmark"].get("top10_overlap", 0)
+            
+            p_delta = pearson - pure_pearson
+            mae_delta = pure_mae - mae  # positive = improvement
+            overlap_delta = overlap - pure_overlap
+            
+            print(f"      Pearson Δ:      {p_delta:+.3f} {'✅' if p_delta > 0 else '⚠️'}")
+            print(f"      MAE Δ:          {-mae_delta:+.2f} (lower is better) {'✅' if mae_delta > 0 else '⚠️'}")
+            print(f"      Top-10 overlap Δ: {overlap_delta:+d} {'✅' if overlap_delta > 0 else '⚠️'}")
+    
+    return report
+
+
 def generate_summary(report):
     """Generate overall validation summary."""
     print("\n" + "="*60)
@@ -458,6 +879,9 @@ def main():
     report = validate_orapm_drapm_consistency(df, report)
     report = validate_possession_coverage(df, report)
     report = validate_top_rankings(df, report)
+    report = validate_against_xrapm(df, report)
+    report = diagnose_xrapm_discrepancy(df, report)
+    report = validate_xrapm_vs_benchmark(report)  # Compare our xRAPM with BPM prior
     report = generate_summary(report)
     
     # Save report
@@ -471,27 +895,6 @@ def main():
    
    1. xRAPM.com - Current RAPM leaderboard
       https://xrapm.com/
-   
-   2. Basketball-Reference Advanced Stats
-      https://www.basketball-reference.com/leagues/NBA_2025_advanced.html
-   
-   3. NBA.com Advanced Stats (RPM-like metrics)
-      https://www.nba.com/stats/players/advanced
-   
-   4. FiveThirtyEight RAPTOR (archived)
-      https://projects.fivethirtyeight.com/nba-player-ratings/
-   
-   5. Dunks and Threes (RAPM variants)
-      https://dunksandthrees.com/
-   
-   6. PBPStats.com (play-by-play derived metrics)
-      https://www.pbpstats.com/
-   
-   7. Cleaning the Glass (subscription, detailed RAPM-based)
-      https://cleaningtheglass.com/
-   
-   8. NBAsuffer (RAPM methodology explanation)
-      https://www.nbastuffer.com/analytics101/regularized-adjusted-plus-minus-rapm/
 """)
 
 

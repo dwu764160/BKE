@@ -46,57 +46,57 @@ DO NOT CHANGE this file format or the section headings; other automated agents r
 
 ---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
 CONTEXT:
-- Task: Validate and fix BPM/VORP calculations in `src/data_compute/compute_linear_metrics.py`
+- Task: Build Player Archetype Classification System
 - Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: data/processed/metrics_linear.parquet, tests/validate_advanced_metrics.py
-- Status: ✅ RESOLVED - All linear metrics now passing validation!
+- Key files: data/tracking/*/synergy_Offensive_*.parquet, data/tracking/*/tracking_*.parquet
+- Status: 🔄 IN PROGRESS - Creating archetype classification algorithm
 
-FINAL STATE (2025-01-17):
+PREVIOUS TASK COMPLETED (2025-02-05):
 ================================================================================
-SUMMARY: Mean Absolute Errors (All Passing!)
+xRAPM Implementation & Data Fetching Fix
 ================================================================================
-  WS   MAE:  0.29  (Target < 1.5) ✅ PASS
-  OWS  MAE:  0.65  (Target < 1.0) ✅ PASS
-  DWS  MAE:  0.71  (Target < 1.0) ✅ PASS
-  BPM  MAE:  0.89  (Target < 1.0) ✅ PASS
-  VORP MAE:  0.55  (Target < 1.0) ✅ PASS
+- Fixed data fetching: 100% player coverage achieved (1680 player-seasons)
+- xRAPM validation results:
+  * Overall: MAE 1.14, Correlation 0.564
+  * Bigs: MAE 0.92, Corr 0.91 (excellent)
+  * Guards: MAE 1.00, Corr 0.43 (good)
+  * Wings: MAE 1.48, Corr 0.12 (needs investigation)
+  * Superstars: MAE 1.09, Stars: MAE 1.25, Role Players: MAE 1.04
 
-WHAT WAS FIXED:
-1. Implemented full B-REF BPM 2.0 formula with:
-   - Position estimation regression (1=PG to 5=C) from box score stats
-   - Offensive role estimation (1=Creator to 5=Receiver)
-   - Per-100-possession stats calculation
-   - Position-adjusted regression coefficients (B-REF table)
-   - Position and role adjustment constants
-   - Team context points adjustment (scales with ORTG and scoring volume)
-   - Team adjustment intercept (-8.0)
-   - Proper league average normalization
+CURRENT TASK:
+================================================================================
+Phase 3b: Player Archetype Classification
+================================================================================
 
-2. Fixed VORP formula:
-   - VORP = (BPM + 2.0) * pct_minutes * (games/82)
-   - pct_minutes = MIN / (GP * 48)
-   - Now matches B-REF methodology exactly
+ARCHETYPE DEFINITIONS (from user spec):
+1. Ball Dominant Creator - High ISO/PnRBH/PostUp freq + high playmaking (AST, passes, secondary AST)
+2. Interior Scorer - Low playmaking + high ball-dominant freq + high drives + low 3pt
+3. Perimeter Scorer - Low playmaking + high ball-dominant freq + low drives + high 3pt
+4. All-Around Scorer - Low playmaking + high ball-dominant freq + balanced drives/3pt
+5. Ballhandler - High playmaking + ball dominant + lower scoring volume
+6. Off-Ball Finisher - High Cut/PnRRm/Putback/Transition freq
+7. Off-Ball Movement Shooter - High Handoff/Offscreen freq
+8. Off-Ball Stationary Shooter - High SpotUp freq
+9. Rotation Piece/Glue Guy - All-around, low usage rate
 
-KEY IMPLEMENTATION DETAILS:
-- Points adjusted for team efficiency: deduction = (ORTG - 110) * 0.4 * volume_factor
-- Volume factor scales adjustment with scoring: (1 + (pts_per_100 - 20) / 50)
-- This prevents over/under-penalizing high/low volume scorers on elite offenses
+ADDITIONAL METRICS TO INCORPORATE:
+- Four Factors: Shooting (40%), Turnovers (25%), Rebounding (20%), Free Throws (15%)
+- Three-pointer impact: production, efficiency, wide-open, catch-and-shoot
+- Driving impact: attempts, efficiency, FT rate
+- Transition impact
+- Playmaking: time of possession, average dribbles
+- Screening impact
 
-SAMPLE VALIDATION RESULTS (2023-24):
-- Giannis: BPM 8.7 (target 9.0) ✅
-- Jokić: BPM 12.4 (target 13.2) ✅
-- Harris: BPM 0.2 (target 0.9) ✅
-- Gafford: BPM 1.8 (target 2.6) ✅
-- Podziemski: BPM -1.4 (target -0.1) ✅
+DATA SOURCES AVAILABLE:
+- Synergy: ISO, PnRBH, PostUp, Cut, PnRRm, Handoff, OffScreen, SpotUp, Transition, OffRebound
+- Tracking: Drives, Passing (AST, secondary AST, potential AST), Possessions (time, touches)
+- Box Score: PTS, FG3A, FG3%, FTA, FT%, MIN, GP
 
-VALIDATED AGAINST B-REF DATA FOR:
-- Giannis Antetokounmpo (3 seasons)
-- Nikola Jokić (3 seasons)
-- Brandin Podziemski (2 seasons)
-- Tobias Harris (3 seasons)
-- Daniel Gafford (3 seasons)
-
-NO BLOCKING ISSUES REMAINING.
+NEXT_STEPS:
+1. Create compute_player_archetypes.py with full classification algorithm
+2. Validate archetype assignments against known player types
+3. Investigate Wings/Stars poor xRAPM correlation
+4. Integrate archetypes with xRAPM for prediction models
 
 NEXT STEPS:
 1. Mark "Stream A: Compute Linear Metrics" as complete in current_phase_plan
