@@ -46,65 +46,91 @@ DO NOT CHANGE this file format or the section headings; other automated agents r
 
 ---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
 CONTEXT:
-- Task: Build Player Archetype Classification System
+- Task: Player Profile System Enhancement
 - Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: data/tracking/*/synergy_Offensive_*.parquet, data/tracking/*/tracking_*.parquet
-- Status: 🔄 IN PROGRESS - Creating archetype classification algorithm
+- Key files: data/processed/player_archetypes.parquet, data/processed/defensive_archetypes.parquet
+- Status: 🔄 IN PROGRESS - Fixing defensive archetypes & building player profile system
 
-PREVIOUS TASK COMPLETED (2025-02-05):
+COMPLETED (2025-02-06):
 ================================================================================
-xRAPM Implementation & Data Fetching Fix
+Phase 3b: Offensive Archetypes + xRAPM Collinearity Fix + Defensive Archetypes
 ================================================================================
-- Fixed data fetching: 100% player coverage achieved (1680 player-seasons)
-- xRAPM validation results:
-  * Overall: MAE 1.14, Correlation 0.564
-  * Bigs: MAE 0.92, Corr 0.91 (excellent)
-  * Guards: MAE 1.00, Corr 0.43 (good)
-  * Wings: MAE 1.48, Corr 0.12 (needs investigation)
-  * Superstars: MAE 1.09, Stars: MAE 1.25, Role Players: MAE 1.04
+
+✅ OFFENSIVE ARCHETYPES - COMPLETE (1,680 player-seasons)
+- Ball Dominant Creator, Interior Scorer, Perimeter Scorer, Off-Ball Finisher, etc.
+- Validated against known player types (Luka→BDC, Steph→Perimeter, Wemby→Interior)
+- Output: data/processed/player_archetypes.parquet
+
+✅ xRAPM COLLINEARITY FIX - COMPLETE
+- Created compute_xrapm_improved.py with:
+  * Collinear pair detection (503 pairs at 60%+ shared possessions)
+  * Multi-year career priors (3-year lookback)
+  * Doubled prior strength for collinear players (Wings/duos like Tatum/Brown)
+- Validation Results (2023-24 vs NET_RATING):
+  * Overall correlation: 0.582 → 0.668 (+0.087 improvement)
+  * Collinear players: 0.544 → 0.645 (+0.101 improvement)  
+  * MAE reduced by 44.9%
+- Output: data/processed/player_xrapm_v2.csv (1,432 player-seasons)
+
+✅ MATCHUP DATA FETCHER - COMPLETE
+- Created fetch_matchup_data.py
+- Fetched 414,407 matchups across 3 seasons
+- Computed matchup versatility & difficulty scores
+
+✅ DEFENSIVE ARCHETYPES v2 - COMPLETE
+- Created compute_defensive_archetypes_v2.py with 5 archetypes (down from 9)
+- Uses percentile-based thresholds for proper distribution
+- Distribution: Rotation 43%, Off-Ball 16%, POA 16%, Rim 12%, Switchable 11%
+- Validation: Gobert→Rim, AD→Rim, Wemby→Rim, Jrue→POA, Trae→Off-Ball(Liability)
+- Output: data/processed/defensive_archetypes_v2.parquet (1,687 player-seasons)
+
+✅ PLAYER ARCHETYPE VIEWER - COMPLETE
+- Created app/player_archetype_viewer.py
+- Generates interactive HTML viewer at app/player_archetypes.html
+- Shows all players with offensive/defensive archetypes and reasoning
+- Supports search/filter by name, archetype, season
 
 CURRENT TASK:
 ================================================================================
-Phase 3b: Player Archetype Classification
+Phase 3d: Player Profile System Enhancement (PLANNING ONLY)
 ================================================================================
 
-ARCHETYPE DEFINITIONS (from user spec):
-1. Ball Dominant Creator - High ISO/PnRBH/PostUp freq + high playmaking (AST, passes, secondary AST)
-2. Interior Scorer - Low playmaking + high ball-dominant freq + high drives + low 3pt
-3. Perimeter Scorer - Low playmaking + high ball-dominant freq + low drives + high 3pt
-4. All-Around Scorer - Low playmaking + high ball-dominant freq + balanced drives/3pt
-5. Ballhandler - High playmaking + ball dominant + lower scoring volume
-6. Off-Ball Finisher - High Cut/PnRRm/Putback/Transition freq
-7. Off-Ball Movement Shooter - High Handoff/Offscreen freq
-8. Off-Ball Stationary Shooter - High SpotUp freq
-9. Rotation Piece/Glue Guy - All-around, low usage rate
+CURRENT PLAYER PROFILE SYSTEM:
+- Database: data/player_team_profiles.db (SQLite)
+- Tables: players (686), teams (30), fetch_cache
+- Player fields: player_id, full_name, team_id, position, age, height, weight, wingspan (0% filled), experience
+- Fetcher: src/data_fetch/fetch_profiles.py (uses NBA API commonplayerinfo + B-Ref scraping)
 
-ADDITIONAL METRICS TO INCORPORATE:
-- Four Factors: Shooting (40%), Turnovers (25%), Rebounding (20%), Free Throws (15%)
-- Three-pointer impact: production, efficiency, wide-open, catch-and-shoot
-- Driving impact: attempts, efficiency, FT rate
-- Transition impact
-- Playmaking: time of possession, average dribbles
-- Screening impact
+PROFILE ENHANCEMENT PLAN (DO NOT START - PLANNING ONLY):
+1. Add offensive archetype to player profiles
+2. Add defensive archetype to player profiles  
+3. Add key stats (xRAPM, BPM, WS, USG%, etc.)
+4. Add salary data (need new data source)
+5. Create unified player card/export format
 
-DATA SOURCES AVAILABLE:
-- Synergy: ISO, PnRBH, PostUp, Cut, PnRRm, Handoff, OffScreen, SpotUp, Transition, OffRebound
-- Tracking: Drives, Passing (AST, secondary AST, potential AST), Possessions (time, touches)
-- Box Score: PTS, FG3A, FG3%, FTA, FT%, MIN, GP
+DATA SOURCES FOR SALARY:
+- ESPN player pages
+- Spotrac (requires scraping)
+- Basketball-Reference contracts page
+- HoopsHype salary data
+
+IMPLEMENTATION APPROACH:
+- Option A: Extend SQLite schema with new columns
+- Option B: Create separate parquet export with all data merged
+- Option C: Both (SQLite for base, parquet for analytics)
+
+NEXT STEPS (for next session):
+1. Decide on salary data source
+2. Implement salary fetcher
+3. Create unified player profile export
+4. Add profiles to viewer
 
 NEXT_STEPS:
-1. Create compute_player_archetypes.py with full classification algorithm
-2. Validate archetype assignments against known player types
-3. Investigate Wings/Stars poor xRAPM correlation
-4. Integrate archetypes with xRAPM for prediction models
-
-NEXT STEPS:
-1. Mark "Stream A: Compute Linear Metrics" as complete in current_phase_plan
-2. Proceed to RAPM implementation (next task in pipeline)
-3. Consider adding more validation players for edge cases
-
-UPDATE (2026-01-19):
-- CONTEXT: Completed iterative BPM tuning and validation. Team-level NET_RTG handling added, AST big bonus retained, VERY_LOW_MIN_PENALTY increased.
+1. ✅ Defensive archetypes reduced to 5 - DONE
+2. ✅ Player archetype viewer created - DONE
+3. ✅ Player profile system found (SQLite DB) - DONE
+4. Plan created for profile enhancement - DONE
+5. Session complete - profile enhancement to be done in next session
 - RESULTS: Full validation harness run; reported MAEs: WS 0.54, OWS 0.66, DWS 0.61, BPM 0.67, VORP 0.29 (PASS).
 - RECENT FIXES: name-matching robustness for accented player names (e.g., Jokić); minutes-weighted `team_avg_net_rtg` computed from player on-court NET_RTG when team summary source is unreliable.
 - ATTEMPTED_METHODS: refactor `compute_linear_metrics.py` to compute `team_avg_net_rtg`, add TEAM_NET_SCALE/IND_NET_SCALE params, increase VERY_LOW_MIN_PENALTY, add AST-based big bonus and guard playmaker follow-up notes.

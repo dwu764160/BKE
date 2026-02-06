@@ -53,10 +53,41 @@ End of file — DO NOT CHANGE
            9 Tracking metrics (Drives, Passing, Possessions, CatchShoot, etc.)
            3 Defense tracking files. All seasons 2022-25.
 
-[ ] Stream C: Player Archetype Classification (Active)
+[x] Stream C: Player Archetype Classification (Active)
     Command: python src/data_compute/compute_player_archetypes.py
-    Notes: Classify players into 7 offensive archetypes based on playtype frequency,
-           ball dominance, playmaking, and scoring profile.
+    Notes: ✅ COMPLETE - 1,680 player-seasons classified into 7 offensive archetypes.
+           Ball Dominant Creator, Perimeter Scorer, Interior Scorer, Off-Ball Finisher,
+           Off-Ball Movement Shooter, Off-Ball Stationary Shooter, Rotation Piece.
+           Validated: Luka→BDC, Curry→Perimeter, Wemby→Interior.
+
+[x] Stream C: xRAPM Collinearity Improvement
+    Command: python src/data_compute/compute_xrapm_improved.py
+    Notes: ✅ COMPLETE - Fixed collinearity for Wings/duos.
+           Correlation improved: 0.582→0.668 overall, 0.544→0.645 for collinear players.
+           MAE reduced 44.9%. Output: player_xrapm_v2.csv (1,432 player-seasons).
+
+[x] Stream C: Defensive Matchup Data
+    Command: python src/data_fetch/fetch_matchup_data.py
+    Notes: ✅ COMPLETE - 414,407 matchups fetched, versatility/difficulty computed.
+
+[x] Stream C: Defensive Archetype Classification (Revision Needed)
+    Command: python src/data_compute/compute_defensive_archetypes_v2.py
+    Notes: ✅ REVISED - Reduced from 9 to 5 archetypes with percentile-based thresholds:
+           POA Defender, Rotation Defender, Off-Ball Defender, Switchable Defender, Rim Protector.
+           Distribution: Rotation 43%, Off-Ball 16%, POA 16%, Rim 12%, Switchable 11%.
+           Validation: Gobert→Rim, Wemby→Rim, Jrue→POA, Trae→Off-Ball(Liability). Output: defensive_archetypes_v2.parquet.
+
+[x] Stream C: Player Archetype Viewer
+    Command: python app/player_archetype_viewer.py
+    Notes: ✅ COMPLETE - Interactive HTML viewer at app/player_archetypes.html
+           Shows all players with offensive/defensive archetypes and reasoning.
+           Supports search/filter by name, archetype, season.
+
+[ ] Stream D: Player Profile System Enhancement
+    Command: TBD
+    Notes: Current system: data/player_team_profiles.db (SQLite) with 686 players.
+           Fields: player_id, full_name, team_id, position, age, height, weight, wingspan (0% filled), experience.
+           PLAN: Add archetypes, career stats, salary data. Export to enhanced profile format.
 
 [ ] Stream D: Archetype Evaluation & Model Integration
     Command: python src/modeling/evaluate_players.py
