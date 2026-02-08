@@ -53,6 +53,12 @@ def get_offensive_reasons(row):
             reasons.append("Offensive hub — high playmaking, non-ISO/PnR creator")
         elif sub == 'Primary Scorer':
             reasons.append("Primary scorer — high volume on-ball creation")
+        elif sub == 'Post Hub':
+            post_pct = row.get('POSTUP_POSS_PCT', 0)
+            reasons.append(f"Post hub — post-up {post_pct*100:.0f}% of possessions")
+        elif sub == 'Midrange Scorer':
+            mr_freq = row.get('MIDRANGE_FREQ', 0)
+            reasons.append(f"Midrange-heavy: {mr_freq*100:.1f}% of shots from midrange")
         
     elif arch == 'Ballhandler':
         reasons.append(f"High playmaking ({playmaking:.1f}) with AST/36: {ast36:.1f}")
@@ -66,6 +72,9 @@ def get_offensive_reasons(row):
         reasons.append(f"Ball dominance: {ball_dom*100:.0f}%")
         if sub == 'High Volume':
             reasons.append("High volume — top-tier scoring output")
+        elif sub == 'Midrange Scorer':
+            mr_freq = row.get('MIDRANGE_FREQ', 0)
+            reasons.append(f"Midrange-heavy: {mr_freq*100:.1f}% of shots from midrange")
             
     elif arch == 'Perimeter Scorer':
         fg3a = row.get('FG3A_PER36', 0)
@@ -76,9 +85,16 @@ def get_offensive_reasons(row):
         
     elif arch == 'Interior Scorer':
         fg3a = row.get('FG3A_PER36', 0)
+        at_rim = row.get('AT_RIM_FREQ', 0)
+        mr_freq = row.get('MIDRANGE_FREQ', 0)
         reasons.append(f"Interior-heavy: FG2A rate {fg2a_rate*100:.0f}% (3PA/36: {fg3a:.1f})")
+        reasons.append(f"Shot zones: At-rim {at_rim*100:.1f}% | Midrange {mr_freq*100:.1f}%")
         reasons.append(f"Scoring: {pts36:.1f} PTS/36 | Efficiency: {eff_tier}")
         reasons.append(f"Ball dominance: {ball_dom*100:.0f}%")
+        if sub == 'Midrange Scorer':
+            reasons.append("Midrange-heavy shot profile — Jordan/DeRozan archetype")
+        elif sub == 'Rim Finisher':
+            reasons.append("Rim-dominant shot profile — elite at-rim frequency")
         
     elif arch == 'Connector':
         reasons.append(f"Playmaker without volume scoring (AST/36: {ast36:.1f})")
@@ -108,10 +124,19 @@ def get_offensive_reasons(row):
         reasons.append(f"Catch & Shoot 3P%: {catch_shoot:.1f}%")
         reasons.append(f"Efficiency: {eff_tier}")
         
-    elif arch == 'Rotation Piece':
-        reasons.append("No dominant offensive role")
-        reasons.append(f"Scoring: {pts36:.1f} PTS/36 | Ball dom: {ball_dom*100:.0f}%")
-        reasons.append("Low usage, versatile role player")
+    elif arch == 'PnR Rolling Big':
+        pnrm_pct = row.get('PRROLLMAN_POSS_PCT', 0)
+        at_rim = row.get('AT_RIM_FREQ', 0)
+        reasons.append(f"Heavy PnR Roll Man usage: {pnrm_pct*100:.1f}%")
+        reasons.append(f"At-rim frequency: {at_rim*100:.1f}%")
+        reasons.append(f"Efficiency: {eff_tier}")
+        
+    elif arch == 'PnR Popping Big':
+        pnrm_pct = row.get('PRROLLMAN_POSS_PCT', 0)
+        fg3a = row.get('FG3A_PER36', 0)
+        reasons.append(f"PnR involvement with perimeter shooting")
+        reasons.append(f"3PA/36: {fg3a:.1f} | FG2A rate: {fg2a_rate*100:.0f}%")
+        reasons.append(f"Efficiency: {eff_tier}")
         
     elif arch == 'Insufficient Minutes':
         mins = row.get('MIN', 0)
@@ -301,6 +326,8 @@ def generate_html(off_df, def_df):
             'mpg': round(row.get('MPG', 0), 1),
             'pts36': round(row.get('PTS_PER36', 0), 1),
             'eff_tier': row.get('efficiency_tier', ''),
+            'at_rim': round(row.get('AT_RIM_FREQ', 0) * 100, 1) if pd.notna(row.get('AT_RIM_FREQ')) else None,
+            'midrange': round(row.get('MIDRANGE_FREQ', 0) * 100, 1) if pd.notna(row.get('MIDRANGE_FREQ')) else None,
         }
         players.append(player)
     
@@ -398,7 +425,8 @@ def generate_html(off_df, def_df):
             <option value="Off-Ball Finisher">Off-Ball Finisher</option>
             <option value="Off-Ball Movement Shooter">Off-Ball Movement Shooter</option>
             <option value="Off-Ball Stationary Shooter">Off-Ball Stationary Shooter</option>
-            <option value="Rotation Piece">Rotation Piece</option>
+            <option value="PnR Rolling Big">PnR Rolling Big</option>
+            <option value="PnR Popping Big">PnR Popping Big</option>
         </select>
         <select id="defFilter" onchange="filterPlayers()">
             <option value="">All Defensive</option>
@@ -498,6 +526,8 @@ def generate_html(off_df, def_df):
                         <div class="stat"><div class="stat-value">${{fmtStat(p.usg, '%')}}</div><div class="stat-label">USG</div></div>
                         <div class="stat"><div class="stat-value">${{fmtStat(p.ts, '%')}}</div><div class="stat-label">TS%</div></div>
                         <div class="stat"><div class="stat-value">${{p.pts36}}</div><div class="stat-label">PTS/36</div></div>
+                        <div class="stat"><div class="stat-value">${{fmtStat(p.at_rim, '%')}}</div><div class="stat-label">RIM</div></div>
+                        <div class="stat"><div class="stat-value">${{fmtStat(p.midrange, '%')}}</div><div class="stat-label">MID</div></div>
                     </div>
                     
                     <div class="archetype-row">

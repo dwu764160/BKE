@@ -1,10 +1,10 @@
 
-Project Context Summary — Offensive Archetypes v3 (auto-updated)
+Project Context Summary — Offensive Archetypes v4 (auto-updated)
 =================================================================
 
 Purpose
 -------
-- This file captures the complete, project-relevant context from recent development on the offensive archetypes system (v1 → v2 → v3), viewer updates, data artifacts, and validation runs. Keep this file updated whenever you or an agent encounter important facts, thresholds, decisions, or outputs that affect classification logic, viewer behavior, or downstream evaluation.
+- This file captures the complete, project-relevant context from recent development on the offensive archetypes system (v1 → v2 → v3 → v4), viewer updates, data artifacts, and validation runs. Keep this file updated whenever you or an agent encounter important facts, thresholds, decisions, or outputs that affect classification logic, viewer behavior, or downstream evaluation.
 
 Important Paths
 ---------------
@@ -188,3 +188,90 @@ Contact / Ownership
 End of summary (last updated: 2026-02-07)
 
 Note: Update this file whenever you encounter important changes to thresholds, classification rules, viewer templates, or data artifacts. Add date-stamped entries using the template above.
+
+- 2026-02-07 — Archetype v3 incremental updates / 3.5 prep
+	- Files changed: src/data_compute/compute_player_archetypes.py, app/player_archetype_viewer.py, app/player_archetypes.html, data/processed/player_archetypes.parquet
+	- Summary: 
+		- Viewer: Added explicit `PnR Rolling Big` and `PnR Popping Big` filter/options and updated human-readable reasons to reference percentile-based decisions (v3 language).
+		- Classification: Confirmed v3 percentile-based thresholds are active (`PCTILE_THRESHOLDS` + `compute_season_percentiles()`); `role_confidence` (fit) and `role_effectiveness` (production) present in output. Regenerated `player_archetypes.parquet` and `player_archetypes.html`.
+		- Rotation Piece analysis: Performed a cascade trace for all Rotation Piece players (25 total across 2022-25). Identified three root causes that allow stars to fall into `Rotation Piece`:
+			1. Players who are both playmakers and high scorers are excluded by mutually-exclusive gates (BDC requires composite, Hub requires ELITE thresholds, Ballhandler excludes high scorers).
+			2. All-Around Scorer requires P60 scoring gate which drops some legit mid/high scorers.
+			3. Missing/zero playtype data or weak off-ball signals lead to the catch-all assignment.
+		- Short proposal (low-risk changes) to eliminate the Rotation Piece leak:
+			1. Add a `is_playmaker && is_high_scorer` path → classify as `All-Around Scorer` before Ballhandler (catches playmaker+scorer cases).
+			2. Lower/relax the All-Around scoring gate (P60→P50) or add a fallback All-Around at P50.
+			3. Replace the unconditional `Rotation Piece` catch-all with a nearest-fit fallback that assigns the archetype whose normalized distance to its gate is smallest (low confidence), and treat obviously missing playtype rows specially.
+		- Midrange / Floater plan: Proposed to fetch shot-zone data (preferred) from NBA shot-zone endpoints (Restricted Area / Paint / Midrange / 3PT zones) and create `MIDRANGE_FREQ` and `AT_RIM_FREQ`. This will allow: (a) a `Midrange Scorer` subtype/archetype, (b) better separation of rim finishers vs midrange specialists (floaters), and (c) more meaningful FG2A usage splits.
+	- Repro commands:
+		```bash
+		# Re-run classifier (v3) and regenerate parquet
+		.venv/bin/python src/data_compute/compute_player_archetypes.py
+		# Regenerate viewer HTML
+		.venv/bin/python app/player_archetype_viewer.py
+		# Quick syntax checks
+		.venv/bin/python -m py_compile src/data_compute/compute_player_archetypes.py
+		.venv/bin/python -m py_compile app/player_archetype_viewer.py
+		```
+	- Observed impact:
+		- Viewer now exposes PnR Rolling/Popping filters and percentile language in player reasons (verified for LeBron, Porziñģis, others).
+		- No live regressions observed; HTML regenerated and parquet updated (1680 player-seasons). Rotation Piece count (qualified 2024-25) was 10 — proposed tweaks would reclassify these into concrete archetypes.
+
+- Next steps (recommended):
+	- Grand Unified Model: Implement compute_rapm_metrics.py to unify Win Shares, BPM, RAPM outputs into a single EPM-like metric (Layer 3).
+	- Add unit tests for v4 classifier: percentile resolver, shot zone merge, key player expectations.
+	- Consider adding more midrange/shot zone stats to the viewer cards.
+
+- 2025-06-09 — Archetype v4: Shot zones, Rotation Piece elimination, Midrange Scorer
+	- Files changed: src/data_fetch/fetch_shot_zones.py (NEW), src/data_compute/compute_player_archetypes.py (MAJOR), app/player_archetype_viewer.py, app/player_archetypes.html, data/processed/player_archetypes.parquet
+	- Summary:
+		- NEW: Created `src/data_fetch/fetch_shot_zones.py` — fetches shot zone data from NBA.com `LeagueDashPlayerShotLocations` endpoint (league-wide, single API call per season). Computes AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ, CORNER3_FREQ, AB3_FREQ, AT_RIM_PLUS_PAINT_FREQ. Saves to `data/tracking/{season}/shot_zones.parquet`.
+		- Shot zone data fetched for 3 seasons: 2022-23 (539 players), 2023-24 (572), 2024-25 (569)
+		- API response format: `resultSets` is a dict (not list), 6 base columns (PLAYER_ID, PLAYER_NAME, TEAM_ID, TEAM_ABBREVIATION, AGE, NICKNAME), 8 zones × 3 stats (FGM, FGA, FG_PCT) = 30 zone columns
+		- Zone prefixes: RA (Restricted Area), PAINT (In The Paint Non-RA), MR (Mid-Range), LC3, RC3, AB3, BC, C3 (Corner 3)
+		- v4 classifier changes:
+			1. Added 4 new PCTILE_THRESHOLDS: HIGH_AT_RIM (P70), HIGH_MIDRANGE (P70), LOW_MIDRANGE (P30), MODERATE_MIDRANGE (P50)
+			2. Added `load_shot_zone_data(season)` and pass to `compute_archetype_features()`
+			3. NEW Step 2: All-Around Scorer inserted BEFORE Ballhandler — if playmaker AND high scorer → All-Around Scorer (with Midrange Scorer subtype if high midrange)
+			4. Ballhandler moved to Step 3
+			5. Interior Scorer subtypes: "Rim Finisher" (AT_RIM_FREQ >= P70), "Midrange Scorer" (MIDRANGE_FREQ >= P50), "High Volume" (fallback)
+			6. All-Around gate lowered: uses MODERATE_SCORING (P50) instead of ALL_AROUND_SCORING (P60)
+			7. ROTATION PIECE ELIMINATED: Replaced with best-fit fallback scoring each candidate archetype and picking the best match. True last resort uses scoring/defensive signals.
+		- Viewer updated: removed Rotation Piece from dropdown, added PnR bigs, added AT_RIM% & MID% to player card stats, updated offensive reasons for new subtypes
+	- Validated against key players:
+		- DeRozan: Interior Scorer / Midrange Scorer (MR=0.459) ✓
+		- Giannis: BD Creator / Offensive Hub (AT_RIM=0.571) ✓ (BD Creator since high ball dominance)
+		- Curry: BD Creator / Gravity Engine (all 3 seasons) ✓
+		- KD: All-Around / High Volume (2 of 3); Interior Scorer / Midrange Scorer in 23-24 ✓
+		- Embiid: Interior Scorer / Midrange Scorer in 22-23; Insufficient Minutes in 24-25 ✓
+		- SGA: BD Creator / Heliocentric Guard (all 3) ✓
+		- Ant Edwards: All-Around Scorer / High Volume (all 3) ✓
+	- Distribution (2024-25 qualified, 329 players):
+		- Off-Ball Stationary Shooter: 63 (19.1%)
+		- Off-Ball Finisher: 62 (18.8%)
+		- All-Around Scorer: 40 (12.2%)
+		- Ball Dominant Creator: 40 (12.2%)
+		- Connector: 31 (9.4%)
+		- Ballhandler: 31 (9.4%)
+		- PnR Rolling Big: 20 (6.1%)
+		- Interior Scorer: 18 (5.5%)
+		- Off-Ball Movement Shooter: 12 (3.6%)
+		- Perimeter Scorer: 7 (2.1%)
+		- PnR Popping Big: 5 (1.5%)
+		- Rotation Piece: 0 (0.0%) ← ELIMINATED
+	- Subtype totals (all seasons): Transition Player 98, High Volume 85, Heliocentric Guard 80, Elite Shooter 77, Midrange Scorer 42, Playmaking Big 41, Gravity Engine 19, Rim Finisher 14, Post Hub 7, Primary Scorer 7, Offensive Hub 4, Perimeter Defender 2, Rebounder 1
+	- Repro commands:
+		```bash
+		# Fetch shot zones (one-time, cached)
+		.venv/bin/python src/data_fetch/fetch_shot_zones.py
+		# Run v4 classifier
+		.venv/bin/python src/data_compute/compute_player_archetypes.py
+		# Regenerate viewer
+		.venv/bin/python app/player_archetype_viewer.py
+		```
+	- New data files:
+		- data/tracking/2022-23/shot_zones.parquet
+		- data/tracking/2023-24/shot_zones.parquet
+		- data/tracking/2024-25/shot_zones.parquet
+		- data/tracking_cache/shot_locations_{season}.json
+

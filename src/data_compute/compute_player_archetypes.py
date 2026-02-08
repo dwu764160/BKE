@@ -1,34 +1,37 @@
 """
 src/data_compute/compute_player_archetypes.py
-Classifies NBA players into offensive archetypes based on tracking and playtype data.
+Classifies NBA players into offensive archetypes based on tracking, playtype, and shot zone data.
 
-v3 — Major revision:
-  - Percentile-based thresholds (cross-season valid, computed per-season)
-  - BDC pool reduced ~40-50% with stricter composite gate (60/40 volume:confidence)
-  - All-Around Scorer pool reduced with scoring volume gate
-  - BDC subtypes: Heliocentric Guard, Post Hub, Gravity Engine
+v4 — Shot Zone + Classification Hierarchy Overhaul:
+  - Added shot zone data (AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ) from NBA.com
+  - "All-Around Scorer" now placed BEFORE Ballhandler (if playmaker + high scorer)
+  - All-Around gate lowered from P60 to P50 scoring
+  - Interior Scorer split: Rim Finisher vs Midrange Scorer (using AT_RIM_FREQ)
+  - Rotation Piece ELIMINATED — replaced with best-fit fallback
+  - Ball dominance + scoring output checked FIRST, then playtype frequency
+  - BDC subtypes: Heliocentric Guard | Post Hub | Gravity Engine
   - PnR Rolling/Popping Big split from Off-Ball Finisher
   - Dual confidence: role_confidence (fit certainty) + role_effectiveness (production)
-  - Movement Shooter: movement/(movement+spotup) >= 0.4 (relaxed from movement > spotup)
-  - Connector: touches/sec-per-touch filter to exclude passive players
-  - FG2A_RATE: P70/P30 instead of static 0.70/0.45
-  - USG used as soft signal only, never a hard gate
 
-Archetype Definitions (v3):
+Archetype Definitions (v4):
 =============================
  1. Ball Dominant Creator  — High on-ball creation + high playmaking
       Subtypes: Heliocentric Guard | Post Hub | Gravity Engine
- 2. Ballhandler/Facilitator — High playmaking, lower scoring
- 3. Interior Scorer        — Ball dominant, non-playmaker, interior FG2A >= P70
- 4. Perimeter Scorer       — Ball dominant, non-playmaker, perimeter FG2A <= P30
- 5. All-Around Scorer      — Ball dominant, scoring volume >= P60, balanced shot profile
- 6. Connector              — Moderate playmaking, active (touches/sec filter)
- 7. PnR Rolling Big        — Off-ball, primary roll man, low 3PA
- 8. PnR Popping Big        — Off-ball, primary roll man, high 3PA
- 9. Off-Ball Finisher      — High cut/PnR roll/transition (not primarily roll man)
-10. Off-Ball Movement Shooter — movement/(movement+spotup) >= 0.4
-11. Off-Ball Stationary Shooter — High spot-up
-12. Rotation Piece/Glue Guy — Catch-all
+ 2. Offensive Hub          — Elite playmaker + elite scorer
+ 3. All-Around Scorer      — Playmaker + high scorer (placed before Ballhandler)
+      Subtypes: High Volume | Midrange Scorer
+ 4. Ballhandler/Facilitator — High playmaking, lower scoring
+ 5. Interior Scorer        — Ball dominant, non-playmaker, interior-heavy
+      Subtypes: Rim Finisher | Midrange Scorer | High Volume
+ 6. Perimeter Scorer       — Ball dominant, non-playmaker, perimeter FG2A <= P30
+ 7. Balanced Scorer        — Ball dominant, moderate scoring, mixed shot profile
+ 8. Connector              — Moderate playmaking, active filter
+ 9. PnR Rolling Big        — Off-ball, primary roll man, low 3PA
+10. PnR Popping Big        — Off-ball, primary roll man, high 3PA
+11. Off-Ball Finisher      — High cut/PnR roll/transition
+12. Off-Ball Movement Shooter — movement/(movement+spotup) >= 0.4
+13. Off-Ball Stationary Shooter — High spot-up
+14. Best-fit fallback      — Closest archetype based on scoring signals (no catch-all)
 """
 
 import pandas as pd
@@ -111,6 +114,39 @@ PCTILE_THRESHOLDS = {
     'HIGH_PLAYMAKING_SCORE':('PLAYMAKING_SCORE', 75),     # >= P75
     # FG3A for PnR pop vs roll
     'FG3A_MEDIAN':          ('FG3A_PER36', 50),           # >= P50 → popping, < P50 → rolling
+    # Shot zone features (from LeagueDashPlayerShotLocations)
+    'HIGH_AT_RIM':          ('AT_RIM_FREQ', 70),          # >= P70 rim finisher
+    'HIGH_MIDRANGE':        ('MIDRANGE_FREQ', 70),        # >= P70 midrange scorer
+    'LOW_MIDRANGE':         ('MIDRANGE_FREQ', 30),        # <= P30 non-midrange
+    'MODERATE_MIDRANGE':    ('MIDRANGE_FREQ', 50),        # >= P50 midrange leaning
+    'AT_RIM_PAINT_P60':     ('AT_RIM_PLUS_PAINT_FREQ', 60), # >= P60 interior shot location
+}
+
+# ---------- Frozen canonical metric vectors for best-fit fallback ----------
+# Prevents silent regressions from feature creep.  Each entry:
+#   (row_column, pctile_key_for_denominator_or_None, static_fallback_denom, weight)
+FALLBACK_VECTORS = {
+    'Off-Ball Stationary Shooter': [
+        ('SPOTUP_PCT',           'HIGH_SPOTUP',     0.10, 1.0),
+    ],
+    'Off-Ball Movement Shooter': [
+        ('MOVEMENT_SHOOTER_PCT', 'HIGH_MOVEMENT',   0.05, 1.0),
+    ],
+    'Off-Ball Finisher': [
+        ('CUT_PNRRM_PCT',        None,             0.15, 1.0),
+        ('PUTBACK_PCT',           None,             0.15, 0.5),
+        ('TRANSITION_PCT',        None,             0.15, 0.3),
+    ],
+    'Connector': [
+        ('AST_PER36',            'CONNECTOR_AST',   2.0,  1.0),
+    ],
+    'Interior Scorer': [
+        ('FG2A_RATE',             None,             0.85, 0.5),
+        ('PTS_PER36',            'HIGH_SCORING',    14.0, 0.5),
+    ],
+    'PnR Rolling Big': [
+        ('PRROLLMAN_POSS_PCT',   'HIGH_PRROLLMAN',  0.04, 1.0),
+    ],
 }
 
 
@@ -208,6 +244,22 @@ def load_box_score_data() -> pd.DataFrame:
     return df[available_cols]
 
 
+def load_shot_zone_data(season: str) -> pd.DataFrame:
+    """Load shot zone data (from LeagueDashPlayerShotLocations).
+    Returns DataFrame with AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ, etc."""
+    path = TRACKING_DIR / season / "shot_zones.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(path)
+    # Keep only the columns we need for archetype classification
+    keep_cols = ['PLAYER_ID', 'AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ',
+                 'CORNER3_FREQ', 'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ',
+                 'AT_RIM_FG_PCT', 'MIDRANGE_FG_PCT',
+                 'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA']
+    available = [c for c in keep_cols if c in df.columns]
+    return df[available]
+
+
 # =============================================================================
 # PERCENTILE COMPUTATION
 # =============================================================================
@@ -240,7 +292,8 @@ def compute_season_percentiles(features: pd.DataFrame) -> dict:
 # FEATURE ENGINEERING
 # =============================================================================
 def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
-                                box: pd.DataFrame, season: str) -> pd.DataFrame:
+                                box: pd.DataFrame, season: str,
+                                shot_zones: pd.DataFrame = None) -> pd.DataFrame:
     """Compute all features needed for archetype classification."""
 
     syn = synergy[synergy['SEASON'] == season].copy() if not synergy.empty else pd.DataFrame()
@@ -262,9 +315,23 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
         trk_cols = [c for c in trk.columns if c not in ['PLAYER_NAME', 'SEASON', 'GP', 'MIN'] or c == 'PLAYER_ID']
         features = features.merge(trk[trk_cols], on='PLAYER_ID', how='left')
 
+    # Merge shot zone data
+    if shot_zones is not None and not shot_zones.empty:
+        sz = shot_zones.copy()
+        sz_cols = [c for c in sz.columns if c == 'PLAYER_ID' or c not in features.columns]
+        features = features.merge(sz[sz_cols], on='PLAYER_ID', how='left')
+
     # Fill NaN playtype data with 0
     playtype_cols = [c for c in features.columns if '_POSS_PCT' in c or '_PPP' in c]
     features[playtype_cols] = features[playtype_cols].fillna(0)
+
+    # Fill shot zone NaN with 0
+    zone_cols = [c for c in features.columns if c in
+                 ('AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ', 'CORNER3_FREQ',
+                  'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ', 'AT_RIM_FG_PCT',
+                  'MIDRANGE_FG_PCT', 'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA')]
+    for col in zone_cols:
+        features[col] = features[col].fillna(0)
 
     # ==========================================================================
     # COMPUTE DERIVED FEATURES
@@ -566,6 +633,23 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         sec_per_touch = 3.0
     sec_ast = row.get('SECONDARY_AST_PER36', 0) or 0
 
+    # Shot zones (from LeagueDashPlayerShotLocations)
+    at_rim_freq = row.get('AT_RIM_FREQ', 0) or 0
+    if pd.isna(at_rim_freq):
+        at_rim_freq = 0
+    midrange_freq = row.get('MIDRANGE_FREQ', 0) or 0
+    if pd.isna(midrange_freq):
+        midrange_freq = 0
+    paint_freq = row.get('PAINT_FREQ', 0) or 0
+    if pd.isna(paint_freq):
+        paint_freq = 0
+    at_rim_plus_paint = row.get('AT_RIM_PLUS_PAINT_FREQ', 0) or 0
+    if pd.isna(at_rim_plus_paint):
+        at_rim_plus_paint = 0
+    midrange_fg_pct = row.get('MIDRANGE_FG_PCT', 0) or 0
+    if pd.isna(midrange_fg_pct):
+        midrange_fg_pct = 0
+
     # ==========================================================================
     # RESOLVE PERCENTILE THRESHOLDS
     # ==========================================================================
@@ -713,7 +797,28 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         return result
 
     # ---------------------------------------------------------------------------
-    # 2. BALLHANDLER (Facilitator)
+    # 2. ALL-AROUND SCORER (Gap A fix: playmaker + high scorer → before Ballhandler)
+    # If a player is both a playmaker AND a high scorer, they are an All-Around Scorer
+    # This prevents stars from falling through to Ballhandler or Rotation Piece
+    # ---------------------------------------------------------------------------
+    moderate_scoring_gate_aa = p.get('MODERATE_SCORING', 15.5)  # P50 gate (lowered from P60)
+    if is_playmaker and is_high_scorer:
+        result['primary_archetype'] = 'All-Around Scorer'
+        bd_cap = max(p.get('BD_MIN', 0.30), 0.25)
+        pm_cap = max(p.get('ELITE_PLAYMAKER', 6.0), 4.0)
+        result['role_confidence'] = float(min(1.0,
+            np.sqrt(pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.5 +
+            np.sqrt(ast_per36 / pm_cap) * 0.5
+        ))
+        if is_elite_scorer:
+            result['secondary_archetype'] = 'High Volume'
+        elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+            result['secondary_archetype'] = 'Midrange Scorer'
+        result['role_effectiveness'] = compute_role_effectiveness(row, 'All-Around Scorer', p)
+        return result
+
+    # ---------------------------------------------------------------------------
+    # 3. BALLHANDLER (Facilitator)
     # High playmaking but not the primary scoring option
     # ---------------------------------------------------------------------------
     if is_playmaker and not is_high_scorer:
@@ -724,9 +829,10 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         return result
 
     # ---------------------------------------------------------------------------
-    # 3. PRIMARY SCORERS (Ball Dominant >= P60, Not Playmaker)
+    # 4. PRIMARY SCORERS (Ball Dominant >= P60, Not Playmaker)
     # FG2A_RATE: P70 = interior, P30 = perimeter
-    # All-Around requires scoring volume >= P60 (reduces pool)
+    # Interior split: Rim Finisher (AT_RIM high) vs Midrange Scorer (MIDRANGE high)
+    # All-Around/Balanced gate lowered to P50 scoring (from P60)
     # ---------------------------------------------------------------------------
     if is_ball_dominant_mid and not is_playmaker:
         bd_cap = max(p.get('BD_MIN', 0.30), 0.25)
@@ -736,7 +842,14 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             result['role_confidence'] = float(min(1.0,
                 np.sqrt(ball_dom / bd_cap) * 0.6 + (fg2a_rate / 0.85) * 0.4
             ))
-            if is_high_scorer:
+            # Subtype: Rim Finisher vs Midrange Scorer (P70) vs Midrange Lean (P50-P70)
+            if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+                result['secondary_archetype'] = 'Rim Finisher'
+            elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+                result['secondary_archetype'] = 'Midrange Scorer'
+            elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+                result['secondary_archetype'] = 'Midrange Lean'
+            elif is_high_scorer:
                 result['secondary_archetype'] = 'High Volume'
             result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
             return result
@@ -752,9 +865,9 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             return result
 
         else:
-            # All-Around: requires scoring volume >= P60 to avoid catching low-usage mid-range players
-            all_around_scoring_gate = p.get('ALL_AROUND_SCORING', 17.0)
-            if pts_per36 >= all_around_scoring_gate:
+            # Balanced Scorer: gate lowered to P50 (MODERATE_SCORING)
+            balanced_scoring_gate = p.get('MODERATE_SCORING', 15.5)
+            if pts_per36 >= balanced_scoring_gate:
                 result['primary_archetype'] = 'All-Around Scorer'
                 result['role_confidence'] = float(min(1.0,
                     np.sqrt(ball_dom / bd_cap) * 0.5 +
@@ -762,12 +875,44 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                 ))
                 if is_high_scorer:
                     result['secondary_archetype'] = 'High Volume'
+                elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+                    result['secondary_archetype'] = 'Midrange Scorer'
+                elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+                    result['secondary_archetype'] = 'Midrange Lean'
                 result['role_effectiveness'] = compute_role_effectiveness(row, 'All-Around Scorer', p)
                 return result
             # Falls through to lower archetypes if scoring too low
 
     # ---------------------------------------------------------------------------
-    # 4. CONNECTOR
+    # 4b. INTERIOR SCORER (low ball-dominance variant)
+    # Catches elite interior scorers with low creation but high interior shot
+    # profile — e.g. Zion-lite seasons, early Embiid, post-heavy wings.
+    # Confidence capped at 0.80 to avoid over-promoting low-creation players.
+    # ---------------------------------------------------------------------------
+    if (not is_playmaker and
+        fg2a_rate >= p.get('FG2A_INTERIOR', 0.68) and
+        pts_per36 >= p.get('MODERATE_SCORING', 15.5) and
+        at_rim_plus_paint >= p.get('AT_RIM_PAINT_P60', 0.35)):
+        result['primary_archetype'] = 'Interior Scorer'
+        raw_conf = (
+            (fg2a_rate / 0.85) * 0.4 +
+            (at_rim_plus_paint / 0.50) * 0.3 +
+            (pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.3
+        )
+        result['role_confidence'] = float(min(0.80, raw_conf))  # capped
+        if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+            result['secondary_archetype'] = 'Rim Finisher'
+        elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+            result['secondary_archetype'] = 'Midrange Scorer'
+        elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+            result['secondary_archetype'] = 'Midrange Lean'
+        elif is_high_scorer:
+            result['secondary_archetype'] = 'High Volume'
+        result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
+        return result
+
+    # ---------------------------------------------------------------------------
+    # 5. CONNECTOR
     # Moderate playmaking (>= P50) + active player filter (touches or sec/touch)
     # Not ball dominant, not high scorer
     # ---------------------------------------------------------------------------
@@ -853,24 +998,62 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         return result
 
     # ---------------------------------------------------------------------------
-    # 9. ROTATION PIECE / GLUE GUY (Catch-All)
+    # 9. BEST-FIT FALLBACK (replaces Rotation Piece catch-all)
+    # Uses scoring signals to assign closest archetype instead of a generic bucket
     # ---------------------------------------------------------------------------
-    result['primary_archetype'] = 'Rotation Piece'
-
     reb36 = row.get('REB_PER36', 0) or 0
     stl36 = row.get('STL_PER36', 0) or 0
     blk36 = row.get('BLK_PER36', 0) or 0
+
+    # Score each candidate archetype using frozen canonical metric vectors
+    # (FALLBACK_VECTORS prevents silent regressions from feature creep)
+    candidates = {}
+    for arch, metrics in FALLBACK_VECTORS.items():
+        score = 0.0
+        total_weight = 0.0
+        for row_key, pctile_key, static_denom, weight in metrics:
+            val = row.get(row_key, 0) or 0
+            if pd.isna(val):
+                val = 0
+            denom = max(p.get(pctile_key, static_denom) if pctile_key else static_denom, 0.001)
+            score += weight * (val / denom)
+            total_weight += weight
+        if total_weight > 0:
+            candidates[arch] = score / total_weight
+
+    # Pick the best-fit candidate
+    if candidates:
+        best_arch = max(candidates, key=candidates.get)
+        best_score = candidates[best_arch]
+        result['primary_archetype'] = best_arch
+        result['role_confidence'] = float(min(0.70, 0.30 + best_score * 0.20))  # capped lower since fallback
+    else:
+        # True last resort — use scoring/defensive signals
+        if pts_per36 >= p.get('MODERATE_SCORING', 15.5):
+            result['primary_archetype'] = 'All-Around Scorer'
+            result['role_confidence'] = 0.40
+        elif reb36 > 8 or blk36 > 1.2:
+            result['primary_archetype'] = 'Off-Ball Finisher'
+            result['role_confidence'] = 0.35
+        else:
+            result['primary_archetype'] = 'Off-Ball Stationary Shooter'
+            result['role_confidence'] = 0.30
+
+    # Assign a secondary based on defensive/utility signals
     if reb36 > 8:
         result['secondary_archetype'] = 'Rebounder'
     elif stl36 > 1.5:
         result['secondary_archetype'] = 'Perimeter Defender'
     elif blk36 > 1.2:
         result['secondary_archetype'] = 'Rim Protector'
-    else:
-        result['secondary_archetype'] = 'Glue Guy'
+    elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+        result['secondary_archetype'] = 'Midrange Scorer'
+    elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+        result['secondary_archetype'] = 'Midrange Lean'
+    elif transition > 0.10:
+        result['secondary_archetype'] = 'Transition Player'
 
-    result['role_confidence'] = 0.55
-    result['role_effectiveness'] = compute_role_effectiveness(row, 'Rotation Piece', p)
+    result['role_effectiveness'] = compute_role_effectiveness(row, result['primary_archetype'], p)
     return result
 
 
@@ -897,22 +1080,25 @@ def classify_all_players(features: pd.DataFrame, pctiles: dict) -> pd.DataFrame:
 # =============================================================================
 def main():
     print("=" * 70)
-    print("PLAYER ARCHETYPE CLASSIFICATION (v3)")
+    print("PLAYER ARCHETYPE CLASSIFICATION (v4)")
     print("=" * 70)
 
     print("\n Loading data...")
 
     all_synergy = []
     all_tracking = []
+    all_shot_zones = {}
 
     for season in SEASONS:
         print(f"   Loading {season}...")
         syn = load_synergy_data(season)
         trk = load_tracking_data(season)
+        sz = load_shot_zone_data(season)
         if not syn.empty:
             all_synergy.append(syn)
         if not trk.empty:
             all_tracking.append(trk)
+        all_shot_zones[season] = sz
 
     synergy_df = pd.concat(all_synergy, ignore_index=True) if all_synergy else pd.DataFrame()
     tracking_df = pd.concat(all_tracking, ignore_index=True) if all_tracking else pd.DataFrame()
@@ -921,11 +1107,14 @@ def main():
     print(f"\n   Synergy data: {len(synergy_df)} rows")
     print(f"   Tracking data: {len(tracking_df)} rows")
     print(f"   Box score data: {len(box_df)} rows")
+    for s, sz in all_shot_zones.items():
+        print(f"   Shot zones {s}: {len(sz)} rows")
 
     all_results = []
     for season in SEASONS:
         print(f"\n Processing {season}...")
-        features = compute_archetype_features(synergy_df, tracking_df, box_df, season)
+        sz = all_shot_zones.get(season, pd.DataFrame())
+        features = compute_archetype_features(synergy_df, tracking_df, box_df, season, shot_zones=sz)
 
         if features.empty:
             print(f"   No data for {season}")
@@ -936,7 +1125,9 @@ def main():
         print(f"   Percentile thresholds computed ({len(pctiles)} metrics)")
         for key in ['BD_MIN', 'PLAYMAKER', 'HIGH_SCORING', 'FG2A_INTERIOR', 'FG2A_PERIMETER',
                      'HIGH_CUT_PNRRM', 'HIGH_SPOTUP', 'HIGH_MOVEMENT', 'CONNECTOR_AST',
-                     'ALL_AROUND_SCORING', 'HIGH_PRROLLMAN', 'FG3A_MEDIAN', 'TOUCHES_MEDIAN']:
+                     'ALL_AROUND_SCORING', 'HIGH_PRROLLMAN', 'FG3A_MEDIAN', 'TOUCHES_MEDIAN',
+                     'HIGH_AT_RIM', 'HIGH_MIDRANGE', 'MODERATE_MIDRANGE',
+                     'AT_RIM_PAINT_P60']:
             print(f"      {key}: {pctiles.get(key, '?'):.4f}")
 
         classified = classify_all_players(features, pctiles)

@@ -1,536 +1,648 @@
-# Player Offensive Archetypes — v3 Logic Documentation
+# Player Offensive Archetypes — v4 Logic Documentation
 
 ## Overview
 
-This document explains the **complete logic** behind the v3 offensive archetype classification system (`src/data_compute/compute_player_archetypes.py`). The system classifies every NBA player-season into one of **12 primary archetypes** (plus 1 special designation) based on Synergy playtype data, tracking data, and box score stats.
+This document is the authoritative reference for the v4 offensive archetype classifier implemented in `src/data_compute/compute_player_archetypes.py`.
+v4 preserves all of the v3 percentile-driven design while adding shot-zone integration, explicit midrange/rim subtypes, and removing the legacy `Rotation Piece` catch-all in favor of a best-fit fallback.
 
-### v3 Changes from v2
+This file mirrors the depth and structure of the v3 documentation but highlights the v4 changes and provides updated examples, thresholds, and reproducible commands.
 
-| Area | v2 | v3 |
+### High-level v4 changes (summary)
+
+| Area | v3 | v4 |
 |---|---|---|
-| Thresholds | Static values (0.18, 5.5, etc.) | Percentile-based (P50–P95), computed per-season |
-| BDC gate | ball_dom ≥ 0.18 + AST/36 ≥ 5.5 | ball_dom ≥ P80 + AST ≥ P75 + PTS ≥ P50 + composite ≥ 0.35 |
-| BDC pool | 65 players (2024-25) | 40 players (–38% reduction) |
-| All-Around pool | 64 players | 26 players (–59% reduction) |
-| BDC subtypes | Primary Scorer / Offensive Hub | Heliocentric Guard / Post Hub / Gravity Engine / Primary Scorer |
-| PnR Big | Part of Off-Ball Finisher | Separate: PnR Rolling Big / PnR Popping Big (by FG3A) |
-| Confidence | Single `archetype_confidence` | Dual: `role_confidence` (fit) + `role_effectiveness` (production) |
-| Movement Shooter | movement > spotup | movement/(movement+spotup) ≥ 0.40 |
-| Connector | Basic AST/36 ≥ 3.5 gate | AST ≥ P50 + touches/sec-per-touch activity filter |
-| FG2A_RATE | Static 0.70/0.45 | P70 (interior) / P30 (perimeter) |
-| USG% | Hard gate at 0.22/0.15 | Soft signal only — never disqualifies |
-| Composite | Simple sqrt saturation | Linear interpolation from threshold to P95 |
+| Shot zones | Not used | Integrated: `AT_RIM_FREQ`, `MIDRANGE_FREQ`, `PAINT_FREQ`, `CORNER3_FREQ`, `AB3_FREQ` (via `src/data_fetch/fetch_shot_zones.py`) |
+| Rotation Piece | Catch-all leftover archetype | Eliminated — replaced by best-fit fallback that assigns the nearest archetype by normalized distance |
+| Midrange handling | FG2A_RATE proxy only | Dedicated `Midrange Scorer` subtype and `Rim Finisher` subtype using shot-zone percentiles |
+| All-Around gate | P60 | Lowered to P50 and evaluated earlier (before Ballhandler) to capture playmaker+scorer hybrids |
+| New percentile gates | v3 thresholds | Added `HIGH_AT_RIM`, `HIGH_MIDRANGE`, `MODERATE_MIDRANGE` (P70/P70/P50) |
+| Viewer | Basic archetype display | Viewer updated to show `RIM%` and `MID%` and to remove `Rotation Piece` filter; PnR big filters added |
+
+---
+
+## 1. Data Sources (v4)
+
+v4 uses the same three core data sources as previous versions and adds a shot-zone fetcher.
+
+1a. Synergy playtype data — 11 playtypes from NBA.com (unchanged):
+
+ - Isolation (`ISOLATION_POSS_PCT`)
+ - PnR Ball Handler (`PRBALLHANDLER_POSS_PCT`)
+ - Post Up (`POSTUP_POSS_PCT`)
+ - Cut (`CUT_POSS_PCT`)
+ - PnR Roll Man (`PRROLLMAN_POSS_PCT`)
+ - Handoff (`HANDOFF_POSS_PCT`)
+ - Off Screen (`OFFSCREEN_POSS_PCT`)
+ - Spot Up (`SPOTUP_POSS_PCT`)
+ - Transition (`TRANSITION_POSS_PCT`)
+ - Putback (`OFFREBOUND_POSS_PCT`)
+ - Misc (`MISC_POSS_PCT`)
+
+1b. Tracking data — same fields used before (drives, passing, touches, time-per-touch, catch-shoot, reb contest, avg speed, etc.)
+
+1c. Box score — `GP`, `MIN`, `PTS`, `AST`, `REB`, `FGA`, `FG3A`, `FTA`, `FTM`, `USG_PCT`, `TS_PCT`, etc.
+
+1d. Shot-zone data (NEW)
+
+ - Source: NBA `LeagueDashPlayerShotLocations` endpoint (league-wide, single call per season).
+ - Implemented in `src/data_fetch/fetch_shot_zones.py` which caches raw JSON in `data/tracking_cache/` and writes per-season parquet files at `data/tracking/{season}/shot_zones.parquet`.
+ - Important: the returned `resultSets` is a dict (not list); base columns include `PLAYER_ID, PLAYER_NAME, TEAM_ID, TEAM_ABBREVIATION, AGE, NICKNAME` and then 8 zones × 3 metrics (FGM/FGA/FG_PCT).
+
+Derived shot-zone features added to the archetype merge step:
+
+ - `AT_RIM_FREQ` (fraction of FGA in restricted area)
+ - `PAINT_FREQ` (in-the-paint non-RA fraction)
+ - `MIDRANGE_FREQ` (fraction of FGA in midrange)
+ - `CORNER3_FREQ` (corner 3 fraction)
+ - `AB3_FREQ` (above the break 3 fraction)
+ - `AT_RIM_PLUS_PAINT_FREQ` (useful for interior share calculations)
+
+These fields are now present in `data/processed/player_archetypes.parquet` for every player-season where shot zone data exists.
+
+---
+
+## 2. Feature Engineering (detailed)
+
+All v3-derived features remain; v4 augments merging logic to include shot-zone features. Key formulas are repeated here for completeness.
+
+Per-36 conversions (used widely):
+
+```
+MPG = MIN / GP
+minutes_factor = 36 / MPG
+PTS_PER36 = (PTS / GP) * minutes_factor
+AST_PER36 = (AST / GP) * minutes_factor
+```
+
+Ball Dominance (same formula as v3):
+
+```
+ON_BALL_CREATION = ISOLATION_POSS_PCT + PRBALLHANDLER_POSS_PCT
+POST_CREATION = POSTUP_POSS_PCT
+BALL_DOMINANT_PCT = ON_BALL_CREATION + POST_CREATION * POST_WEIGHT  # POST_WEIGHT=0.65
+```
+
+Playmaking score (unchanged):
+
+```
+PLAYMAKING_SCORE = AST_PER36 * 1.0
+         + SECONDARY_AST_PER36 * 0.5
+         + POTENTIAL_AST_PER36 * 0.3
+         - TOV_PER36 * 0.5
+```
+
+Shot profile proxies and shot-zone derived metrics:
+
+```
+FG2A_RATE = (FGA - FG3A) / FGA  # used previously as interior/perim proxy
+AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ, CORNER3_FREQ, AB3_FREQ  # NEW
+```
+
+Use case examples:
+
+- A player with `MIDRANGE_FREQ >= MODERATE_MIDRANGE (P50)` is a candidate for `Midrange Scorer` subtype.
+- A player with `AT_RIM_FREQ >= HIGH_AT_RIM (P70)` is a candidate for `Rim Finisher` subtype.
+
+---
+
+## 3. Percentile-Based Thresholds (v4, full table)
+
+v4 retains the v3 design: percentiles computed from qualified players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15). New shot-zone percentiles were added.
+
+Selected thresholds (2024-25 example values):
+
+| Threshold Name | Column | Percentile | Example Value (2024-25) | Purpose |
+|---|---|---:|---:|---|
+| `BD_MIN` | BALL_DOMINANT_PCT | P80 | 0.3720 | BDC gating |
+| `PLAYMAKER` | AST_PER36 | P75 | 5.0741 | Playmaker gating |
+| `HIGH_SCORING` | PTS_PER36 | P70 | 18.9497 | High scorer detection |
+| `MODERATE_SCORING` | PTS_PER36 | P50 | 17.2264 | All-Around gate (v4 lowered from P60) |
+| `ALL_AROUND_SCORING` | PTS_PER36 | P60 | 17.4899 | Legacy/all-around strict gate (v3) |
+| `FG2A_INTERIOR` | FG2A_RATE | P70 | 0.6731 | Interior shot profile |
+| `FG2A_PERIMETER` | FG2A_RATE | P30 | 0.4781 | Perimeter shot profile |
+| `HIGH_PRROLLMAN` | PRROLLMAN_POSS_PCT | P70 | 0.0646 | PnR big gating |
+| `FG3A_MEDIAN` | FG3A_PER36 | P50 | 5.8126 | PnR pop vs roll split |
+| `TOUCHES_MEDIAN` | TOUCHES | P50 | 40.3 | Connector activity gate |
+| `HIGH_AT_RIM` | AT_RIM_FREQ | P70 | 0.3258 | Rim finisher gate |
+| `HIGH_MIDRANGE` | MIDRANGE_FREQ | P70 | 0.1186 | Strong midrange gate |
+| `MODERATE_MIDRANGE` | MIDRANGE_FREQ | P50 | 0.0818 | Moderate midrange gate |
+
+Static thresholds (unchanged where applicable):
+
+| Param | Value | Purpose |
+|---|---:|---|
+| `MIN_MINUTES` | 500 | Minimum minutes to qualify |
+| `MIN_GP` | 20 | Minimum games |
+| `MIN_MPG` | 15.0 | Minimum minutes per game |
+| `POST_WEIGHT` | 0.65 | Post-up weight in ball dominance |
+| `MOVEMENT_RATIO_MIN` | 0.40 | movement/(movement+spotup) min |
+| `CONNECTOR_SEC_PER_TOUCH_MAX` | 2.5 | Activity filter for Connectors |
+
+Notes: percentile numbers are recomputed per-season; therefore gates adapt automatically to league changes.
+
+---
+
+## 4. Classification Hierarchy (v4): full details
+
+This section mirrors the original detail level and documents the exact logic order, formulas, and subtype decisions used in `compute_player_archetypes.py`.
+
+### Step 0 — Minimum requirements
+
+```
+IF MIN < MIN_MINUTES OR GP < MIN_GP OR MPG < MIN_MPG:
+  primary_archetype = 'Insufficient Minutes'
+  secondary_archetype = None
+  role_confidence = 0.0
+  role_effectiveness = 0.0
+  -> stop
+```
+
+### Step 1 — Ball Dominant Creator (BDC) main path
+
+Gates (all percentile-based):
+
+ - `ball_dom >= BD_MIN` (P80)
+ - `ast_per36 >= PLAYMAKER` (P75)
+ - `pts_per36 >= MODERATE_SCORING` (P50)
+
+Composite scoring (linear interpolation between threshold and P95):
+
+```
+bd_score  = clip( (ball_dom - BD_MIN) / (BD_P95 - BD_MIN), 0, 1 )
+pts_score = clip( (pts_per36 - MODERATE_SCORING) / (PTS_P95 - MODERATE_SCORING), 0, 1 )
+ast_score = clip( (ast_per36 - PLAYMAKER) / (AST_P95 - PLAYMAKER), 0, 1 )
+
+volume     = 0.60 * bd_score + 0.40 * pts_score
+confidence = ast_score
+composite  = 0.60 * volume + 0.40 * confidence
+
+IF composite >= 0.35 -> classify as Ball Dominant Creator
+```
+
+BDC subtypes (priority order):
+
+1. Post Hub: `POSTUP_POSS_PCT >= POST_HUB_POSS` (0.10) or `POSTUP_POSS_PCT >= POST_HUB_DOMINANT` (0.15)
+2. Gravity Engine: `FG3A_PER36 >= HIGH_FG3A` (P80) AND (TS >= HIGH_EFFICIENCY OR FG3_PCT >= HIGH_FG3_PCT)
+3. Heliocentric Guard: `ball_dom >= BD_HELIOCENTRIC` (P85)
+4. Primary Scorer: `pts_per36 >= HIGH_SCORING` (P70)
+
+Examples: Jokić (Post Hub), Curry (Gravity Engine), LeBron (Heliocentric)
+
+### Step 1b — Offensive Hub (elite playmaker + elite scorer)
+
+```
+IF ast_per36 >= ELITE_PLAYMAKER (P85) AND pts_per36 >= ELITE_SCORING (P80):
+  -> BDC with hub-specific subtype logic
+```
+
+This path allows some high-creation, high-scoring players to be captured even if other gates are borderline.
+
+### Step 2 — All-Around Scorer (moved earlier in v4)
+
+Rationale: capture players who are both playmakers and scorers but don't meet strict BDC composite.
+
+```
+IF is_playmaker (ast_per36 >= PLAYMAKER OR PLAYMAKING_SCORE >= threshold) AND pts_per36 >= MODERATE_SCORING:
+  primary_archetype = 'All-Around Scorer'
+  secondary_archetype = 'Midrange Scorer' IF MIDRANGE_FREQ >= MODERATE_MIDRANGE
+```
+
+v4 lowers the scoring gate used here to `MODERATE_SCORING` (P50) to be more inclusive while kept earlier in pipeline to avoid misclassifying playmakers as Ballhandlers.
+
+### Step 3 — Ballhandler
+
+```
+IF ast_per36 >= PLAYMAKER AND NOT high_scorer:
+  primary_archetype = 'Ballhandler'
+```
+
+Ballhandlers are high end-playmakers who are not primary scorers.
+
+### Step 4 — Primary Scorers (Interior / Perimeter / All-Around)
+
+```
+IF ball_dom >= BD_ALL_AROUND (P60) AND NOT playmaker:
+  IF FG2A_RATE >= FG2A_INTERIOR (P70): primary_archetype = 'Interior Scorer'
+  ELIF FG2A_RATE <= FG2A_PERIMETER (P30): primary_archetype = 'Perimeter Scorer'
+  ELSE: primary_archetype = 'All-Around Scorer' IF pts_per36 >= ALL_AROUND_SCORING (legacy) ELSE fallthrough
+```
+
+v4 augment: after assigning `Interior Scorer`, set subtype using shot-zone percentiles:
+
+ - `Rim Finisher`: `AT_RIM_FREQ >= HIGH_AT_RIM (P70)`
+ - `Midrange Scorer`: `MIDRANGE_FREQ >= MODERATE_MIDRANGE (P50)` (strong evidence >= P70)
+
+### Step 5 — Connector
+
+Connector logic unchanged: AST >= CONNECTOR_AST (P50) + activity filter (touches >= TOUCHES_MEDIAN OR secs_per_touch <= CONNECTOR_SEC_PER_TOUCH_MAX) and not high scorer.
+
+### Step 6 — PnR Big (Rolling / Popping)
+
+```
+IF PRROLLMAN_POSS_PCT >= HIGH_PRROLLMAN (P70) AND prrollman > cut_poss:
+  IF FG3A_PER36 >= FG3A_MEDIAN (P50): primary_archetype = 'PnR Popping Big'
+  ELSE: primary_archetype = 'PnR Rolling Big'
+```
+
+### Step 7 — Off-Ball Finisher
+
+```
+finish_score = CUT_PNRRM_PCT + 0.5 * PUTBACK_PCT + 0.3 * TRANSITION_PCT
+IF CUT_PNRRM_PCT >= HIGH_CUT_PNRRM (P75) OR finish_score > 0.20:
+  primary_archetype = 'Off-Ball Finisher'
+```
+
+### Step 8 — Off-Ball Movement Shooter
+
+```
+IF MOVEMENT_SHOOTER_PCT >= HIGH_MOVEMENT (P70) AND movement/(movement+spotup) >= MOVEMENT_RATIO_MIN (0.40):
+  primary_archetype = 'Off-Ball Movement Shooter'
+```
+
+### Step 9 — Off-Ball Stationary Shooter
+
+```
+IF SPOTUP_PCT >= HIGH_SPOTUP (P50):
+  primary_archetype = 'Off-Ball Stationary Shooter'
+  secondary_archetype = 'Elite Shooter' IF FG3_PCT >= HIGH_FG3_PCT (P70)
+```
+
+### Fallback — Best-fit (Rotation Piece removed)
+
+When none of the above gates match, v4 computes a distance score to each archetype's canonical gate vector. The distance is normalized by the gate scale (P95–gate) per metric, summed, and the archetype with the smallest normalized distance is selected at low confidence. This deterministic fallback prevents opaque "Rotation Piece" labeling while still assigning a role for downstream tools.
+
+Algorithm sketch:
+
+```
+for each archetype A:
+  compute normalized_diff over archetype-specific key metrics (ball_dom, ast_per36, pts_per36, prrollman, spotup, midrange, at_rim, etc.)
+  dist_A = sqrt(sum(normalized_diff^2))/sqrt(N)
+assign archetype = argmin_A(dist_A)
+role_confidence = 1 - scaled(dist_A)
+```
+
+---
+
+## 5. Subtypes (full listing)
+
+Primary subtypes (applied where relevant):
+
+- `Midrange Scorer` — MIDRANGE_FREQ >= P50 (strong evidence P70)
+- `Rim Finisher` — AT_RIM_FREQ >= P70
+- `High Volume` — top-tier PTS/36 (>= P70)
+- `Heliocentric Guard` — aggressive on-ball top percentile (BD_HELIOCENTRIC)
+- `Gravity Engine` — high 3PA/36 (P80) + efficiency signals
+- `Post Hub` — POSTUP >= 0.10 (dominant at >=0.15)
+- `Transition Player`, `Elite Shooter`, `Playmaking Big`, `Primary Scorer`, `Offensive Hub`, etc. — as in v3
+
+---
+
+## 6. Dual Confidence & Effectiveness (formulas)
+
+v4 keeps the same split between `role_confidence` (fit) and `role_effectiveness` (production quality). Below are representative formulas (implementation uses normalized/scaled variants per archetype).
+
+Role Confidence (fit): archetype-dependent; examples:
+
+- BDC: `role_confidence = sqrt(composite / composite_cap)` where composite is the linear interpolation described earlier.
+- Interior Scorer: `role_confidence = 0.6 * sqrt(bd_norm) + 0.4 * (fg2a_norm)`
+
+Role Effectiveness (production): blends TS z-score, volume (PTS/36), and role-specific PPPs. Example for BDC:
+
+```
+eff_score = 0.35 * ts_component + 0.35 * pts_component + 0.30 * primary_playtype_ppp
+```
+
+TS component uses `TS_ZSCORE` normalized to [0,1] by clipping at ±2σ.
+
+---
+
+## 7. Output Schema (selected)
+
+The final parquet contains the full feature matrix plus archetype outputs:
+
+| Column | Description |
+|---|---|
+| `PLAYER_ID` | NBA player id |
+| `PLAYER_NAME` | name |
+| `SEASON` | season string |
+| `primary_archetype` | archetype label (v4 set of ~11) |
+| `secondary_archetype` | subtype label or NULL |
+| `role_confidence` | 0–1 fit score |
+| `role_effectiveness` | 0–1 production score |
+| `AT_RIM_FREQ` | shot-zone: restricted area fraction |
+| `MIDRANGE_FREQ` | shot-zone: midrange fraction |
+| `PAINT_FREQ` | shot-zone: in-paint non-RA |
+| ... | (many other features like PTS_PER36, AST_PER36, TOUCHES, PRROLLMAN_POSS_PCT) |
+
+Files:
+
+- `data/processed/player_archetypes.parquet`
+- `data/tracking/{season}/shot_zones.parquet`
+- `data/tracking_cache/shot_locations_{season}.json` (raw cache)
+
+---
+
+## 8. Distribution & Validation (2024-25 qualified)
+
+Qualified players: 329 (MIN ≥ 500, GP ≥ 20, MPG ≥ 15)
+
+Archetype counts (v4):
+
+| Archetype | Count | % |
+|---|---:|---:|
+| Off-Ball Stationary Shooter | 63 | 19.1% |
+| Off-Ball Finisher | 62 | 18.8% |
+| All-Around Scorer | 40 | 12.2% |
+| Ball Dominant Creator | 40 | 12.2% |
+| Connector | 31 | 9.4% |
+| Ballhandler | 31 | 9.4% |
+| PnR Rolling Big | 20 | 6.1% |
+| Interior Scorer | 18 | 5.5% |
+| Off-Ball Movement Shooter | 12 | 3.6% |
+| Perimeter Scorer | 7 | 2.1% |
+| PnR Popping Big | 5 | 1.5% |
+| Rotation Piece | 0 | 0.0% (ELIMINATED) |
+
+Subtype totals (all seasons): Midrange Scorer 42, Rim Finisher 14, Transition Player 98, High Volume 85, Heliocentric Guard 80, Elite Shooter 77, Playmaking Big 41, Gravity Engine 19, Post Hub 7, Primary Scorer 7.
+
+Representative validated classifications (v4):
+
+| Player | Archetype | Subtype | Notes |
+|---|---|---|---|
+| DeMar DeRozan | Interior Scorer | Midrange Scorer | MR≈0.459 (v4 midrange detection) |
+| Giannis Antetokounmpo | Ball Dominant Creator | Offensive Hub | AT_RIM≈0.571; ball dominance keeps him BDC |
+| Stephen Curry | Ball Dominant Creator | Gravity Engine | High FG3A and efficiency |
+| Kevin Durant | All-Around Scorer | High Volume | Mixed 2PT/3PT + high PTS/36 |
+| Joel Embiid | Interior Scorer / All-Around | Midrange Scorer / High Volume | consistent with changed gates |
+| Rudy Gobert / Clint Capela | Off-Ball Finisher | Rim Finisher | Very high AT_RIM_FREQ (Capela ~0.704) |
+| LeBron James | Ball Dominant Creator | Heliocentric Guard | High BD & playmaking |
+| Luka Dončić | Ball Dominant Creator | Heliocentric Guard | High BD & playmaking |
+| Anthony Edwards | All-Around Scorer | High Volume | High PTS/36 and mixed profile |
+
+Notes: full player lists were printed during the v4 run and are reproducible using the validation scripts in `/tmp` used during development.
+
+---
+
+## 9. Classification Flow Diagram (condensed ASCII)
+
+```
+Player season record
+   │
+  MIN<500 OR GP<20 OR MPG<15? ──Yes──> Insufficient Minutes
+   │No
+   ▼
+  BDC gate? ──Yes──> Ball Dominant Creator (Post Hub / Gravity / Heliocentric / Primary Scorer)
+   │No
+   ▼
+  Offensive Hub (elite AST & PTS)? ──Yes──> BDC (hub)
+   │No
+   ▼
+  All-Around Scorer (playmaker & moderate scorer)? ──Yes──> All-Around (Midrange subtype if MR elevated)
+   │No
+   ▼
+  Ballhandler (playmaker, not scorer)? ──Yes──> Ballhandler
+   │No
+   ▼
+  Primary Scorer (BD >= P60)? ──Yes──> Interior / Perimeter / All-Around (shot-zone subtypes)
+   │No
+   ▼
+  Connector? PnR Big? Off-Ball Finisher? Movement Shooter? Stationary Shooter? ──Yes──> respective archetype
+   │No
+   ▼
+  Best-fit fallback (no Rotation Piece) ──> nearest archetype with low confidence
+```
+
+---
+
+## 10. Design Notes & Rationale
+
+- Percentiles: keep the classifier robust to league trends. Pxx gates are recomputed per-season from qualified players.
+- Shot zones: give the classifier direct signal for midrange vs rim usage instead of proxying with FG2A_RATE only.
+- Rotation Piece removal: opaque catch-alls are harmful for downstream model interpretability; best-fit fallback gives deterministic, low-confidence assignments that are actionable.
+- All-Around earlier: captures playmaker+scorer hybrids that previously were split across Ballhandler/BDC.
+
+---
+
+## 11. Repro & Commands
+
+Fetch shot zones (one-time per season):
+```bash
+.venv/bin/python src/data_fetch/fetch_shot_zones.py
+```
+
+Run the v4 archetype pipeline (writes `data/processed/player_archetypes.parquet`):
+```bash
+.venv/bin/python src/data_compute/compute_player_archetypes.py
+```
+
+Generate the viewer HTML:
+```bash
+.venv/bin/python app/player_archetype_viewer.py
+```
+
+Quick validation example (prints select players):
+```bash
+.venv/bin/python - <<'PY'
+import pandas as pd
+df = pd.read_parquet('data/processed/player_archetypes.parquet')
+for name in ['DeRozan','Antetokounmpo','Curry','Durant','Embiid','Don\'\'cic','Tatum']:
+  p = df[df['PLAYER_NAME'].str.contains(name, case=False, na=False)]
+  if len(p)>0:
+    r = p.iloc[0]
+    print(r['PLAYER_NAME'], r['SEASON'], r['primary_archetype'], r['secondary_archetype'], 'AT_RIM=', round(r.get('AT_RIM_FREQ',0),3),'MR=',round(r.get('MIDRANGE_FREQ',0),3))
+PY
+```
+
+---
+
+## 12. Next Steps
+
+- Add unit tests asserting core expectations: DeRozan→Midrange Scorer, Capela→Rim Finisher, Curry→Gravity Engine.
+- Integrate the Grand Unified Model wrapper (`compute_rapm_metrics.py`) to connect Layers 1/2 (linear metrics) and 3 (RAPM) for a combined EPM-like metric.
+- Add small docs in `reference/` describing the shot-zone fetch format and how to extend it.
+
+Last updated: 2026-02-07
 
 ---
 
 ## 1. Data Sources
 
-Same as v2 — three data sources per player per season:
+v4 uses the same three base sources as before plus a new shot-zone source:
 
-### 1a. Synergy Playtype Data (11 playtypes from NBA.com)
+### 1a. Synergy Playtype Data (unchanged)
+- 11 playtypes (Isolation, PnR Ball Handler, Post Up, Cut, PnR Roll Man, Handoff, Off Screen, Spot Up, Transition, Putback, Misc)
 
-| Playtype | Column Name | Meaning |
-|---|---|---|
-| Isolation | `ISOLATION_POSS_PCT` | % of possessions in isolation |
-| PnR Ball Handler | `PRBALLHANDLER_POSS_PCT` | % as PnR ball handler |
-| Post Up | `POSTUP_POSS_PCT` | % posting up |
-| Cut | `CUT_POSS_PCT` | % on cuts |
-| PnR Roll Man | `PRROLLMAN_POSS_PCT` | % as PnR screener/roller |
-| Handoff | `HANDOFF_POSS_PCT` | % on handoffs |
-| Off Screen | `OFFSCREEN_POSS_PCT` | % off screens |
-| Spot Up | `SPOTUP_POSS_PCT` | % spot-up |
-| Transition | `TRANSITION_POSS_PCT` | % in transition |
-| Putback | `OFFREBOUND_POSS_PCT` | % on offensive rebound putbacks |
-| Misc | `MISC_POSS_PCT` | % miscellaneous |
+### 1b. Tracking Data (unchanged)
+- Drives, Passing, Possessions, Catch & Shoot, Rebounding, Speed/Distance metrics
 
-### 1b. Tracking Data
+### 1c. Box Score Data (unchanged)
 
-| Category | Key Columns |
-|---|---|
-| Drives | `DRIVES`, `DRIVE_PTS`, `DRIVE_FG_PCT`, `DRIVE_AST`, `DRIVE_TOV` |
-| Passing | `SECONDARY_AST`, `POTENTIAL_AST`, `AST_POINTS_CREATED` |
-| Possessions | `TOUCHES`, `TIME_OF_POSS`, `AVG_SEC_PER_TOUCH`, `AVG_DRIB_PER_TOUCH` |
-| Catch & Shoot | `CATCH_SHOOT_FG3_PCT`, `CATCH_SHOOT_FGA`, etc. |
-| Rebounding | `OREB_CONTEST`, `DREB_CONTEST` |
-| Speed/Distance | `DIST_MILES`, `AVG_SPEED` |
+### 1d. Shot Zone Data (NEW)
 
-### 1c. Box Score Data
+Source: NBA.com `LeagueDashPlayerShotLocations` (league-wide single-call per season). Implemented in `src/data_fetch/fetch_shot_zones.py` which caches JSON and writes `data/tracking/{season}/shot_zones.parquet`.
 
-Standard stats: `GP`, `MIN`, `PTS`, `AST`, `REB`, `FGA`, `FG3A`, `FG3M`, `FTA`, `FTM`, `USG_PCT`, `TS_PCT`, etc.
+Key derived features:
+- `AT_RIM_FREQ` — fraction of FGA in restricted area
+- `MIDRANGE_FREQ` — fraction of FGA in midrange
+- `PAINT_FREQ` — in-paint non-RA
+- `CORNER3_FREQ`, `AB3_FREQ` — corner and above-the-break 3 frequencies
+- `AT_RIM_PLUS_PAINT_FREQ` — useful for interior share
+
+Notes on the API: the response is a multi-header object; `resultSets` is a dict (not a list) and includes 6 base columns (PLAYER_ID, PLAYER_NAME, TEAM_ID, TEAM_ABBREVIATION, AGE, NICKNAME) plus 8 zones × 3 stats each.
 
 ---
 
-## 2. Feature Engineering
+## 2. Feature Engineering (high level)
 
-### Per-36 Stats
+All previous v3 features remain (per-36 stats, ball dominance, playmaking score, FG2A_RATE, TS, USG proxy, off-ball composites). v4 adds shot-zone fields into the feature merge step so archetype decisions can use `AT_RIM_FREQ` and `MIDRANGE_FREQ` directly instead of only FG2A proxies.
 
-```
-MPG = MIN / GP
-minutes_factor = 36 / MPG
-PTS_PER36 = (PTS / GP) × minutes_factor
-AST_PER36 = (AST / GP) × minutes_factor
-```
+Shot-zone usage examples:
+- `RIM` = `AT_RIM_FREQ`
+- `MR` = `MIDRANGE_FREQ`
+- `PAINT` = `PAINT_FREQ`
 
-### Ball Dominance (Split Formula)
-
-```
-ON_BALL_CREATION = ISOLATION_POSS_PCT + PRBALLHANDLER_POSS_PCT
-POST_CREATION = POSTUP_POSS_PCT
-BALL_DOMINANT_PCT = ON_BALL_CREATION + POST_CREATION × 0.65
-```
-
-**Why 0.65 weight?** Post-ups are partially team-set-up plays, unlike pure self-creation (ISO/PnR).
-
-### Playmaking Score
-
-```
-PLAYMAKING_SCORE = AST_PER36 × 1.0
-                 + SECONDARY_AST_PER36 × 0.5
-                 + POTENTIAL_AST_PER36 × 0.3
-                 − TOV_PER36 × 0.5
-```
-
-### Shot Profile: FG2A_RATE
-
-```
-FG2A_RATE = (FGA − FG3A) / FGA
-```
-
-### Efficiency: TS% and USG%
-
-```
-TS% = PTS / (2 × (FGA + 0.44 × FTA))
-USG% (proxy) = (FGA + 0.44 × FTA + TOV) × 2.4 / (MIN × 5)
-TS_ZSCORE = (TS_PCT − league_avg) / league_std
-```
-
-### Off-Ball Composites
-
-| Feature | Formula |
-|---|---|
-| `CUT_PNRRM_PCT` | `CUT_POSS_PCT + PRROLLMAN_POSS_PCT` |
-| `MOVEMENT_SHOOTER_PCT` | `HANDOFF_POSS_PCT + OFFSCREEN_POSS_PCT` |
-| `SPOTUP_PCT` | `SPOTUP_POSS_PCT` |
-| `TRANSITION_PCT` | `TRANSITION_POSS_PCT` |
-| `PUTBACK_PCT` | `OFFREBOUND_POSS_PCT` |
+These are stored in the final output `data/processed/player_archetypes.parquet` per player-season.
 
 ---
 
-## 3. Percentile-Based Thresholds (v3 Key Innovation)
+## 3. Percentile-Based Thresholds (v4)
 
-v3 replaces static thresholds with **per-season percentile thresholds** computed from qualified players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15).
+v4 continues to compute percentile thresholds per-season from qualified players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15). New thresholds were added for shot zones.
 
-### Percentile Threshold Map
+Selected thresholds (2024-25 example values):
 
-| Threshold Name | Column | Percentile | 2024-25 Value | Purpose |
-|---|---|---|---|---|
-| `BD_MIN` | BALL_DOMINANT_PCT | P80 | 0.372 | BDC main path min ball dominance |
-| `BD_ALL_AROUND` | BALL_DOMINANT_PCT | P60 | 0.224 | All-Around Scorer min ball dominance |
-| `BD_BASE` | BALL_DOMINANT_PCT | P50 | 0.178 | Any ball-dom consideration |
-| `BD_HELIOCENTRIC` | BALL_DOMINANT_PCT | P85 | 0.413 | Heliocentric Guard subtype |
-| `BD_P95` | BALL_DOMINANT_PCT | P95 | 0.510 | Composite normalization cap |
-| `PLAYMAKER` | AST_PER36 | P75 | 5.074 | Playmaker flag |
-| `ELITE_PLAYMAKER` | AST_PER36 | P85 | 6.138 | Elite playmaker (Hub path) |
-| `AST_P95` | AST_PER36 | P95 | 7.867 | Composite normalization cap |
-| `HIGH_SCORING` | PTS_PER36 | P70 | 18.95 | High-volume scorer |
-| `ELITE_SCORING` | PTS_PER36 | P80 | 21.07 | Elite scoring (Hub path) |
-| `MODERATE_SCORING` | PTS_PER36 | P50 | 15.51 | BDC scoring floor |
-| `ALL_AROUND_SCORING` | PTS_PER36 | P60 | 17.23 | All-Around volume gate |
-| `PTS_P95` | PTS_PER36 | P95 | 25.62 | Composite normalization cap |
-| `LOW_SCORING` | PTS_PER36 | P25 | 12.63 | Low scorer |
-| `FG2A_INTERIOR` | FG2A_RATE | P70 | 0.673 | Interior shot profile |
-| `FG2A_PERIMETER` | FG2A_RATE | P30 | 0.478 | Perimeter shot profile |
-| `HIGH_CUT_PNRRM` | CUT_PNRRM_PCT | P75 | 0.154 | Off-ball finisher gate |
-| `HIGH_SPOTUP` | SPOTUP_PCT | P50 | 0.213 | Spot-up threshold |
-| `HIGH_MOVEMENT` | MOVEMENT_SHOOTER_PCT | P70 | 0.105 | Movement shooter gate |
-| `HIGH_PRROLLMAN` | PRROLLMAN_POSS_PCT | P70 | 0.065 | PnR Big gate |
-| `FG3A_MEDIAN` | FG3A_PER36 | P50 | 5.813 | PnR pop vs roll split |
-| `TOUCHES_MEDIAN` | TOUCHES | P50 | 40.3 | Connector activity |
-| `HIGH_FG3A` | FG3A_PER36 | P80 | 8.017 | Gravity Engine 3PA volume |
-| `HIGH_FG3_PCT` | FG3_PCT | P70 | 0.378 | Gravity Engine accuracy |
-| `HIGH_EFFICIENCY` | TS_PCT | P70 | 0.588 | High efficiency |
-| `LOW_EFFICIENCY` | TS_PCT | P30 | 0.540 | Low efficiency |
-| `CONNECTOR_AST` | AST_PER36 | P50 | 3.376 | Connector playmaking gate |
+| Name | Column | Percentile | Example (2024-25) |
+|---|---:|---:|---:|
+| `BD_MIN` | BALL_DOMINANT_PCT | P80 | 0.372 |
+| `PLAYMAKER` | AST_PER36 | P75 | 5.074 |
+| `MODERATE_SCORING` | PTS_PER36 | P50 | 17.23 (All-Around gate lowered to this in v4) |
+| `ALL_AROUND_SCORING` (legacy) | PTS_PER36 | P60 | 17.23 (v3) |
+| `HIGH_AT_RIM` | AT_RIM_FREQ | P70 | 0.3258 |
+| `HIGH_MIDRANGE` | MIDRANGE_FREQ | P70 | 0.1186 |
+| `MODERATE_MIDRANGE` | MIDRANGE_FREQ | P50 | 0.0818 |
+| `HIGH_PRROLLMAN` | PRROLLMAN_POSS_PCT | P70 | 0.0646 |
+| `FG2A_INTERIOR` | FG2A_RATE | P70 | 0.6731 |
+| `FG2A_PERIMETER` | FG2A_RATE | P30 | 0.4781 |
 
-### Static Thresholds (Non-Percentile)
-
-| Threshold | Value | Purpose |
-|---|---|---|
-| `MIN_MINUTES` | 500 | Minimum season minutes |
-| `MIN_GP` | 20 | Minimum games played |
-| `MIN_MPG` | 15.0 | Per-36 inflation guard |
-| `POST_HUB_POSS` | 0.10 | Post Hub minimum (must also dominate) |
-| `POST_HUB_DOMINANT` | 0.15 | Post Hub guaranteed (any post ≥ 0.15) |
-| `HELIOCENTRIC_ON_BALL` | 0.30 | Heliocentric Guard min ON_BALL |
-| `POST_WEIGHT` | 0.65 | Post-up weight in ball dominance |
-| `MOVEMENT_RATIO_MIN` | 0.40 | movement/(movement+spotup) min |
-| `CONNECTOR_SEC_PER_TOUCH_MAX` | 2.5 | Max avg sec per touch for Connector |
+All other percentile thresholds from v3 remain; v4 only introduces the shot-zone percentiles and re-uses the MODERATE_SCORING (P50) gate for All-Around in order to expand the All-Around path earlier in the hierarchy while keeping precision acceptable.
 
 ---
 
-## 4. Classification Hierarchy
+## 4. Classification Hierarchy (v4)
 
-### Step 0: Minimum Requirements
+The hierarchy is mostly the same as v3 with the following important changes:
 
-```
-IF MIN < 500 OR GP < 20 OR MPG < 15.0 → "Insufficient Minutes"
-```
+- Step ordering: **All-Around Scorer** path is now evaluated before **Ballhandler** (to catch playmaker+scorer players).
+- The All-Around scoring gate was lowered from P60 → P50.
+- Interior Scorer now has explicit subtypes:
+  - `Rim Finisher`: `AT_RIM_FREQ >= HIGH_AT_RIM` (P70)
+  - `Midrange Scorer`: `MIDRANGE_FREQ >= MODERATE_MIDRANGE` (P50) or `>= HIGH_MIDRANGE` (P70) depending on strictness
+- `Rotation Piece` archetype has been removed; a best-fit fallback assigns the nearest archetype when none of the main gates match.
 
-### Step 1: Ball Dominant Creator (Main Path)
+High-level flow (condensed):
 
-```
-gates:
-  ball_dom >= P80 (BD_MIN)
-  ast_per36 >= P75 (PLAYMAKER)
-  pts_per36 >= P50 (MODERATE_SCORING)
+0) Minimum requirements: MIN ≥ 500, GP ≥ 20, MPG ≥ 15 → otherwise `Insufficient Minutes`.
 
-composite (linear interpolation):
-  bd_score  = (ball_dom  - BD_MIN) / (BD_P95  - BD_MIN)     [0–1]
-  pts_score = (pts_per36 - P50)    / (PTS_P95 - P50)        [0–1]
-  ast_score = (ast_per36 - P75)    / (AST_P95 - P75)        [0–1]
+1) Ball Dominant Creator (BDC) main path: same composite gating as v3 (ball_dom P80 + PLAYMAKER P75 + PTS P50 + composite ≥ 0.35). Subtypes remain (Post Hub, Gravity Engine, Heliocentric Guard, Primary Scorer).
 
-  volume     = 0.50 × bd_score + 0.50 × pts_score
-  confidence = ast_score
-  composite  = 0.60 × volume + 0.40 × confidence
+1b) Offensive Hub (elite playmaker + elite scorer) handled as before — still produces a BDC with subtype logic.
 
-  IF composite >= 0.35 → Ball Dominant Creator
-```
+2) **All-Around Scorer** (NEW position in order): if `is_playmaker AND is_high_scorer` → classify as All-Around Scorer. Subtype assignment: Midrange Scorer if `MIDRANGE_FREQ` is elevated.
 
-**BDC Subtypes** (priority order):
-1. **Post Hub**: `POSTUP ≥ 0.15` (dominant) OR (`POSTUP ≥ 0.10` AND `POSTUP ≥ ON_BALL`)
-2. **Gravity Engine**: `FG3A_PER36 ≥ P80` AND (`TS ≥ P70` OR `FG3% ≥ P70`)
-3. **Heliocentric Guard**: `ball_dom ≥ P85` (BD_HELIOCENTRIC)
-4. **Primary Scorer**: `pts_per36 ≥ P70`
+3) Ballhandler: (playmaker but not high scorer) — moved after All-Around in v4.
 
-**Examples**: LeBron (Heliocentric), Luka (Heliocentric), Curry (Gravity Engine), Trae (Heliocentric)
+4) Primary Scorers: ball_dom ≥ P60 and not playmaker; then split by FG2A_RATE and shot-zone signals. Interior Scorer can be subtyped into Rim Finisher vs Midrange Scorer using shot-zone percentiles.
 
-### Step 1b: Offensive Hub (Elite Playmaker + Elite Scorer)
+5) Connector, PnR Rolling/Popping Big, Off-Ball Finisher, Movement/Stationary Shooters: same logic as v3 (with PnR split by FG3A per 36 relative to season median).
 
-```
-ast_per36 >= P85 (ELITE_PLAYMAKER)
-pts_per36 >= P80 (ELITE_SCORING)
-
-→ Ball Dominant Creator with full subtype logic
-  (Post Hub > Gravity Engine > Offensive Hub)
-```
-
-**Examples**: Nikola Jokić (Post Hub), high-scoring playmakers not qualifying via main path
-
-### Step 1c: Playmaking Hub (Elite Playmaker + Post Creator)
-
-```
-ast_per36 >= P85 (ELITE_PLAYMAKER)
-POSTUP_POSS_PCT >= 0.10
-NOT is_ball_dominant_high
-
-→ Ball Dominant Creator / Post Hub
-```
-
-**Examples**: Domantas Sabonis (ball_dom=0.11, AST/36=6.3, POST=0.12)
-
-### Step 2: Ballhandler (Facilitator)
-
-```
-ast_per36 >= P75 (PLAYMAKER) AND NOT high scorer
-
-→ Ballhandler
-```
-
-**Examples**: Draymond Green (AST/36=7.0, PTS/36=8.5)
-
-### Step 3: Primary Scorers
-
-```
-ball_dom >= P60 (BD_ALL_AROUND) AND NOT playmaker
-
-IF FG2A_RATE >= P70 → Interior Scorer
-ELIF FG2A_RATE <= P30 → Perimeter Scorer
-ELSE:
-  IF pts_per36 >= P60 (ALL_AROUND_SCORING) → All-Around Scorer
-  ELSE → falls through to lower archetypes
-```
-
-| Archetype | FG2A_RATE | Examples |
-|---|---|---|
-| Interior Scorer | ≥ P70 (~0.67) | Kuminga, Zion, Giannis |
-| Perimeter Scorer | ≤ P30 (~0.48) | Derrick White, Duncan Robinson |
-| All-Around Scorer | P30–P70 + PTS ≥ P60 | KD, Anthony Edwards |
-
-### Step 4: Connector
-
-```
-ast_per36 >= P50 (CONNECTOR_AST)
-NOT ball_dominant_mid
-NOT high_scorer
-(touches >= P50 OR sec_per_touch <= 2.5)  ← activity filter
-+ playmaking profile check
-```
-
-**Examples**: Jrue Holiday, Kyle Anderson
-
-### Step 5: PnR Big (Rolling / Popping)
-
-```
-PRROLLMAN_POSS_PCT >= P70 (HIGH_PRROLLMAN)
-AND prrollman > cut_poss
-AND prrollman >= spotup × 0.5
-
-IF FG3A_PER36 >= P50 → PnR Popping Big
-ELSE → PnR Rolling Big
-```
-
-**Examples**: Brook Lopez (Rolling), Al Horford (Popping)
-
-### Step 6: Off-Ball Finisher
-
-```
-offball_finish_score = CUT_PNRRM + PUTBACK × 0.5 + TRANSITION × 0.3
-
-CUT_PNRRM >= P75 OR finish_score > 0.20
-
-→ Off-Ball Finisher
-  sub: "Transition Player" if TRANSITION > 0.15
-```
-
-**Examples**: Gobert, Clint Capela
-
-### Step 7: Off-Ball Movement Shooter
-
-```
-movement >= P70 (HIGH_MOVEMENT)
-AND movement / (movement + spotup) >= 0.40
-
-→ Off-Ball Movement Shooter
-```
-
-**Examples**: Klay Thompson, Buddy Hield
-
-### Step 8: Off-Ball Stationary Shooter
-
-```
-spotup >= P50 (HIGH_SPOTUP)
-
-→ Off-Ball Stationary Shooter
-  sub: "Elite Shooter" if FG3% > 0.38
-```
-
-**Examples**: Nicolas Batum (Elite Shooter)
-
-### Step 9: Rotation Piece (Catch-All)
-
-```
-→ Rotation Piece
-sub: Rebounder / Perimeter Defender / Rim Protector / Glue Guy
-```
+Fallback: When none of the gates match, v4 computes a normalized distance to each archetype's gate and assigns the archetype with the smallest distance (low confidence). This replaces the old `Rotation Piece` catch-all.
 
 ---
 
-## 5. Dual Confidence System (v3 Key Innovation)
+## 5. Subtypes (notable additions)
 
-v3 splits the single `archetype_confidence` into two independent metrics:
-
-### Role Confidence (Fit)
-
-**What it measures**: How well the player's profile matches the archetype definition. A player with high fit clearly belongs in their category.
-
-| Archetype | Confidence Formula |
-|---|---|
-| BDC (main path) | `√(composite / 0.6)` where composite uses linear interpolation |
-| BDC (Hub path) | `√(ast/cap) × 0.5 + √(pts/cap) × 0.5` |
-| BDC (Playmaking Hub) | `√(ast/cap) × 0.6 + √(post/0.15) × 0.4` |
-| Ballhandler | `√(ast/cap)` |
-| Interior Scorer | `√(bd/cap) × 0.6 + (fg2a/0.85) × 0.4` |
-| Perimeter Scorer | `√(bd/cap) × 0.6 + ((1-fg2a)/0.65) × 0.4` |
-| All-Around Scorer | `√(bd/cap) × 0.5 + √(pts/cap) × 0.5` |
-| Connector | `√(ast/cap)` |
-| PnR Big | `√(prrollman / cap)` |
-| Off-Ball Finisher | `√(finish_score / cap)` |
-| Movement Shooter | `√(movement / cap)` |
-| Stationary Shooter | `√(spotup / cap)` |
-| Rotation Piece | Fixed 0.55 |
-
-### Role Effectiveness (Production Quality)
-
-**What it measures**: How productive the player is within their role, independent of classification fit.
-
-| Archetype | Effectiveness Formula |
-|---|---|
-| Ball Dominant Creator | 35% TS efficiency + 35% volume + 30% primary playtype PPP |
-| Interior/Perim/All-Around | 50% TS efficiency + 50% volume |
-| Ballhandler | 35% TS + 25% volume + 40% AST quality |
-| Connector | 30% TS + 20% volume + 50% connection score |
-| PnR Big | 35% TS + 30% volume + 35% PnR roll man PPP |
-| Off-Ball Finisher | 35% TS + 30% volume + 35% cut PPP |
-| Movement Shooter | 25% TS + 15% vol + 35% FG3% + 25% offscreen PPP |
-| Stationary Shooter | 25% TS + 15% vol + 35% FG3% + 25% spotup PPP |
-
-TS efficiency score: `clip((TS_ZSCORE + 2) / 4, 0.05, 1.0)` (normalizes -2σ=0, +2σ=1)
+- `Midrange Scorer` — awarded to interior/perimeter scorers with elevated `MIDRANGE_FREQ` (P50/P70 thresholds used as gating for moderate/strong evidence). Example: DeMar DeRozan (MR≈0.459).
+- `Rim Finisher` — interior scorers whose `AT_RIM_FREQ` ≥ P70. Example: Capela (AT_RIM≈0.704).
+- Existing subtypes (High Volume, Heliocentric Guard, Gravity Engine, Post Hub, Transition Player, Elite Shooter) remain and are applied as before when applicable.
 
 ---
 
-## 6. Archetype Distribution (2024-25, 329 Qualified)
+## 6. Dual Confidence & Effectiveness (unchanged except Rotation Piece removal)
+
+v4 preserves the split between `role_confidence` (fit) and `role_effectiveness` (production). The formulas remain the same as v3; rotation-piece-specific default confidence is removed because that archetype no longer exists.
+
+---
+
+## 7. Output and Files
+
+Primary output (unchanged path): `data/processed/player_archetypes.parquet` with these columns included (selected):
+
+`PLAYER_ID`, `PLAYER_NAME`, `SEASON`, `primary_archetype`, `secondary_archetype`, `role_confidence`, `role_effectiveness`, plus all feature columns and shot-zone fields: `AT_RIM_FREQ`, `MIDRANGE_FREQ`, `PAINT_FREQ`, `CORNER3_FREQ`, `AB3_FREQ`.
+
+New data files produced by v4 pipeline:
+
+- `data/tracking/{season}/shot_zones.parquet` — produced by `src/data_fetch/fetch_shot_zones.py` (one file per season)
+
+Viewer changes:
+- `app/player_archetype_viewer.py` was updated to show `RIM%` and `MID%` in the player card, to remove `Rotation Piece` from filters, and to include PnR big options.
+
+---
+
+## 8. Distribution (2024-25 qualified players, updated v4 counts)
+
+Qualified: 329 players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15)
 
 | Archetype | Count | % |
-|---|---|---|
-| Off-Ball Stationary Shooter | 64 | 19.5% |
+|---|---:|---:|
+| Off-Ball Stationary Shooter | 63 | 19.1% |
 | Off-Ball Finisher | 62 | 18.8% |
+| All-Around Scorer | 40 | 12.2% |
 | Ball Dominant Creator | 40 | 12.2% |
+| Connector | 31 | 9.4% |
 | Ballhandler | 31 | 9.4% |
-| Connector | 28 | 8.5% |
-| All-Around Scorer | 26 | 7.9% |
-| PnR Rolling Big | 21 | 6.4% |
+| PnR Rolling Big | 20 | 6.1% |
 | Interior Scorer | 18 | 5.5% |
-| Off-Ball Movement Shooter | 17 | 5.2% |
-| Rotation Piece | 10 | 3.0% |
+| Off-Ball Movement Shooter | 12 | 3.6% |
 | Perimeter Scorer | 7 | 2.1% |
 | PnR Popping Big | 5 | 1.5% |
+| Rotation Piece | 0 | 0.0% (ELIMINATED) |
 
-### Subtype Distribution
-
-| Subtype | Count | Context |
-|---|---|---|
-| Transition Player | 45 | Off-Ball Finisher, PnR Big |
-| High Volume | 33 | Interior/Perimeter/All-Around Scorers |
-| Heliocentric Guard | 29 | BDC subtype |
-| Elite Shooter | 23 | Stationary Shooter |
-| Playmaking Big | 15 | Connector subtype |
-| Glue Guy | 8 | Rotation Piece |
-| Gravity Engine | 6 | BDC subtype |
-| Primary Scorer | 3 | BDC subtype |
-| Post Hub | 2 | BDC subtype |
+Subtype totals (all seasons): Midrange Scorer 42, Rim Finisher 14, Transition Player 98, High Volume 85, Heliocentric Guard 80, Elite Shooter 77, Playmaking Big 41, Gravity Engine 19, Post Hub 7, Primary Scorer 7.
 
 ---
 
-## 7. Output
+## 9. Validation Highlights
 
-The classification produces `data/processed/player_archetypes.parquet` with all feature columns plus:
-
-| Column | Description |
-|---|---|
-| `primary_archetype` | 12 archetypes + "Insufficient Minutes" |
-| `secondary_archetype` | Subtype (Heliocentric Guard, Post Hub, Gravity Engine, High Volume, etc.) |
-| `role_confidence` | 0.0–1.0 — how well player fits the archetype definition |
-| `role_effectiveness` | 0.0–1.0 — how productive the player is within their role |
-| `ball_dominance_tier` | "Low", "Moderate", "High", "Very High" |
-| `playmaking_tier` | "Low", "Moderate", "High", "Elite" |
-| `scoring_tier` | "Low", "Medium", "High", "Elite" |
-| `efficiency_tier` | "Low", "Average", "High" |
-
-Seasons covered: 2022-23, 2023-24, 2024-25.
+- DeMar DeRozan: classified `Interior Scorer / Midrange Scorer` (MR ~0.459) — matches human expectation.
+- Giannis Antetokounmpo: remains `Ball Dominant Creator / Offensive Hub` with high `AT_RIM_FREQ` (~0.571) — remains BDC because of high ball dominance.
+- Kevin Durant: All-Around Scorer / High Volume in most seasons; Intermediate season-level changes are retained correctly.
+- Rotation Piece assignments: 0 across seasons after v4 changes.
 
 ---
 
-## 8. Classification Flow Diagram
+## 10. Repro & Commands
 
+Fetch shot zones (one-time per season):
+```bash
+.venv/bin/python src/data_fetch/fetch_shot_zones.py
 ```
-Player Season Record
-         │
-    ┌────▼──────────────────┐
-    │ MIN<500 OR GP<20      │──Yes──▶ Insufficient Minutes
-    │ OR MPG<15             │
-    └────┬──────────────────┘
-         │No
-    ┌────▼──────────────────────────┐
-    │ Ball Dom ≥ P80                │
-    │ + Playmaker ≥ P75             │
-    │ + Scoring ≥ P50               │──Yes──▶ Ball Dominant Creator
-    │ + Composite ≥ 0.35            │         Subtypes: Post Hub / Gravity Engine
-    └────┬──────────────────────────┘         / Heliocentric Guard / Primary Scorer
-         │No
-    ┌────▼──────────────────────────┐
-    │ AST ≥ P85 (Elite Playmaker)   │
-    │ + PTS ≥ P80 (Elite Scorer)    │──Yes──▶ BDC / Hub
-    └────┬──────────────────────────┘         (full subtype logic)
-         │No
-    ┌────▼──────────────────────────┐
-    │ AST ≥ P85 + POST ≥ 0.10      │──Yes──▶ BDC / Post Hub
-    │ + NOT high ball dom           │
-    └────┬──────────────────────────┘
-         │No
-    ┌────▼──────────────────────────┐
-    │ AST ≥ P75 + NOT high scorer   │──Yes──▶ Ballhandler (Facilitator)
-    └────┬──────────────────────────┘
-         │No
-    ┌────▼──────────────────┐         ┌─▶ Interior Scorer (FG2A ≥ P70)
-    │ Ball Dom ≥ P60        │──Yes──┬─┤─▶ Perimeter Scorer (FG2A ≤ P30)
-    │ + NOT Playmaker       │       │ └─▶ All-Around Scorer (PTS ≥ P60)
-    └────┬──────────────────┘       └──── sub: High Volume if PTS ≥ P70
-         │No
-    ┌────▼──────────────────────┐
-    │ AST ≥ P50                 │
-    │ + NOT ball dom ≥ P60      │
-    │ + NOT high scorer         │──Yes──▶ Connector
-    │ + Active (touches/sec)    │         sub: Playmaking Big / Hockey Assist
-    └────┬──────────────────────┘
-         │No
-    ┌────▼──────────────────────┐       ┌─▶ PnR Popping Big (FG3A ≥ P50)
-    │ PnR Roll Man ≥ P70       │──Yes─┤
-    │ + prrollman > cut_poss   │       └─▶ PnR Rolling Big (FG3A < P50)
-    └────┬──────────────────────┘
-         │No
-    ┌────▼───────────────────────┐
-    │ CUT+PnRRm ≥ P75           │──Yes──▶ Off-Ball Finisher
-    │ OR finish_score > 0.20     │         sub: Transition Player
-    └────┬───────────────────────┘
-         │No
-    ┌────▼───────────────────────────┐
-    │ Movement ≥ P70                 │──Yes──▶ Off-Ball Movement Shooter
-    │ AND mvmt/(mvmt+spotup) ≥ 0.40 │
-    └────┬───────────────────────────┘
-         │No
-    ┌────▼───────────────────────┐
-    │ SpotUp ≥ P50               │──Yes──▶ Off-Ball Stationary Shooter
-    └────┬───────────────────────┘         sub: Elite Shooter (3P% > 38%)
-         │No
-         ▼
-    Rotation Piece / Glue Guy
+
+Run v4 archetype classifier:
+```bash
+.venv/bin/python src/data_compute/compute_player_archetypes.py
+```
+
+Regenerate viewer HTML:
+```bash
+.venv/bin/python app/player_archetype_viewer.py
 ```
 
 ---
 
-## 9. Validated Classifications (2024-25)
+## 11. Notes & Next Steps
 
-| Player | Archetype | Subtype | Conf | Eff | Key Metrics |
-|---|---|---|---|---|---|
-| LeBron James | BDC | Heliocentric Guard | 100% | 85% | BD=0.43, AST=8.5, ON_BALL=0.34 |
-| Luka Dončić | BDC | Heliocentric Guard | 100% | 85% | BD=0.56, AST=7.8, ON_BALL=0.53 |
-| Stephen Curry | BDC | Gravity Engine | 100% | 86% | BD=0.34, FG3A=11.0, TS=62% |
-| Nikola Jokić | BDC | Post Hub | 100% | 98% | BD=0.39, AST=10.0, POST=0.17 |
-| Giannis Antetokounmpo | BDC | Primary Scorer | 99% | 91% | BD=0.39, AST=6.8, POST=0.15 |
-| Jayson Tatum | BDC | Heliocentric Guard | 100% | 84% | BD=0.59, AST=5.9 |
-| SGA | BDC | Heliocentric Guard | 100% | 93% | BD=0.62, AST=6.7 |
-| Trae Young | BDC | Heliocentric Guard | 100% | 79% | BD=0.58, AST=11.6 |
-| Tyrese Haliburton | BDC | Gravity Engine | 100% | 88% | BD=0.48, FG3A=8.8, TS=60% |
-| Domantas Sabonis | BDC | Post Hub | 96% | 95% | BD=0.11, AST=6.3, POST=0.12 (via 1c) |
-| Kevin Durant | All-Around | High Volume | 100% | 92% | BD=0.40, PTS/36=27.4, FG2A=67% |
-| Anthony Edwards | All-Around | High Volume | 100% | 80% | BD=0.54, PTS/36=25.3, FG2A=50% |
-| Kuminga | Interior Scorer | High Volume | 90% | 65% | BD=0.31, FG2A=73% |
-| Draymond Green | Ballhandler | — | 100% | 64% | AST/36=7.0, PTS/36=8.5 |
-| Klay Thompson | Movement Shooter | — | 100% | 70% | movement=0.15, ratio=0.63 |
-| Brook Lopez | PnR Rolling Big | — | 100% | 82% | PRROLLMAN=0.20, FG3A=4.0 |
-| Batum | Stationary Shooter | Elite Shooter | 100% | 86% | spotup=0.43, FG3%=41% |
-| Gobert | Off-Ball Finisher | — | 100% | 89% | CUT_PNRRM=0.38 |
+- Grand Unified Model: next planned step is to integrate `compute_linear_metrics.py` (Layer 1/2) and `compute_rapm.py` (Layer 3) into a `compute_rapm_metrics.py` wrapper that produces a unified EPM-like metric — this is a separate task.
+- Consider adding small unit tests verifying key player archetypes (DeRozan → Midrange Scorer, Capela → Rim Finisher, Curry → Gravity Engine) after any thresholds are changed.
+- Keep `src/data_fetch/fetch_shot_zones.py` cached outputs in `data/tracking_cache/` to avoid repeated NBA API calls.
 
----
-
-## 10. Design Philosophy
-
-### Why Percentiles?
-
-Static thresholds like "AST/36 ≥ 5.5" drift as league trends change. By using percentiles computed per-season from qualified players, the system automatically adapts. P80 ball dominance captures the top ~20% ball handlers regardless of whether league-wide creation rates shift.
-
-### Why Linear Interpolation in BDC Composite?
-
-v2 used `√(metric / denominator)` which saturates quickly — a player at the threshold and one far above both score similarly. v3's linear interpolation from threshold to P95 provides meaningful discrimination: a player barely meeting P80 ball dominance scores 0, while one at P95 scores 1.0. The 60/40 volume:confidence split weights ball handling + scoring volume (60%) and playmaking (40%).
-
-### Why Separate Confidence and Effectiveness?
-
-In v2, a player like Jokić (98% efficiency as BDC) and a low-efficiency BDC both had `archetype_confidence` blending fit certainty with production quality. v3 separates these:
-- **Role confidence** (fit): "How certain are we this player is a BDC?" — based on how well their profile matches the archetype gates
-- **Role effectiveness**: "How good are they at executing this role?" — based on TS z-score, volume, and playtype PPP
-
-This separation prevents conflating classification certainty with player quality, which is critical for the upcoming player evaluation phase.
-
-### Why Split PnR Rolling/Popping Big?
-
-A traditional roll-and-finish big (e.g., Clint Capela) plays an entirely different role than a stretch big who pops to the 3-point line (e.g., Al Horford). The FG3A per 36 at P50 naturally separates these two styles. This distinction matters for lineup construction and matchup analysis.
+Last updated: 2026-02-07

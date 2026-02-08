@@ -46,20 +46,28 @@ DO NOT CHANGE this file format or the section headings; other automated agents r
 
 ---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
 CONTEXT:
-- Task: Player Profile System Enhancement
+- Task: Player Profile System Enhancement + Offensive Archetypes v4
 - Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: data/processed/player_archetypes.parquet, data/processed/defensive_archetypes.parquet
-- Status: 🔄 IN PROGRESS - Fixing defensive archetypes & building player profile system
+- Key files: data/processed/player_archetypes.parquet, data/processed/defensive_archetypes_v2.parquet, data/tracking/{season}/shot_zones.parquet
+- Status: ✅ Offensive Archetypes v4 COMPLETE — shot zones fetched, Rotation Piece eliminated, Midrange Scorer/Rim Finisher subtypes added
 
-COMPLETED (2025-02-06):
+COMPLETED (2025-06-09):
 ================================================================================
-Phase 3b: Offensive Archetypes + xRAPM Collinearity Fix + Defensive Archetypes
+Phase 3b+: Offensive Archetypes v4 — Shot Zones + Rotation Piece Elimination
 ================================================================================
 
-✅ OFFENSIVE ARCHETYPES - COMPLETE (1,680 player-seasons)
-- Ball Dominant Creator, Interior Scorer, Perimeter Scorer, Off-Ball Finisher, etc.
-- Validated against known player types (Luka→BDC, Steph→Perimeter, Wemby→Interior)
-- Output: data/processed/player_archetypes.parquet
+✅ SHOT ZONE DATA FETCHER - COMPLETE
+- Created src/data_fetch/fetch_shot_zones.py using LeagueDashPlayerShotLocations API
+- Fetched 3 seasons: 539 + 572 + 569 players
+- Computes AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ, CORNER3_FREQ, AB3_FREQ
+- Output: data/tracking/{season}/shot_zones.parquet
+
+✅ OFFENSIVE ARCHETYPES v4 - COMPLETE (1,680 player-seasons, 11 archetypes)
+- All-Around Scorer moved before Ballhandler in hierarchy
+- All-Around scoring gate lowered P60 → P50
+- Rotation Piece ELIMINATED — replaced with best-fit fallback
+- New subtypes: Midrange Scorer (42 total), Rim Finisher (14 total)
+- Validated: DeRozan→Midrange Scorer, Curry→Gravity Engine, KD→High Volume/Midrange, SGA→Heliocentric
 
 ✅ xRAPM COLLINEARITY FIX - COMPLETE
 - Created compute_xrapm_improved.py with:
@@ -128,14 +136,11 @@ NEXT STEPS (for next session):
 NEXT_STEPS:
 1. ✅ Defensive archetypes reduced to 5 - DONE
 2. ✅ Player archetype viewer created - DONE
-3. ✅ Player profile system found (SQLite DB) - DONE
-4. Plan created for profile enhancement - DONE
-5. Session complete - profile enhancement to be done in next session
-- RESULTS: Full validation harness run; reported MAEs: WS 0.54, OWS 0.66, DWS 0.61, BPM 0.67, VORP 0.29 (PASS).
-- RECENT FIXES: name-matching robustness for accented player names (e.g., Jokić); minutes-weighted `team_avg_net_rtg` computed from player on-court NET_RTG when team summary source is unreliable.
-- ATTEMPTED_METHODS: refactor `compute_linear_metrics.py` to compute `team_avg_net_rtg`, add TEAM_NET_SCALE/IND_NET_SCALE params, increase VERY_LOW_MIN_PENALTY, add AST-based big bonus and guard playmaker follow-up notes.
-- SOURCES_READ: reference/BPM_trends.txt (this repo), Basketball-Reference BPM & Win Shares docs (for formulas), local validation harness `tests/validate_advanced_metrics.py`.
-- NEXT_STEPS (explicit):
-  1) Implement RAPM/Adjusted Plus-Minus pipeline (`src/data_compute/compute_rapm.py`) using multi-season regularized regression and set as prior for downstream EPM/RAPM-based metrics. (High priority)
-  2) Add targeted elite-guard playmaker bonus (Priority 2 in BPM_trends) and re-run validation to measure impact (medium priority).
-  3) Add additional edge-case players to validation harness (GP2, Curry, Gafford, Mark Williams, Haliburton) and rerun to confirm stability (low priority).
+3. ✅ Shot zone data fetched (3 seasons) - DONE
+4. ✅ Offensive archetypes v4 (Rotation Piece eliminated, Midrange Scorer/Rim Finisher) - DONE
+5. ✅ Viewer updated for v4 - DONE
+6. Grand Unified Model: Create compute_rapm_metrics.py (Layer 3 — RAPM + BPM prior → EPM-like metric)
+7. Player Profile Enhancement: Decide on salary data source, implement fetcher, create unified export
+- RESULTS: Full v4 validation: 0 Rotation Piece assignments, 42 Midrange Scorers, 14 Rim Finishers, key player validations passed
+- RECENT WORK: v4 classifier with shot zone integration, best-fit fallback replacing Rotation Piece catch-all
+- SOURCES_READ: NBA.com LeagueDashPlayerShotLocations API docs, local repo files
