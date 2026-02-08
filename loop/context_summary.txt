@@ -1,0 +1,190 @@
+
+Project Context Summary — Offensive Archetypes v3 (auto-updated)
+=================================================================
+
+Purpose
+-------
+- This file captures the complete, project-relevant context from recent development on the offensive archetypes system (v1 → v2 → v3), viewer updates, data artifacts, and validation runs. Keep this file updated whenever you or an agent encounter important facts, thresholds, decisions, or outputs that affect classification logic, viewer behavior, or downstream evaluation.
+
+Important Paths
+---------------
+- Workspace root: /mnt/c/Users/danie/OneDrive/Documents/BKE
+- Main scripts and artifacts:
+	- `src/data_compute/compute_player_archetypes.py` — v3 classification engine (percentile-based)
+	- `app/player_archetype_viewer.py` — viewer generator (HTML + JS template)
+	- `app/player_archetypes.html` — generated interactive viewer (open in browser)
+	- `data/processed/player_archetypes.parquet` — latest classification output (1680 player-seasons)
+	- `reference/player_offensive_archetypes.md` — v3 documentation (rewritten)
+	- `loop/context_summary.txt` — this file (source of truth for session-level knowledge)
+	- `/tmp/write_v3.py`, `/tmp/patch_v3.py`, `/tmp/patch_v3b.py` — generator/patch scripts used during development (kept as artifacts)
+
+High-level Goals (from user)
+----------------------------
+1. Convert many static thresholds into percentile-based gates so the system remains valid across seasons.
+2. Tighten Ball Dominant Creator (BDC) and All-Around Scorer pools to retain roughly 40–60% of prior sizes (aim ≤60% retention of BDCs).
+3. Add BDC subtypes: Heliocentric Guard, Post Hub, Gravity Engine (priority ordering and robust gating).
+4. Split PnR Big into PnR Rolling vs PnR Popping (based on FG3A per-36 relative to season median).
+5. Treat computed USG% as a soft signal only (do not use as a hard gate).
+6. Improve Connector by adding touches / sec-per-touch filters so only active creators are captured.
+7. Relax Movement Shooter rule to movement/(movement+spotup) >= 0.4 instead of strictly movement > spotup.
+8. Convert FG2A_RATE thresholds to percentiles (P70 for interior, P30 for perimeter) instead of hard 0.70/0.45.
+9. Split a single confidence metric into `role_confidence` (fit) and `role_effectiveness` (production quality).
+10. Keep the whole system reproducible and documented; provide viewer & docs updates.
+
+Summary of Key Work Completed
+-----------------------------
+- Percentile computation implemented: `PCTILE_THRESHOLDS` (mapping threshold name -> (column, percentile)); `compute_season_percentiles()` resolves values per season from qualified players.
+- New static constants placed under `STATIC` where percentiles are inappropriate (e.g., `MIN_MINUTES`, `POST_WEIGHT`, `HELIOCENTRIC_ON_BALL`, `POST_HUB_POSS`, `MOVEMENT_RATIO_MIN`, `CONNECTOR_SEC_PER_TOUCH_MAX`).
+- v3 classification engine implemented in `src/data_compute/compute_player_archetypes.py` (written using `/tmp/write_v3.py` then patched with patch scripts):
+	- BDC main path: requires ball_dom >= P80, AST >= P75, PTS >= P50, and composite >= 0.35 (composite uses linear interpolation from threshold → P95; 60% volume / 40% playmaking).
+	- BDC subtypes priority: Post Hub (dominant/relative), Gravity Engine (high 3PA+eff), Heliocentric Guard (very high ball_dom P85), Primary Scorer fallback.
+	- Hub (elite playmaker + elite scorer) applies the same subtype logic; additional Playmaking Hub sub-path (elite AST + POST >= 0.10, catches Sabonis).
+	- Ballhandler: high playmaking, not high scorer.
+	- Primary Scorers: ball_dom >= P60; FG2A percentile gating for interior/perimeter/all-around; All-Around requires pts >= P60 to reduce false positives.
+	- Connector: AST >= P50 with activity filter (touches >= P50 OR sec-per-touch <= 2.5) and extra secondary-ast signals.
+	- PnR Big: PRROLLMAN >= P70, choose Popping vs Rolling by FG3A >= P50 (median).
+	- Off-Ball Finisher: CUT+PRROLL ≥ P75 or finish_score > 0.20.
+	- Movement Shooter: movement >= P70 AND movement/(movement+spotup) >= 0.40.
+	- Stationary Shooter: spotup >= P50.
+	- Rotation Piece: catch-all.
+
+Key Implementation Details
+------------------------
+- Composite calculation for BDC uses linear interpolation from floor (threshold) to P95 for ball_dom, scoring (PTS), and AST. This provides discrimination between borderline and elite players.
+- `role_confidence` is fit (0–1) and typically derived from sqrt or normalized interpolations depending on archetype; `role_effectiveness` is a weighted function of TS z-score, volume (PTS/36), and relevant PPPs.
+- USG is computed as a proxy when missing but only used as a soft signal. It is not a disqualifier.
+- Movement Shooter ratio changed to movement/(movement+spotup) >= 0.4.
+- FG2A_RATE is used via season percentiles: interior P70 / perimeter P30.
+
+Representative 2024-25 Percentile Values (resolved during the run)
+----------------------------------------------------------------
+(These are per `compute_season_percentiles()` for qualified players; include as historic reference)
+- BD_MIN (P80): 0.3720
+- PLAYMAKER (AST_PER36 P75): 5.0741
+- HIGH_SCORING (PTS_PER36 P70): 18.95
+- FG2A_INTERIOR (P70): 0.6731
+- FG2A_PERIMETER (P30): 0.4781
+- CONNECTOR_AST (P50): 3.3759
+- ALL_AROUND_SCORING (P60): 17.2264
+- HIGH_PRROLLMAN (P70): 0.0646
+- FG3A_MEDIAN (P50): 5.8126
+- TOUCHES_MEDIAN (P50): 40.3
+- HIGH_FG3A (P80): ~8.017
+
+Distribution & Validation (2024-25 qualified players)
+--------------------------------------------------
+- Qualified: 329 players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15)
+- Archetype counts (v3 run):
+	- Off-Ball Stationary Shooter: 64 (19.5%)
+	- Off-Ball Finisher: 62 (18.8%)
+	- Ball Dominant Creator: 40 (12.2%)
+	- Ballhandler: 31 (9.4%)
+	- Connector: 28 (8.5%)
+	- All-Around Scorer: 26 (7.9%)
+	- PnR Rolling Big: 21 (6.4%)
+	- Interior Scorer: 18 (5.5%)
+	- Off-Ball Movement Shooter: 17 (5.2%)
+	- Rotation Piece: 10 (3.0%)
+	- Perimeter Scorer: 7 (2.1%)
+	- PnR Popping Big: 5 (1.5%)
+
+Subtype counts (examples): Transition Player 45, High Volume 33, Heliocentric Guard 29, Gravity Engine 6, Post Hub 2.
+
+Notable Player Classifications (validated)
+-----------------------------------------
+- LeBron James → Ball Dominant Creator / Heliocentric Guard (conf ~100%, eff ~85%)
+- Stephen Curry → Ball Dominant Creator / Gravity Engine (100%, ~86%)
+- Nikola Jokić → Ball Dominant Creator / Post Hub (100%, ~98%)
+- Domantas Sabonis → Ball Dominant Creator / Post Hub (96%, ~95%)
+- Luka Dončić → Ball Dominant Creator / Heliocentric Guard (100%, ~85%)
+- Tyrese Haliburton → Ball Dominant Creator / Gravity Engine (100%, ~88%)
+- Kevin Durant → All-Around Scorer / High Volume (100%, ~92%)
+- Anthony Edwards → All-Around Scorer / High Volume (100%, ~80%)
+- Brook Lopez → PnR Rolling Big (100%, ~82%)
+- Many others validated; full list printed during run.
+
+Viewer Updates
+--------------
+- `app/player_archetype_viewer.py` updated to show `Fit: X% · Eff: Y%` by:
+	- Adding `off_effectiveness` to the player dict (p.off_effectiveness derived from `role_effectiveness` scaled to percent).
+	- Replacing the old confidence template snippet with `Fit: ${p.off_confidence}% · Eff: ${p.off_effectiveness}%${p.off_secondary ? ' · ' + p.off_secondary : ''}`.
+	- Adding new sort button labels: `Fit` and `Effectiveness` to allow client-side sorting by either metric.
+- HTML regenerated: `app/player_archetypes.html` created/updated and contains references to `off_effectiveness` and PnR archetypes. Note: client-side JS renders template literals; grep for literal strings like `Fit:` may not show in server-side file counts.
+
+Bugs/Issues Encountered & Fixes
+--------------------------------
+- Unicode middot (·, U+00B7) in the template prevented naive search/replace; resolved using exact string replacement and updating the template literal.
+- Syntax indentation error in viewer patch (extra blank line before `elif`) — fixed by correcting indentation.
+- `POST_HUB_POSS` had a unicode arrow in an earlier comment which caused a KeyError during string matching in patches; fixed by avoiding matching on the arrow and replacing a shorter safe substring.
+- v3 code was initially present only in `/tmp` scripts; `write_v3.py` used to persist the v3 file at `src/data_compute/compute_player_archetypes.py`, then patches applied (`patch_v3.py`, `patch_v3b.py`/fixed).
+
+Commands & Tools Used (repro)
+----------------------------
+Run classifier (v3) and regenerate parquet:
+```bash
+.venv/bin/python src/data_compute/compute_player_archetypes.py
+```
+
+Generate viewer HTML:
+```bash
+.venv/bin/python app/player_archetype_viewer.py
+```
+
+Check python syntax:
+```bash
+.venv/bin/python -m py_compile src/data_compute/compute_player_archetypes.py
+.venv/bin/python -m py_compile app/player_archetype_viewer.py
+```
+
+Quick verification script used during this session:
+```bash
+.venv/bin/python /tmp/final_verify.py
+```
+
+Files you should version-control (recommended)
+-------------------------------------------
+- `src/data_compute/compute_player_archetypes.py` (v3 source)
+- `app/player_archetype_viewer.py` (viewer generator)
+- `reference/player_offensive_archetypes.md` (documentation)
+- `/tmp/write_v3.py`, `/tmp/patch_v3.py`, `/tmp/patch_v3b_fixed.py` (developer artifacts — consider moving into `scripts/` if you want to reuse)
+
+Pending / Future Work
+---------------------
+- Small tuning: BDC retention target aimed ≤60% but actual is ~61.5% (40/65 → 61.5%); acceptable but can be tuned further by adjusting BD_MIN (P80→P85) or composite threshold.
+- Add unit tests and CI checks for: percentile resolver, composite interpolation, key player expectations, and viewer HTML generation.
+- Update `reference/player_offensive_archetypes.md` further with more examples and the exact per-season percentile table output for each run (optionally commit snapshot tables).
+- Add a small CLI or Makefile to: (1) run classifier, (2) regenerate viewer, (3) open HTML in the system browser (for convenience).
+- Consider moving the `/tmp` generator/patch scripts into a `dev_tools/` or `scripts/` folder and adding usage notes.
+
+How to keep this file updated
+-----------------------------
+- Purpose: this is the single-session/ongoing context summary; append important discoveries, thresholds, distribution changes, and decision justifications here.
+- When you or the agent: change classification logic, re-tune percentiles, fix viewer templates, or regenerate `player_archetypes.parquet`, add a short entry with date-stamped notes including:
+	- What changed (file & lines),
+	- Why it changed (bugfix, tuning, design decision),
+	- Impact on outputs (counts, key players),
+	- Commands to reproduce.
+- Use the following template for additions (append to the end of this file):
+```
+- YYYY-MM-DD — Short title
+	- Files changed: path(s)
+	- Summary: what & why
+	- Repro commands:
+		```bash
+		# commands
+		```
+	- Observed impact:
+```
+
+Session History (high level)
+---------------------------
+- v1 → v2: fixed INTERIOR_RATIO, USG/TS NaN handling, playtype & per-36 normalization, initial archetype layout.
+- v2 → v3 (this session): implemented percentile thresholds, BDC subtypes, composite interpolation, PnR Big split, connector filters, movement shooter relax, dual confidence, regenerated parquet, updated viewer and docs.
+
+Contact / Ownership
+-------------------
+- Primary developer: you (workspace owner). The repository contains recorded scripts and the v3 compute script. Use this file as the first place to look for session-specific rationales.
+
+End of summary (last updated: 2026-02-07)
+
+Note: Update this file whenever you encounter important changes to thresholds, classification rules, viewer templates, or data artifacts. Add date-stamped entries using the template above.

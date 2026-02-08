@@ -1,33 +1,33 @@
-# Player Offensive Archetypes — v2 Logic Documentation
+# Player Offensive Archetypes — v3 Logic Documentation
 
 ## Overview
 
-This document explains the **complete logic** behind the v2 offensive archetype classification system (`src/data_compute/compute_player_archetypes.py`). The system classifies every NBA player-season into one of **10 primary archetypes** (plus 1 special designation) based on Synergy playtype data, tracking data, and box score stats.
+This document explains the **complete logic** behind the v3 offensive archetype classification system (`src/data_compute/compute_player_archetypes.py`). The system classifies every NBA player-season into one of **12 primary archetypes** (plus 1 special designation) based on Synergy playtype data, tracking data, and box score stats.
 
-### v2 Changes from v1
+### v3 Changes from v2
 
-| Area | v1 | v2 |
+| Area | v2 | v3 |
 |---|---|---|
-| Ball dominance | ISO + PnRBH + PostUp (equal weight) | ON_BALL (ISO + PnRBH) + PostUp × 0.65 |
-| Interior vs Perimeter | Drives-based ratio (broken — P95 = 0.17) | FG2A_RATE = (FGA − FG3A) / FGA |
-| Scoring gate | Raw PPG ≥ 15 | PTS_PER36 ≥ 18.0 (per-36 normalized) |
-| Efficiency | Not considered | TS% z-score modulates confidence |
-| Playmaking | AST/36 only | AST/36 + SecAST × 0.5 + PotAST × 0.3 − TOV × 0.5 |
-| Per-36 inflation | No guard | MPG ≥ 15.0 filter |
-| Confidence | Linear `min(1.0, x)` (ceiling compression) | `sqrt` saturation for headroom |
-| Archetypes | 7 + 2 special | 10 + 1 special (added Connector, Ballhandler, All-Around) |
-| Off-ball thresholds | CUT+PNRRM ≥ 0.10, SPOTUP ≥ 0.20 | CUT+PNRRM ≥ 0.20, SPOTUP ≥ 0.25 |
-| Movement Shooter | Any movement ≥ 0.10 | Movement ≥ 0.10 AND movement > spot-up |
-| USG% | From box score (NaN for 2024-25) | Computed from raw data when missing |
-| TS% | From box score (NaN for 2024-25) | Computed as PTS / (2 × (FGA + 0.44 × FTA)) |
+| Thresholds | Static values (0.18, 5.5, etc.) | Percentile-based (P50–P95), computed per-season |
+| BDC gate | ball_dom ≥ 0.18 + AST/36 ≥ 5.5 | ball_dom ≥ P80 + AST ≥ P75 + PTS ≥ P50 + composite ≥ 0.35 |
+| BDC pool | 65 players (2024-25) | 40 players (–38% reduction) |
+| All-Around pool | 64 players | 26 players (–59% reduction) |
+| BDC subtypes | Primary Scorer / Offensive Hub | Heliocentric Guard / Post Hub / Gravity Engine / Primary Scorer |
+| PnR Big | Part of Off-Ball Finisher | Separate: PnR Rolling Big / PnR Popping Big (by FG3A) |
+| Confidence | Single `archetype_confidence` | Dual: `role_confidence` (fit) + `role_effectiveness` (production) |
+| Movement Shooter | movement > spotup | movement/(movement+spotup) ≥ 0.40 |
+| Connector | Basic AST/36 ≥ 3.5 gate | AST ≥ P50 + touches/sec-per-touch activity filter |
+| FG2A_RATE | Static 0.70/0.45 | P70 (interior) / P30 (perimeter) |
+| USG% | Hard gate at 0.22/0.15 | Soft signal only — never disqualifies |
+| Composite | Simple sqrt saturation | Linear interpolation from threshold to P95 |
 
 ---
 
 ## 1. Data Sources
 
-We merge **three** data sources per player per season:
+Same as v2 — three data sources per player per season:
 
-### 1a. Synergy Playtype Data (11 official playtypes from NBA.com)
+### 1a. Synergy Playtype Data (11 playtypes from NBA.com)
 
 | Playtype | Column Name | Meaning |
 |---|---|---|
@@ -43,8 +43,6 @@ We merge **three** data sources per player per season:
 | Putback | `OFFREBOUND_POSS_PCT` | % on offensive rebound putbacks |
 | Misc | `MISC_POSS_PCT` | % miscellaneous |
 
-All `_POSS_PCT` values are **fractions (0.0–1.0)**. Example: `ISOLATION_POSS_PCT = 0.187` = 18.7%.
-
 ### 1b. Tracking Data
 
 | Category | Key Columns |
@@ -58,37 +56,32 @@ All `_POSS_PCT` values are **fractions (0.0–1.0)**. Example: `ISOLATION_POSS_P
 
 ### 1c. Box Score Data
 
-Standard stats from `complete_player_season_stats.parquet`: `GP`, `MIN`, `PTS`, `AST`, `REB`, `FGA`, `FG3A`, `FG3M`, `FTA`, `FTM`, `USG_PCT`, `TS_PCT`, etc.
+Standard stats: `GP`, `MIN`, `PTS`, `AST`, `REB`, `FGA`, `FG3A`, `FG3M`, `FTA`, `FTM`, `USG_PCT`, `TS_PCT`, etc.
 
 ---
 
-## 2. Feature Engineering (Derived Columns)
+## 2. Feature Engineering
 
-### Per-36 Stats + MPG Guard
+### Per-36 Stats
 
 ```
 MPG = MIN / GP
 minutes_factor = 36 / MPG
-PTS_PER36 = (PTS / GP) * minutes_factor
-AST_PER36 = (AST / GP) * minutes_factor
-(etc.)
+PTS_PER36 = (PTS / GP) × minutes_factor
+AST_PER36 = (AST / GP) × minutes_factor
 ```
-
-**Per-36 inflation guard**: Players with `MPG < 15.0` are classified as "Insufficient Minutes" regardless of other stats. This prevents role players who play 8 MPG from appearing as 25 PTS/36 scorers.
 
 ### Ball Dominance (Split Formula)
 
 ```
 ON_BALL_CREATION = ISOLATION_POSS_PCT + PRBALLHANDLER_POSS_PCT
 POST_CREATION = POSTUP_POSS_PCT
-BALL_DOMINANT_PCT = ON_BALL_CREATION + POST_CREATION * 0.65
+BALL_DOMINANT_PCT = ON_BALL_CREATION + POST_CREATION × 0.65
 ```
 
-**Why 0.65 weight for post-ups?** A center posting up is not the same kind of "ball dominance" as a guard running ISO or PnR. Post-ups are partially set up by the team (entry passes, positioning) whereas ISO/PnR are true self-creation. The 0.65 weight ensures post-heavy bigs don't get inflated ball-dominance scores.
+**Why 0.65 weight?** Post-ups are partially team-set-up plays, unlike pure self-creation (ISO/PnR).
 
-**Example**: Luka 2024-25 → `(0.187 + 0.340) + 0.046 * 0.65 = 0.557` (55.7%)
-
-### Playmaking Score (with Turnover Penalty)
+### Playmaking Score
 
 ```
 PLAYMAKING_SCORE = AST_PER36 × 1.0
@@ -97,87 +90,85 @@ PLAYMAKING_SCORE = AST_PER36 × 1.0
                  − TOV_PER36 × 0.5
 ```
 
-The turnover penalty prevents careless ball handlers from inflating their playmaking tier. Note that the **classification gates use raw AST_PER36**, not the composite — the composite is used for confidence calculation only.
-
 ### Shot Profile: FG2A_RATE
 
 ```
 FG2A_RATE = (FGA − FG3A) / FGA
 ```
 
-This replaces the v1 `INTERIOR_RATIO` which was based on `DRIVES_PER36 / (DRIVES_PER36 + FG3A_PER36)`. That formula was broken because tracking DRIVES values are extremely small (P95 = 0.17 per 36), making the ratio useless — nobody ever hit the 0.60 threshold.
-
-`FG2A_RATE` directly measures what fraction of shot attempts are 2-pointers:
-- **Gobert**: 1.000 (never shoots 3s)
-- **Giannis**: 0.952 (almost all 2s)
-- **Kuminga**: 0.734 (mostly interior)
-- **KD**: 0.670 (balanced, leans interior)
-- **Ant Edwards**: 0.500 (perfectly balanced)
-- **Curry**: 0.377 (mostly 3s)
-
-### Efficiency: TS% and USG% Computation
-
-For 2024-25 (and any season with missing values), TS% and USG% are computed from raw data:
+### Efficiency: TS% and USG%
 
 ```
 TS% = PTS / (2 × (FGA + 0.44 × FTA))
-
 USG% (proxy) = (FGA + 0.44 × FTA + TOV) × 2.4 / (MIN × 5)
+TS_ZSCORE = (TS_PCT − league_avg) / league_std
 ```
-
-The USG proxy assumes ~100 pace and divides by 5 (5 players sharing possessions) to produce a standard 0-1 fraction where 0.20 = 20% = league average.
-
-**TS Z-Score**: `(TS_PCT − league_avg) / league_std` — used to modulate confidence. Elite efficiency boosts confidence up to 10%; poor efficiency penalizes up to 20%.
 
 ### Off-Ball Composites
 
-| Feature | Formula | Purpose |
-|---|---|---|
-| `CUT_PNRRM_PCT` | `CUT_POSS_PCT + PRROLLMAN_POSS_PCT` | Off-ball finishing frequency |
-| `MOVEMENT_SHOOTER_PCT` | `HANDOFF_POSS_PCT + OFFSCREEN_POSS_PCT` | Movement shooting frequency |
-| `SPOTUP_PCT` | `SPOTUP_POSS_PCT` | Spot-up frequency |
-| `TRANSITION_PCT` | `TRANSITION_POSS_PCT` | Transition frequency |
-| `PUTBACK_PCT` | `OFFREBOUND_POSS_PCT` | Putback frequency |
-
-### Efficiency Metrics (Informational)
-
-```
-EFG% = (FGM + 0.5 × FG3M) / FGA
-TOV% = TOV / (FGA + 0.44 × FTA + TOV)
-FT_RATE = FTA / FGA
-```
+| Feature | Formula |
+|---|---|
+| `CUT_PNRRM_PCT` | `CUT_POSS_PCT + PRROLLMAN_POSS_PCT` |
+| `MOVEMENT_SHOOTER_PCT` | `HANDOFF_POSS_PCT + OFFSCREEN_POSS_PCT` |
+| `SPOTUP_PCT` | `SPOTUP_POSS_PCT` |
+| `TRANSITION_PCT` | `TRANSITION_POSS_PCT` |
+| `PUTBACK_PCT` | `OFFREBOUND_POSS_PCT` |
 
 ---
 
-## 3. Classification Thresholds
+## 3. Percentile-Based Thresholds (v3 Key Innovation)
 
-| Threshold | Value | Meaning |
+v3 replaces static thresholds with **per-season percentile thresholds** computed from qualified players (MIN ≥ 500, GP ≥ 20, MPG ≥ 15).
+
+### Percentile Threshold Map
+
+| Threshold Name | Column | Percentile | 2024-25 Value | Purpose |
+|---|---|---|---|---|
+| `BD_MIN` | BALL_DOMINANT_PCT | P80 | 0.372 | BDC main path min ball dominance |
+| `BD_ALL_AROUND` | BALL_DOMINANT_PCT | P60 | 0.224 | All-Around Scorer min ball dominance |
+| `BD_BASE` | BALL_DOMINANT_PCT | P50 | 0.178 | Any ball-dom consideration |
+| `BD_HELIOCENTRIC` | BALL_DOMINANT_PCT | P85 | 0.413 | Heliocentric Guard subtype |
+| `BD_P95` | BALL_DOMINANT_PCT | P95 | 0.510 | Composite normalization cap |
+| `PLAYMAKER` | AST_PER36 | P75 | 5.074 | Playmaker flag |
+| `ELITE_PLAYMAKER` | AST_PER36 | P85 | 6.138 | Elite playmaker (Hub path) |
+| `AST_P95` | AST_PER36 | P95 | 7.867 | Composite normalization cap |
+| `HIGH_SCORING` | PTS_PER36 | P70 | 18.95 | High-volume scorer |
+| `ELITE_SCORING` | PTS_PER36 | P80 | 21.07 | Elite scoring (Hub path) |
+| `MODERATE_SCORING` | PTS_PER36 | P50 | 15.51 | BDC scoring floor |
+| `ALL_AROUND_SCORING` | PTS_PER36 | P60 | 17.23 | All-Around volume gate |
+| `PTS_P95` | PTS_PER36 | P95 | 25.62 | Composite normalization cap |
+| `LOW_SCORING` | PTS_PER36 | P25 | 12.63 | Low scorer |
+| `FG2A_INTERIOR` | FG2A_RATE | P70 | 0.673 | Interior shot profile |
+| `FG2A_PERIMETER` | FG2A_RATE | P30 | 0.478 | Perimeter shot profile |
+| `HIGH_CUT_PNRRM` | CUT_PNRRM_PCT | P75 | 0.154 | Off-ball finisher gate |
+| `HIGH_SPOTUP` | SPOTUP_PCT | P50 | 0.213 | Spot-up threshold |
+| `HIGH_MOVEMENT` | MOVEMENT_SHOOTER_PCT | P70 | 0.105 | Movement shooter gate |
+| `HIGH_PRROLLMAN` | PRROLLMAN_POSS_PCT | P70 | 0.065 | PnR Big gate |
+| `FG3A_MEDIAN` | FG3A_PER36 | P50 | 5.813 | PnR pop vs roll split |
+| `TOUCHES_MEDIAN` | TOUCHES | P50 | 40.3 | Connector activity |
+| `HIGH_FG3A` | FG3A_PER36 | P80 | 8.017 | Gravity Engine 3PA volume |
+| `HIGH_FG3_PCT` | FG3_PCT | P70 | 0.378 | Gravity Engine accuracy |
+| `HIGH_EFFICIENCY` | TS_PCT | P70 | 0.588 | High efficiency |
+| `LOW_EFFICIENCY` | TS_PCT | P30 | 0.540 | Low efficiency |
+| `CONNECTOR_AST` | AST_PER36 | P50 | 3.376 | Connector playmaking gate |
+
+### Static Thresholds (Non-Percentile)
+
+| Threshold | Value | Purpose |
 |---|---|---|
-| `BALL_DOMINANT_PCT` | **0.18** | Min ball dominance (raised from 0.15) |
-| `HIGH_BALL_DOMINANT_PCT` | **0.30** | Very high ball dominance (raised from 0.25) |
-| `HIGH_PLAYMAKING` | **5.5** AST/36 | High playmaker (raised from 5.0) |
-| `VERY_HIGH_PLAYMAKING` | **7.5** AST/36 | Elite playmaker (raised from 7.0) |
-| `CONNECTOR_PLAYMAKING` | **3.5** AST/36 | Moderate playmaking for Connector |
-| `HIGH_SCORING_PER36` | **18.0** PTS/36 | High scorer (~P70, replaces 15 PPG) |
-| `LOW_SCORING_PER36` | **10.0** PTS/36 | Low scorer |
-| `HIGH_USAGE` | **0.22** | High usage rate (22%) |
-| `LOW_USAGE` | **0.15** | Low usage rate (15%) |
-| `INTERIOR_HEAVY` | **0.70** FG2A_RATE | Interior shot profile |
-| `PERIMETER_HEAVY` | **0.45** FG2A_RATE | Perimeter shot profile |
-| `HIGH_CUT_PNRRM` | **0.20** | Off-ball finishing (raised from 0.10) |
-| `HIGH_SPOTUP` | **0.25** | Spot-up frequency (raised from 0.20) |
-| `HIGH_MOVEMENT` | **0.10** | Movement shooting |
-| `MIN_MINUTES` | **500** | Minimum season minutes |
-| `MIN_GP` | **20** | Minimum games played |
-| `MIN_MPG` | **15.0** | Minimum MPG (per-36 guard) |
-| `HIGH_EFFICIENCY` | **0.58** TS% | Above-average efficiency |
-| `LOW_EFFICIENCY` | **0.52** TS% | Below-average efficiency |
+| `MIN_MINUTES` | 500 | Minimum season minutes |
+| `MIN_GP` | 20 | Minimum games played |
+| `MIN_MPG` | 15.0 | Per-36 inflation guard |
+| `POST_HUB_POSS` | 0.10 | Post Hub minimum (must also dominate) |
+| `POST_HUB_DOMINANT` | 0.15 | Post Hub guaranteed (any post ≥ 0.15) |
+| `HELIOCENTRIC_ON_BALL` | 0.30 | Heliocentric Guard min ON_BALL |
+| `POST_WEIGHT` | 0.65 | Post-up weight in ball dominance |
+| `MOVEMENT_RATIO_MIN` | 0.40 | movement/(movement+spotup) min |
+| `CONNECTOR_SEC_PER_TOUCH_MAX` | 2.5 | Max avg sec per touch for Connector |
 
 ---
 
 ## 4. Classification Hierarchy
-
-The system uses a **strict priority hierarchy**. Once a player matches a tier, classification returns immediately.
 
 ### Step 0: Minimum Requirements
 
@@ -185,197 +176,245 @@ The system uses a **strict priority hierarchy**. Once a player matches a tier, c
 IF MIN < 500 OR GP < 20 OR MPG < 15.0 → "Insufficient Minutes"
 ```
 
-### Step 1: Tier Assignments
-
-Each player gets bucketed into tiers before classification:
-
-- **Ball Dominance**: Low (< 0.18), High (0.18–0.30), Very High (> 0.30)
-- **Playmaking**: Low (< 5.5 AST/36), High (5.5–7.5), Elite (> 7.5)
-- **Scoring**: Low (< 10 PTS/36), Medium (10–18), High (> 18)
-- **Efficiency**: Low (TS ≤ 0.52), Average (0.52–0.58), High (TS ≥ 0.58)
-
-### Step 2: Classification Logic
-
-#### 1️⃣ Ball Dominant Creator
+### Step 1: Ball Dominant Creator (Main Path)
 
 ```
-IF ball_dominant (≥ 0.18) AND playmaker (≥ 5.5 AST/36):
-    → Ball Dominant Creator
-    confidence = min(1.0, (√(ball_dom/0.35) + √(playmaking/10)) / 2 × eff_factor)
-    IF high_scorer (≥ 18 PTS/36): secondary = "Primary Scorer"
+gates:
+  ball_dom >= P80 (BD_MIN)
+  ast_per36 >= P75 (PLAYMAKER)
+  pts_per36 >= P50 (MODERATE_SCORING)
+
+composite (linear interpolation):
+  bd_score  = (ball_dom  - BD_MIN) / (BD_P95  - BD_MIN)     [0–1]
+  pts_score = (pts_per36 - P50)    / (PTS_P95 - P50)        [0–1]
+  ast_score = (ast_per36 - P75)    / (AST_P95 - P75)        [0–1]
+
+  volume     = 0.50 × bd_score + 0.50 × pts_score
+  confidence = ast_score
+  composite  = 0.60 × volume + 0.40 × confidence
+
+  IF composite >= 0.35 → Ball Dominant Creator
 ```
 
-**Examples**: Luka, Jokić, LeBron, Trae Young, Haliburton
+**BDC Subtypes** (priority order):
+1. **Post Hub**: `POSTUP ≥ 0.15` (dominant) OR (`POSTUP ≥ 0.10` AND `POSTUP ≥ ON_BALL`)
+2. **Gravity Engine**: `FG3A_PER36 ≥ P80` AND (`TS ≥ P70` OR `FG3% ≥ P70`)
+3. **Heliocentric Guard**: `ball_dom ≥ P85` (BD_HELIOCENTRIC)
+4. **Primary Scorer**: `pts_per36 ≥ P70`
 
-#### 1b️⃣ Offensive Hub (sub-path of BDC)
+**Examples**: LeBron (Heliocentric), Luka (Heliocentric), Curry (Gravity Engine), Trae (Heliocentric)
 
-```
-IF playmaker (≥ 5.5 AST/36) AND high_scorer (≥ 18 PTS/36) AND NOT ball_dominant:
-    → Ball Dominant Creator / Offensive Hub
-    confidence = min(1.0, (√(ast36/8) + √(pts36/25)) / 2 × eff_factor)
-```
-
-Catches high-scoring playmakers who create through non-ISO/PnR means — post-up hubs, passing bigs, etc.
-
-**Examples**: Sabonis (ball_dom=0.107 but AST/36=6.3, PTS/36=19.8), Vucevic
-
-#### 2️⃣ Ballhandler (Facilitator)
+### Step 1b: Offensive Hub (Elite Playmaker + Elite Scorer)
 
 ```
-IF playmaker (≥ 5.5 AST/36) AND NOT high_scorer:
-    → Ballhandler
-    confidence = min(1.0, √(playmaking/10) × eff_factor)
+ast_per36 >= P85 (ELITE_PLAYMAKER)
+pts_per36 >= P80 (ELITE_SCORING)
+
+→ Ball Dominant Creator with full subtype logic
+  (Post Hub > Gravity Engine > Offensive Hub)
 ```
 
-Pure facilitators who distribute more than they score. BDC already captured ball_dom + playmaker combinations, so this only catches non-ball-dominant or non-scoring playmakers.
+**Examples**: Nikola Jokić (Post Hub), high-scoring playmakers not qualifying via main path
+
+### Step 1c: Playmaking Hub (Elite Playmaker + Post Creator)
+
+```
+ast_per36 >= P85 (ELITE_PLAYMAKER)
+POSTUP_POSS_PCT >= 0.10
+NOT is_ball_dominant_high
+
+→ Ball Dominant Creator / Post Hub
+```
+
+**Examples**: Domantas Sabonis (ball_dom=0.11, AST/36=6.3, POST=0.12)
+
+### Step 2: Ballhandler (Facilitator)
+
+```
+ast_per36 >= P75 (PLAYMAKER) AND NOT high scorer
+
+→ Ballhandler
+```
 
 **Examples**: Draymond Green (AST/36=7.0, PTS/36=8.5)
 
-#### 3️⃣ Primary Scorers (Ball Dominant, Not Playmaker)
-
-Ball-dominant players who don't distribute enough to be BDC/Ballhandler. Split by shot profile:
+### Step 3: Primary Scorers
 
 ```
-IF ball_dominant (≥ 0.18) AND NOT playmaker:
-    IF FG2A_RATE ≥ 0.70:   → Interior Scorer
-    ELIF FG2A_RATE ≤ 0.45: → Perimeter Scorer
-    ELSE:                    → All-Around Scorer
-    IF high_scorer: secondary = "High Volume"
+ball_dom >= P60 (BD_ALL_AROUND) AND NOT playmaker
+
+IF FG2A_RATE >= P70 → Interior Scorer
+ELIF FG2A_RATE <= P30 → Perimeter Scorer
+ELSE:
+  IF pts_per36 >= P60 (ALL_AROUND_SCORING) → All-Around Scorer
+  ELSE → falls through to lower archetypes
 ```
 
 | Archetype | FG2A_RATE | Examples |
 |---|---|---|
-| Interior Scorer | ≥ 0.70 | Kuminga (0.734), Zion (0.87) |
-| Perimeter Scorer | ≤ 0.45 | Buddy Hield, Duncan Robinson |
-| All-Around Scorer | 0.45–0.70 | KD (0.67), Ant Edwards (0.50) |
+| Interior Scorer | ≥ P70 (~0.67) | Kuminga, Zion, Giannis |
+| Perimeter Scorer | ≤ P30 (~0.48) | Derrick White, Duncan Robinson |
+| All-Around Scorer | P30–P70 + PTS ≥ P60 | KD, Anthony Edwards |
 
-**Key insight**: The `INTERIOR_HEAVY = 0.70` threshold was carefully tuned. At 0.60 (v1), KD (0.67) would have been classified as Interior Scorer — clearly wrong. At 0.70, KD falls to All-Around while Kuminga (0.73), Giannis (0.95), and Zion correctly map to Interior.
-
-#### 4️⃣ Connector
+### Step 4: Connector
 
 ```
-IF AST/36 ≥ 3.5 AND NOT ball_dominant AND NOT high_scorer:
-    IF has_connector_profile (sec_ast ≥ 0.3 OR AST/36 ≥ 4.0 OR ...):
-        → Connector
-        confidence = min(1.0, √(ast36/6) × eff_factor)
+ast_per36 >= P50 (CONNECTOR_AST)
+NOT ball_dominant_mid
+NOT high_scorer
+(touches >= P50 OR sec_per_touch <= 2.5)  ← activity filter
++ playmaking profile check
 ```
 
-Players who facilitate without ball dominance or volume scoring. The "connector profile" check ensures we don't catch accidental passers.
+**Examples**: Jrue Holiday, Kyle Anderson
 
-**Examples**: Derrick White, Jrue Holiday, Kyle Anderson
-
-#### 5️⃣ Off-Ball Finisher
+### Step 5: PnR Big (Rolling / Popping)
 
 ```
-offball_finish_score = CUT_PNRRM_PCT + PUTBACK × 0.5 + TRANSITION × 0.3
+PRROLLMAN_POSS_PCT >= P70 (HIGH_PRROLLMAN)
+AND prrollman > cut_poss
+AND prrollman >= spotup × 0.5
 
-IF CUT_PNRRM ≥ 0.20 OR finish_score > 0.20:
-    → Off-Ball Finisher
-    IF TRANSITION > 0.10: secondary = "Transition Player"
+IF FG3A_PER36 >= P50 → PnR Popping Big
+ELSE → PnR Rolling Big
 ```
 
-**Threshold rationale**: Raised from 0.10 → 0.20 for CUT_PNRRM because at 0.10, ~35% of players qualified (too broad). At 0.20, ~27% qualify (still the largest bucket but more meaningful).
+**Examples**: Brook Lopez (Rolling), Al Horford (Popping)
 
-**Examples**: Gobert, Clint Capela, Derrick Jones Jr.
-
-#### 6️⃣ Off-Ball Movement Shooter
+### Step 6: Off-Ball Finisher
 
 ```
-IF MOVEMENT_SHOOTER_PCT ≥ 0.10 AND movement > spotup:
-    → Off-Ball Movement Shooter
+offball_finish_score = CUT_PNRRM + PUTBACK × 0.5 + TRANSITION × 0.3
+
+CUT_PNRRM >= P75 OR finish_score > 0.20
+
+→ Off-Ball Finisher
+  sub: "Transition Player" if TRANSITION > 0.15
 ```
 
-The `movement > spotup` requirement prevents overlap with Stationary Shooter. Players who run off screens and through handoffs more than they spot up.
+**Examples**: Gobert, Clint Capela
 
-**Examples**: Rare archetype (~2 per season) — players like Klay Thompson in his prime
-
-#### 7️⃣ Off-Ball Stationary Shooter
+### Step 7: Off-Ball Movement Shooter
 
 ```
-IF SPOTUP_PCT ≥ 0.25:
-    → Off-Ball Stationary Shooter
-    IF FG3_PCT > 0.38: secondary = "Elite Shooter"
+movement >= P70 (HIGH_MOVEMENT)
+AND movement / (movement + spotup) >= 0.40
+
+→ Off-Ball Movement Shooter
 ```
 
-**Examples**: Batum, PJ Tucker, Kentavious Caldwell-Pope
+**Examples**: Klay Thompson, Buddy Hield
 
-#### 8️⃣ Rotation Piece (Catch-All)
+### Step 8: Off-Ball Stationary Shooter
+
+```
+spotup >= P50 (HIGH_SPOTUP)
+
+→ Off-Ball Stationary Shooter
+  sub: "Elite Shooter" if FG3% > 0.38
+```
+
+**Examples**: Nicolas Batum (Elite Shooter)
+
+### Step 9: Rotation Piece (Catch-All)
 
 ```
 → Rotation Piece
-Secondary: "Rebounder" / "Perimeter Defender" / "Rim Protector" / "Glue Guy"
-confidence = min(0.65, 0.55 × eff_factor)
+sub: Rebounder / Perimeter Defender / Rim Protector / Glue Guy
 ```
 
 ---
 
-## 5. Confidence Calculation
+## 5. Dual Confidence System (v3 Key Innovation)
 
-All v2 confidence formulas use **sqrt saturation** instead of v1's linear `min(1.0, x)`:
+v3 splits the single `archetype_confidence` into two independent metrics:
 
-```
-raw_conf = √(metric / denominator)
-confidence = min(1.0, raw_conf × efficiency_factor)
-```
+### Role Confidence (Fit)
 
-**Why sqrt?** Linear formulas like `ball_dom / 0.25` max out at 1.0 quickly — a player with ball_dom=0.50 gets the same confidence as ball_dom=0.80. Sqrt provides better discrimination across the range while still having a natural ceiling.
-
-### Efficiency Factor
-
-```
-IF TS ≥ 0.58 (High):    efficiency_factor = min(1.10, 1.0 + TS_ZSCORE × 0.05)
-IF TS ≤ 0.52 (Low):     efficiency_factor = max(0.80, 1.0 + TS_ZSCORE × 0.05)
-ELSE (Average):          efficiency_factor = 1.0
-```
-
-This modulates confidence by ±5-20% based on efficiency. A highly efficient scorer gets a small confidence boost; an inefficient one gets penalized. It does NOT change the archetype — just the confidence.
+**What it measures**: How well the player's profile matches the archetype definition. A player with high fit clearly belongs in their category.
 
 | Archetype | Confidence Formula |
 |---|---|
-| Ball Dominant Creator | `(√(ball_dom/0.35) + √(playmaking/10)) / 2` |
-| Offensive Hub | `(√(ast36/8) + √(pts36/25)) / 2` |
-| Ballhandler | `√(playmaking/10)` |
-| Interior Scorer | `√(ball_dom/0.25) × (fg2a_rate/0.75)` |
-| Perimeter Scorer | `√(ball_dom/0.25) × ((1−fg2a_rate)/0.65)` |
-| All-Around Scorer | `√(ball_dom/0.25)` |
-| Connector | `√(ast36/6)` |
-| Off-Ball Finisher | `√(finish_score/0.25)` |
-| Off-Ball Movement Shooter | `√(movement/0.18)` |
-| Off-Ball Stationary Shooter | `√(spotup/0.35)` |
+| BDC (main path) | `√(composite / 0.6)` where composite uses linear interpolation |
+| BDC (Hub path) | `√(ast/cap) × 0.5 + √(pts/cap) × 0.5` |
+| BDC (Playmaking Hub) | `√(ast/cap) × 0.6 + √(post/0.15) × 0.4` |
+| Ballhandler | `√(ast/cap)` |
+| Interior Scorer | `√(bd/cap) × 0.6 + (fg2a/0.85) × 0.4` |
+| Perimeter Scorer | `√(bd/cap) × 0.6 + ((1-fg2a)/0.65) × 0.4` |
+| All-Around Scorer | `√(bd/cap) × 0.5 + √(pts/cap) × 0.5` |
+| Connector | `√(ast/cap)` |
+| PnR Big | `√(prrollman / cap)` |
+| Off-Ball Finisher | `√(finish_score / cap)` |
+| Movement Shooter | `√(movement / cap)` |
+| Stationary Shooter | `√(spotup / cap)` |
 | Rotation Piece | Fixed 0.55 |
+
+### Role Effectiveness (Production Quality)
+
+**What it measures**: How productive the player is within their role, independent of classification fit.
+
+| Archetype | Effectiveness Formula |
+|---|---|
+| Ball Dominant Creator | 35% TS efficiency + 35% volume + 30% primary playtype PPP |
+| Interior/Perim/All-Around | 50% TS efficiency + 50% volume |
+| Ballhandler | 35% TS + 25% volume + 40% AST quality |
+| Connector | 30% TS + 20% volume + 50% connection score |
+| PnR Big | 35% TS + 30% volume + 35% PnR roll man PPP |
+| Off-Ball Finisher | 35% TS + 30% volume + 35% cut PPP |
+| Movement Shooter | 25% TS + 15% vol + 35% FG3% + 25% offscreen PPP |
+| Stationary Shooter | 25% TS + 15% vol + 35% FG3% + 25% spotup PPP |
+
+TS efficiency score: `clip((TS_ZSCORE + 2) / 4, 0.05, 1.0)` (normalizes -2σ=0, +2σ=1)
 
 ---
 
-## 6. Archetype Distribution (2024-25, 329 qualified)
+## 6. Archetype Distribution (2024-25, 329 Qualified)
 
 | Archetype | Count | % |
 |---|---|---|
-| Off-Ball Finisher | 89 | 27.1% |
-| Ball Dominant Creator | 65 | 19.8% |
-| All-Around Scorer | 64 | 19.5% |
-| Off-Ball Stationary Shooter | 55 | 16.7% |
-| Interior Scorer | 19 | 5.8% |
-| Perimeter Scorer | 15 | 4.6% |
-| Connector | 14 | 4.3% |
-| Ballhandler | 4 | 1.2% |
-| Rotation Piece | 2 | 0.6% |
-| Off-Ball Movement Shooter | 2 | 0.6% |
+| Off-Ball Stationary Shooter | 64 | 19.5% |
+| Off-Ball Finisher | 62 | 18.8% |
+| Ball Dominant Creator | 40 | 12.2% |
+| Ballhandler | 31 | 9.4% |
+| Connector | 28 | 8.5% |
+| All-Around Scorer | 26 | 7.9% |
+| PnR Rolling Big | 21 | 6.4% |
+| Interior Scorer | 18 | 5.5% |
+| Off-Ball Movement Shooter | 17 | 5.2% |
+| Rotation Piece | 10 | 3.0% |
+| Perimeter Scorer | 7 | 2.1% |
+| PnR Popping Big | 5 | 1.5% |
+
+### Subtype Distribution
+
+| Subtype | Count | Context |
+|---|---|---|
+| Transition Player | 45 | Off-Ball Finisher, PnR Big |
+| High Volume | 33 | Interior/Perimeter/All-Around Scorers |
+| Heliocentric Guard | 29 | BDC subtype |
+| Elite Shooter | 23 | Stationary Shooter |
+| Playmaking Big | 15 | Connector subtype |
+| Glue Guy | 8 | Rotation Piece |
+| Gravity Engine | 6 | BDC subtype |
+| Primary Scorer | 3 | BDC subtype |
+| Post Hub | 2 | BDC subtype |
 
 ---
 
 ## 7. Output
 
-The classification produces `data/processed/player_archetypes.parquet` with all original feature columns plus:
+The classification produces `data/processed/player_archetypes.parquet` with all feature columns plus:
 
 | Column | Description |
 |---|---|
-| `primary_archetype` | 10 archetypes + "Insufficient Minutes" |
-| `secondary_archetype` | Specialization (e.g. "Primary Scorer", "Offensive Hub", "Elite Shooter", "Transition Player") |
-| `archetype_confidence` | 0.0–1.0 (sqrt-saturated, efficiency-modulated) |
-| `ball_dominance_tier` | "Low", "High", "Very High" |
-| `playmaking_tier` | "Low", "High", "Elite" |
-| `scoring_tier` | "Low", "Medium", "High" |
-| `efficiency_tier` | "Low", "Average", "High", "Unknown" |
+| `primary_archetype` | 12 archetypes + "Insufficient Minutes" |
+| `secondary_archetype` | Subtype (Heliocentric Guard, Post Hub, Gravity Engine, High Volume, etc.) |
+| `role_confidence` | 0.0–1.0 — how well player fits the archetype definition |
+| `role_effectiveness` | 0.0–1.0 — how productive the player is within their role |
+| `ball_dominance_tier` | "Low", "Moderate", "High", "Very High" |
+| `playmaking_tier` | "Low", "Moderate", "High", "Elite" |
+| `scoring_tier` | "Low", "Medium", "High", "Elite" |
+| `efficiency_tier` | "Low", "Average", "High" |
 
 Seasons covered: 2022-23, 2023-24, 2024-25.
 
@@ -391,46 +430,57 @@ Player Season Record
     │ OR MPG<15             │
     └────┬──────────────────┘
          │No
-    ┌────▼──────────────────────┐
-    │ Ball Dom (≥0.18)          │
-    │ + Playmaker (≥5.5 AST/36) │──Yes──▶ Ball Dominant Creator
-    └────┬──────────────────────┘        (sub: Primary Scorer if PTS/36≥18)
+    ┌────▼──────────────────────────┐
+    │ Ball Dom ≥ P80                │
+    │ + Playmaker ≥ P75             │
+    │ + Scoring ≥ P50               │──Yes──▶ Ball Dominant Creator
+    │ + Composite ≥ 0.35            │         Subtypes: Post Hub / Gravity Engine
+    └────┬──────────────────────────┘         / Heliocentric Guard / Primary Scorer
+         │No
+    ┌────▼──────────────────────────┐
+    │ AST ≥ P85 (Elite Playmaker)   │
+    │ + PTS ≥ P80 (Elite Scorer)    │──Yes──▶ BDC / Hub
+    └────┬──────────────────────────┘         (full subtype logic)
+         │No
+    ┌────▼──────────────────────────┐
+    │ AST ≥ P85 + POST ≥ 0.10      │──Yes──▶ BDC / Post Hub
+    │ + NOT high ball dom           │
+    └────┬──────────────────────────┘
+         │No
+    ┌────▼──────────────────────────┐
+    │ AST ≥ P75 + NOT high scorer   │──Yes──▶ Ballhandler (Facilitator)
+    └────┬──────────────────────────┘
+         │No
+    ┌────▼──────────────────┐         ┌─▶ Interior Scorer (FG2A ≥ P70)
+    │ Ball Dom ≥ P60        │──Yes──┬─┤─▶ Perimeter Scorer (FG2A ≤ P30)
+    │ + NOT Playmaker       │       │ └─▶ All-Around Scorer (PTS ≥ P60)
+    └────┬──────────────────┘       └──── sub: High Volume if PTS ≥ P70
          │No
     ┌────▼──────────────────────┐
-    │ Playmaker (≥5.5 AST/36)   │
-    │ + High Scorer (≥18 PTS/36)│──Yes──▶ BDC / Offensive Hub
+    │ AST ≥ P50                 │
+    │ + NOT ball dom ≥ P60      │
+    │ + NOT high scorer         │──Yes──▶ Connector
+    │ + Active (touches/sec)    │         sub: Playmaking Big / Hockey Assist
     └────┬──────────────────────┘
          │No
-    ┌────▼──────────────────────┐
-    │ Playmaker (≥5.5 AST/36)   │
-    │ + NOT High Scorer         │──Yes──▶ Ballhandler (Facilitator)
+    ┌────▼──────────────────────┐       ┌─▶ PnR Popping Big (FG3A ≥ P50)
+    │ PnR Roll Man ≥ P70       │──Yes─┤
+    │ + prrollman > cut_poss   │       └─▶ PnR Rolling Big (FG3A < P50)
     └────┬──────────────────────┘
          │No
-    ┌────▼──────────────────┐         ┌─▶ Interior Scorer (FG2A≥0.70)
-    │ Ball Dom (≥0.18)      │──Yes──┬─┤─▶ Perimeter Scorer (FG2A≤0.45)
-    │ + NOT Playmaker       │       │ └─▶ All-Around Scorer (0.45-0.70)
-    └────┬──────────────────┘       └──── (sub: High Volume if PTS/36≥18)
-         │No
-    ┌────▼──────────────────┐
-    │ AST/36 ≥ 3.5          │
-    │ + NOT ball dom         │──Yes──▶ Connector
-    │ + NOT high scorer      │         (if sec_ast≥0.3 or AST/36≥4.0)
-    │ + connector profile    │
-    └────┬──────────────────┘
-         │No
     ┌────▼───────────────────────┐
-    │ CUT+PnRRm ≥ 0.20          │──Yes──▶ Off-Ball Finisher
-    │ OR finish_score > 0.20     │         (sub: Transition if trans>0.10)
+    │ CUT+PnRRm ≥ P75           │──Yes──▶ Off-Ball Finisher
+    │ OR finish_score > 0.20     │         sub: Transition Player
     └────┬───────────────────────┘
          │No
-    ┌────▼───────────────────────┐
-    │ Movement ≥ 0.10            │──Yes──▶ Off-Ball Movement Shooter
-    │ AND movement > spotup      │
-    └────┬───────────────────────┘
+    ┌────▼───────────────────────────┐
+    │ Movement ≥ P70                 │──Yes──▶ Off-Ball Movement Shooter
+    │ AND mvmt/(mvmt+spotup) ≥ 0.40 │
+    └────┬───────────────────────────┘
          │No
     ┌────▼───────────────────────┐
-    │ SpotUp ≥ 0.25              │──Yes──▶ Off-Ball Stationary Shooter
-    └────┬───────────────────────┘         (sub: Elite Shooter if 3P>38%)
+    │ SpotUp ≥ P50               │──Yes──▶ Off-Ball Stationary Shooter
+    └────┬───────────────────────┘         sub: Elite Shooter (3P% > 38%)
          │No
          ▼
     Rotation Piece / Glue Guy
@@ -440,17 +490,47 @@ Player Season Record
 
 ## 9. Validated Classifications (2024-25)
 
-| Player | Archetype | Sub | Conf | FG2A | Key Metrics |
+| Player | Archetype | Subtype | Conf | Eff | Key Metrics |
 |---|---|---|---|---|---|
-| LeBron James | BDC | Primary Scorer | 99% | 69% | ball_dom=0.43, AST/36≈8 |
-| Luka Dončić | BDC | Primary Scorer | 100% | 53% | ball_dom=0.56, AST/36≈8 |
-| Nikola Jokić | BDC | Primary Scorer | 98% | 76% | ball_dom=0.39, AST/36≈10 |
-| Stephen Curry | BDC | Primary Scorer | 89% | 38% | ball_dom=0.20, AST/36≈6 |
-| Sabonis | BDC | Offensive Hub | 96% | 85% | ball_dom=0.11, AST/36=6.3 |
-| Kevin Durant | All-Around | High Volume | 100% | 67% | ball_dom=0.27 |
-| Ant Edwards | All-Around | High Volume | 100% | 50% | ball_dom=0.19 |
-| Kuminga | Interior Scorer | High Volume | 100% | 73% | ball_dom=0.31 |
-| Giannis | BDC | Primary Scorer | 93% | 95% | ball_dom=0.47 |
-| Draymond Green | Ballhandler | — | 74% | 52% | AST/36=7.0, PTS/36≈8.5 |
-| Gobert | Off-Ball Finisher | — | 100% | 100% | cut_pnrrm=high |
-| Batum | Stationary Shooter | Elite Shooter | 100% | 15% | spotup=high, 3P>38% |
+| LeBron James | BDC | Heliocentric Guard | 100% | 85% | BD=0.43, AST=8.5, ON_BALL=0.34 |
+| Luka Dončić | BDC | Heliocentric Guard | 100% | 85% | BD=0.56, AST=7.8, ON_BALL=0.53 |
+| Stephen Curry | BDC | Gravity Engine | 100% | 86% | BD=0.34, FG3A=11.0, TS=62% |
+| Nikola Jokić | BDC | Post Hub | 100% | 98% | BD=0.39, AST=10.0, POST=0.17 |
+| Giannis Antetokounmpo | BDC | Primary Scorer | 99% | 91% | BD=0.39, AST=6.8, POST=0.15 |
+| Jayson Tatum | BDC | Heliocentric Guard | 100% | 84% | BD=0.59, AST=5.9 |
+| SGA | BDC | Heliocentric Guard | 100% | 93% | BD=0.62, AST=6.7 |
+| Trae Young | BDC | Heliocentric Guard | 100% | 79% | BD=0.58, AST=11.6 |
+| Tyrese Haliburton | BDC | Gravity Engine | 100% | 88% | BD=0.48, FG3A=8.8, TS=60% |
+| Domantas Sabonis | BDC | Post Hub | 96% | 95% | BD=0.11, AST=6.3, POST=0.12 (via 1c) |
+| Kevin Durant | All-Around | High Volume | 100% | 92% | BD=0.40, PTS/36=27.4, FG2A=67% |
+| Anthony Edwards | All-Around | High Volume | 100% | 80% | BD=0.54, PTS/36=25.3, FG2A=50% |
+| Kuminga | Interior Scorer | High Volume | 90% | 65% | BD=0.31, FG2A=73% |
+| Draymond Green | Ballhandler | — | 100% | 64% | AST/36=7.0, PTS/36=8.5 |
+| Klay Thompson | Movement Shooter | — | 100% | 70% | movement=0.15, ratio=0.63 |
+| Brook Lopez | PnR Rolling Big | — | 100% | 82% | PRROLLMAN=0.20, FG3A=4.0 |
+| Batum | Stationary Shooter | Elite Shooter | 100% | 86% | spotup=0.43, FG3%=41% |
+| Gobert | Off-Ball Finisher | — | 100% | 89% | CUT_PNRRM=0.38 |
+
+---
+
+## 10. Design Philosophy
+
+### Why Percentiles?
+
+Static thresholds like "AST/36 ≥ 5.5" drift as league trends change. By using percentiles computed per-season from qualified players, the system automatically adapts. P80 ball dominance captures the top ~20% ball handlers regardless of whether league-wide creation rates shift.
+
+### Why Linear Interpolation in BDC Composite?
+
+v2 used `√(metric / denominator)` which saturates quickly — a player at the threshold and one far above both score similarly. v3's linear interpolation from threshold to P95 provides meaningful discrimination: a player barely meeting P80 ball dominance scores 0, while one at P95 scores 1.0. The 60/40 volume:confidence split weights ball handling + scoring volume (60%) and playmaking (40%).
+
+### Why Separate Confidence and Effectiveness?
+
+In v2, a player like Jokić (98% efficiency as BDC) and a low-efficiency BDC both had `archetype_confidence` blending fit certainty with production quality. v3 separates these:
+- **Role confidence** (fit): "How certain are we this player is a BDC?" — based on how well their profile matches the archetype gates
+- **Role effectiveness**: "How good are they at executing this role?" — based on TS z-score, volume, and playtype PPP
+
+This separation prevents conflating classification certainty with player quality, which is critical for the upcoming player evaluation phase.
+
+### Why Split PnR Rolling/Popping Big?
+
+A traditional roll-and-finish big (e.g., Clint Capela) plays an entirely different role than a stretch big who pops to the 3-point line (e.g., Al Horford). The FG3A per 36 at P50 naturally separates these two styles. This distinction matters for lineup construction and matchup analysis.

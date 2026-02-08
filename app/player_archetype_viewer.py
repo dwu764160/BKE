@@ -279,7 +279,8 @@ def generate_html(off_df, def_df):
             # Offensive
             'off_archetype': row.get('primary_archetype', 'Unknown'),
             'off_secondary': row.get('secondary_archetype', ''),
-            'off_confidence': round(row.get('archetype_confidence', 0) * 100),
+            'off_confidence': round(row.get('role_confidence', row.get('archetype_confidence', 0)) * 100),
+            'off_effectiveness': round(row.get('role_effectiveness', 0) * 100),
             'off_reasons': get_offensive_reasons(row),
 
             # Playtype breakdown (most -> least)
@@ -410,7 +411,8 @@ def generate_html(off_df, def_df):
         </select>
         <span style="color:#555;">Sort:</span>
         <span class="sort-btn active" data-sort="ppg" onclick="setSort(this)">PPG</span>
-        <span class="sort-btn" data-sort="off_confidence" onclick="setSort(this)">Confidence</span>
+        <span class="sort-btn" data-sort="off_confidence" onclick="setSort(this)">Fit</span>
+        <span class="sort-btn" data-sort="off_effectiveness" onclick="setSort(this)">Effectiveness</span>
         <span class="sort-btn" data-sort="ts" onclick="setSort(this)">TS%</span>
         <span class="sort-btn" data-sort="usg" onclick="setSort(this)">USG%</span>
     </div>
@@ -502,7 +504,7 @@ def generate_html(off_df, def_df):
                         <div class="archetype-box">
                             <div class="archetype-label">Offense</div>
                             <div class="archetype-name offense">${{p.off_archetype}}${{effBadge(p.eff_tier)}}</div>
-                            <div class="confidence">${{p.off_confidence}}%${{p.off_secondary ? ' · ' + p.off_secondary : ''}}</div>
+                            <div class="confidence">Fit: ${{p.off_confidence}}% · Eff: ${{p.off_effectiveness}}%${{p.off_secondary ? ' · ' + p.off_secondary : ''}}</div>
                         </div>
                         <div class="archetype-box">
                             <div class="archetype-label">Defense</div>
