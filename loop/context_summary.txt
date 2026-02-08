@@ -275,3 +275,31 @@ Note: Update this file whenever you encounter important changes to thresholds, c
 		- data/tracking/2024-25/shot_zones.parquet
 		- data/tracking_cache/shot_locations_{season}.json
 
+v4.1 changes (applied 2026-02-07):
+	- Alternate Interior Scorer entry path (low BD variant using FG2A + AT_RIM_PLUS_PAINT >= P60)
+	- Midrange subtype split: P70+ = Midrange Scorer, P50-P70 = Midrange Lean
+	- Frozen FALLBACK_VECTORS for best-fit fallback (prevents feature creep)
+	- AT_RIM_PAINT_P60 added to percentile thresholds
+	- Validated: Interior Scorer 35→38→37 across seasons; Midrange Lean subtype appearing correctly; all star classifications stable
+
+v4.2 changes (applied 2026-02-07):
+	- Skill-finishing gate for Interior Scorer: non-stars must show paint_freq + midrange_freq >= 0.25 (SKILL_FINISHING_MIN). Rim-dependent players (only dunks/layups) fall through to PnR Big / Off-Ball Finisher.
+	  - Redirected: Onyeka Okongwu → PnR Rolling Big, Christian Braun → Off-Ball Finisher, Jeremy Sochan → Connector, Jalen Duren → Connector
+	- Off-Ball Movement Shooter thresholds loosened: P70→P60, MOVEMENT_RATIO_MIN 0.40→0.30. Captures Tim Hardaway Jr., KCP, Huerter, Moses Moody, Dalton Knecht, etc.
+	- New Step 7b: Perimeter Scorer (moderate BD). BD >= P50 + scoring >= P25. Catches self-creating wings (Terry Rozier, Cam Whitmore, Brandon Miller, Derrick White, etc.)
+	- Distribution (2024-25): Stationary 64→45 (70%), Movement 12→26, Perimeter 7→14, Interior 37→33, PnR Rolling 12→13
+	- All star classifications stable. Viewer regenerated. Markdown docs updated to v4.2.
+
+v4.3 changes (applied 2026-02-07):
+	- PnR Big absorption: Added "prominent" path (PRROLLMAN_POSS_PCT >= P50 + interior profile). PnR Roll Man no longer needs to be the MOST COMMON play; as long as it's prominent and the player has an interior profile, they're classified as PnR Big. Also added redirect inside Off-Ball Finisher step for bigs with PnR activity.
+	  - Key absorptions: Jarrett Allen, Daniel Gafford → PnR Rolling Big (from Interior Scorer); many bigs from Off-Ball Finisher → PnR Rolling Big
+	- Harsher Interior Scorer skill check: SKILL_FINISHING_MIN raised from 0.25 to 0.40. Rim-runners with prominent PnR + low midrange always fall through regardless of scoring volume.
+	- "Midrange Lean" subtype renamed to "Inside-the-Arc" everywhere
+	- HTML viewer: Added "Reset All" button to clear all filters
+	- Archetype Embedding (NEW): Soft role model producing confidence-weighted 11-dimensional embedding vector per player.
+	  - Algorithm: (1) compute raw scores for all 11 archetypes using uncapped gate math; (2) convert to confidence via exp(-α·distance); (3) build L1-normalized embedding.
+	  - Output: data/processed/archetype_embeddings.parquet (1,680 embeddings), also merged into player_archetypes.parquet.
+	  - Derived metrics: emb_entropy (hybrid score), emb_dominance (purity score), emb_entropy_norm (normalized hybrid).
+	  - Examples: LeBron 17% dominance/94% hybrid; Curry 43%/75%; Jarrett Allen 35%/48%.
+	- Distribution (2024-25): PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19, Connector 28→29, Perimeter 14→17
+	- All star classifications stable. Reference docs updated to v4.3.

@@ -59,6 +59,9 @@ def get_offensive_reasons(row):
         elif sub == 'Midrange Scorer':
             mr_freq = row.get('MIDRANGE_FREQ', 0)
             reasons.append(f"Midrange-heavy: {mr_freq*100:.1f}% of shots from midrange")
+        elif sub == 'Inside-the-Arc':
+            mr_freq = row.get('MIDRANGE_FREQ', 0)
+            reasons.append(f"Inside-the-arc scorer: {mr_freq*100:.1f}% from midrange")
         
     elif arch == 'Ballhandler':
         reasons.append(f"High playmaking ({playmaking:.1f}) with AST/36: {ast36:.1f}")
@@ -75,6 +78,9 @@ def get_offensive_reasons(row):
         elif sub == 'Midrange Scorer':
             mr_freq = row.get('MIDRANGE_FREQ', 0)
             reasons.append(f"Midrange-heavy: {mr_freq*100:.1f}% of shots from midrange")
+        elif sub == 'Inside-the-Arc':
+            mr_freq = row.get('MIDRANGE_FREQ', 0)
+            reasons.append(f"Inside-the-arc scorer: {mr_freq*100:.1f}% from midrange")
             
     elif arch == 'Perimeter Scorer':
         fg3a = row.get('FG3A_PER36', 0)
@@ -93,6 +99,8 @@ def get_offensive_reasons(row):
         reasons.append(f"Ball dominance: {ball_dom*100:.0f}%")
         if sub == 'Midrange Scorer':
             reasons.append("Midrange-heavy shot profile — Jordan/DeRozan archetype")
+        elif sub == 'Inside-the-Arc':
+            reasons.append("Inside-the-arc scorer — some face-up/turnaround game")
         elif sub == 'Rim Finisher':
             reasons.append("Rim-dominant shot profile — elite at-rim frequency")
         
@@ -353,6 +361,10 @@ def generate_html(off_df, def_df):
         .sort-btn {{ padding: 8px 14px; border: 1px solid #444; border-radius: 8px;
                     background: #16213e; color: #aaa; cursor: pointer; font-size: 13px; }}
         .sort-btn.active {{ border-color: #00d9ff; color: #00d9ff; }}
+        .reset-btn {{ padding: 8px 14px; border: 1px solid #e63946; border-radius: 8px;
+                     background: #16213e; color: #e63946; cursor: pointer; font-size: 13px;
+                     font-weight: 600; transition: background 0.2s, color 0.2s; }}
+        .reset-btn:hover {{ background: #e63946; color: #fff; }}
         
         .stats-bar {{ display: flex; gap: 20px; margin-bottom: 20px; color: #888; }}
         .stats-bar span {{ background: #16213e; padding: 8px 15px; border-radius: 6px; }}
@@ -443,6 +455,7 @@ def generate_html(off_df, def_df):
         <span class="sort-btn" data-sort="off_effectiveness" onclick="setSort(this)">Effectiveness</span>
         <span class="sort-btn" data-sort="ts" onclick="setSort(this)">TS%</span>
         <span class="sort-btn" data-sort="usg" onclick="setSort(this)">USG%</span>
+        <span class="reset-btn" onclick="resetFilters()">Reset All</span>
     </div>
     
     <div class="stats-bar">
@@ -568,6 +581,18 @@ def generate_html(off_df, def_df):
             document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
             el.classList.add('active');
             currentSort = el.dataset.sort;
+            filterPlayers();
+        }}
+        
+        function resetFilters() {{
+            document.getElementById('search').value = '';
+            document.getElementById('offFilter').value = '';
+            document.getElementById('defFilter').value = '';
+            document.getElementById('seasonFilter').value = '';
+            // Reset sort to PPG
+            document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector('.sort-btn[data-sort="ppg"]').classList.add('active');
+            currentSort = 'ppg';
             filterPlayers();
         }}
         

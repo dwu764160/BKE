@@ -2,6 +2,16 @@
 src/data_compute/compute_player_archetypes.py
 Classifies NBA players into offensive archetypes based on tracking, playtype, and shot zone data.
 
+v4.3 — PnR Big Absorption + Harsher Interior Scorer + Archetype Embeddings:
+  - PnR Big "prominent" path: interior bigs with >= P50 PnR Roll Man → PnR Big
+    (no longer requires PnR to be the MOST common play)
+  - Off-Ball Finisher redirect: bigs with prominent PnR activity → PnR Big
+  - Harsher Interior Scorer skill check: SKILL_FINISHING_MIN raised to 0.40;
+    rim-runners with prominent PnR + low midrange always fall through
+  - "Midrange Lean" subtype renamed to "Inside-the-Arc"
+  - Archetype Embedding: soft role model producing confidence-weighted
+    continuous embedding for each player (11-dimensional)
+
 v4 — Shot Zone + Classification Hierarchy Overhaul:
   - Added shot zone data (AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ) from NBA.com
   - "All-Around Scorer" now placed BEFORE Ballhandler (if playmaker + high scorer)
@@ -13,7 +23,7 @@ v4 — Shot Zone + Classification Hierarchy Overhaul:
   - PnR Rolling/Popping Big split from Off-Ball Finisher
   - Dual confidence: role_confidence (fit certainty) + role_effectiveness (production)
 
-Archetype Definitions (v4):
+Archetype Definitions (v4.3):
 =============================
  1. Ball Dominant Creator  — High on-ball creation + high playmaking
       Subtypes: Heliocentric Guard | Post Hub | Gravity Engine
@@ -21,15 +31,15 @@ Archetype Definitions (v4):
  3. All-Around Scorer      — Playmaker + high scorer (placed before Ballhandler)
       Subtypes: High Volume | Midrange Scorer
  4. Ballhandler/Facilitator — High playmaking, lower scoring
- 5. Interior Scorer        — Ball dominant, non-playmaker, interior-heavy
-      Subtypes: Rim Finisher | Midrange Scorer | High Volume
+ 5. Interior Scorer        — Ball dominant, non-playmaker, interior-heavy (skill finishing required)
+      Subtypes: Rim Finisher | Midrange Scorer | Inside-the-Arc | High Volume
  6. Perimeter Scorer       — Ball dominant, non-playmaker, perimeter FG2A <= P30
  7. Balanced Scorer        — Ball dominant, moderate scoring, mixed shot profile
  8. Connector              — Moderate playmaking, active filter
- 9. PnR Rolling Big        — Off-ball, primary roll man, low 3PA
-10. PnR Popping Big        — Off-ball, primary roll man, high 3PA
-11. Off-Ball Finisher      — High cut/PnR roll/transition
-12. Off-Ball Movement Shooter — movement/(movement+spotup) >= 0.4
+ 9. PnR Rolling Big        — Off-ball, roll man (strict P70 OR prominent P50 + interior profile)
+10. PnR Popping Big        — Off-ball, roll man + high 3PA
+11. Off-Ball Finisher      — High cut/PnR roll/transition (bigs with PnR redirected to PnR Big)
+12. Off-Ball Movement Shooter — movement/(movement+spotup) >= 0.30
 13. Off-Ball Stationary Shooter — High spot-up
 14. Best-fit fallback      — Closest archetype based on scoring signals (no catch-all)
 """
@@ -61,12 +71,14 @@ STATIC = {
     'POST_HUB_POSS': 0.10,          # POSTUP_POSS_PCT >= this AND must be dominant mode
     'POST_HUB_DOMINANT': 0.15,       # POST >= this always qualifies as Post Hub
     # (original POST_HUB_POSS line replaced)
-    # Movement Shooter ratio
-    'MOVEMENT_RATIO_MIN': 0.40,     # movement / (movement + spotup) >= 0.40
+    # Movement Shooter ratio (loosened from 0.40 in v4.2)
+    'MOVEMENT_RATIO_MIN': 0.30,     # movement / (movement + spotup) >= 0.30
     # Connector activity filter
     'CONNECTOR_SEC_PER_TOUCH_MAX': 2.5,  # AVG_SEC_PER_TOUCH <= this (active, not holding ball long)
     # Post-up weighting in ball dominance
     'POST_WEIGHT': 0.65,
+    # Skill finishing floor: paint_freq + midrange_freq minimum for non-star Interior Scorer
+    'SKILL_FINISHING_MIN': 0.40,
 }
 
 # ---------- Percentile-based thresholds (computed per-season) ----------
@@ -92,8 +104,9 @@ PCTILE_THRESHOLDS = {
     # Off-ball
     'HIGH_CUT_PNRRM':      ('CUT_PNRRM_PCT', 75),       # >= P75 cut + roll man
     'HIGH_SPOTUP':          ('SPOTUP_PCT', 50),           # >= P50 spot-up
-    'HIGH_MOVEMENT':        ('MOVEMENT_SHOOTER_PCT', 70), # >= P70 movement shooter
+    'HIGH_MOVEMENT':        ('MOVEMENT_SHOOTER_PCT', 60), # >= P60 movement shooter (loosened from P70 in v4.2)
     'HIGH_PRROLLMAN':       ('PRROLLMAN_POSS_PCT', 70),   # >= P70 roll man (for PnR Big)
+    'PROMINENT_PRROLLMAN':  ('PRROLLMAN_POSS_PCT', 50),   # >= P50 prominent roll man (looser PnR Big gate for bigs)
     # Touches / activity (for Connector)
     'TOUCHES_MEDIAN':       ('TOUCHES', 50),              # >= P50 touches
     # Efficiency
@@ -838,21 +851,35 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         bd_cap = max(p.get('BD_MIN', 0.30), 0.25)
 
         if is_interior:
-            result['primary_archetype'] = 'Interior Scorer'
-            result['role_confidence'] = float(min(1.0,
-                np.sqrt(ball_dom / bd_cap) * 0.6 + (fg2a_rate / 0.85) * 0.4
-            ))
-            # Subtype: Rim Finisher vs Midrange Scorer (P70) vs Midrange Lean (P50-P70)
-            if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
-                result['secondary_archetype'] = 'Rim Finisher'
-            elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-                result['secondary_archetype'] = 'Midrange Scorer'
-            elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-                result['secondary_archetype'] = 'Midrange Lean'
-            elif is_high_scorer:
-                result['secondary_archetype'] = 'High Volume'
-            result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
-            return result
+            # Non-star rim-dependent players (no skill finishing beyond dunks/layups)
+            # must show paint floaters/hooks OR midrange game to qualify as Interior Scorer.
+            # Otherwise they fall through to PnR Big / Off-Ball Finisher.
+            # v4.3: harsher check — rim-runners with prominent PnR Roll Man activity always
+            # fall through regardless of scoring; remaining bigs need skill finishing floor of 0.40.
+            non_rim_interior = paint_freq + midrange_freq
+            is_rim_runner_big = (at_rim_freq >= p.get('HIGH_AT_RIM', 0.30) and
+                                 midrange_freq <= p.get('LOW_MIDRANGE', 0.05) and
+                                 prrollman >= p.get('PROMINENT_PRROLLMAN', 0.04))
+            has_skill_finishing = (not is_rim_runner_big and
+                                  (pts_per36 >= p.get('ELITE_SCORING', 21.0) or
+                                   non_rim_interior >= STATIC['SKILL_FINISHING_MIN']))
+            if has_skill_finishing:
+                result['primary_archetype'] = 'Interior Scorer'
+                result['role_confidence'] = float(min(1.0,
+                    np.sqrt(ball_dom / bd_cap) * 0.6 + (fg2a_rate / 0.85) * 0.4
+                ))
+                # Subtype: Rim Finisher vs Midrange Scorer (P70) vs Inside-the-Arc (P50-P70)
+                if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+                    result['secondary_archetype'] = 'Rim Finisher'
+                elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+                    result['secondary_archetype'] = 'Midrange Scorer'
+                elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+                    result['secondary_archetype'] = 'Inside-the-Arc'
+                elif is_high_scorer:
+                    result['secondary_archetype'] = 'High Volume'
+                result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
+                return result
+            # else: rim-dependent non-star → falls through to PnR Big / Off-Ball
 
         elif is_perimeter:
             result['primary_archetype'] = 'Perimeter Scorer'
@@ -878,7 +905,7 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                 elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
                     result['secondary_archetype'] = 'Midrange Scorer'
                 elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-                    result['secondary_archetype'] = 'Midrange Lean'
+                    result['secondary_archetype'] = 'Inside-the-Arc'
                 result['role_effectiveness'] = compute_role_effectiveness(row, 'All-Around Scorer', p)
                 return result
             # Falls through to lower archetypes if scoring too low
@@ -893,23 +920,35 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         fg2a_rate >= p.get('FG2A_INTERIOR', 0.68) and
         pts_per36 >= p.get('MODERATE_SCORING', 15.5) and
         at_rim_plus_paint >= p.get('AT_RIM_PAINT_P60', 0.35)):
-        result['primary_archetype'] = 'Interior Scorer'
-        raw_conf = (
-            (fg2a_rate / 0.85) * 0.4 +
-            (at_rim_plus_paint / 0.50) * 0.3 +
-            (pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.3
+        # Skill finishing gate: non-star rim-dependent players fall through
+        # v4.3: rim-runners with prominent PnR activity always fall through
+        non_rim_interior_4b = paint_freq + midrange_freq
+        is_rim_runner_big_4b = (at_rim_freq >= p.get('HIGH_AT_RIM', 0.30) and
+                                midrange_freq <= p.get('LOW_MIDRANGE', 0.05) and
+                                prrollman >= p.get('PROMINENT_PRROLLMAN', 0.04))
+        has_skill_finishing_4b = (not is_rim_runner_big_4b and
+                                 (pts_per36 >= p.get('ELITE_SCORING', 21.0) or
+                                  non_rim_interior_4b >= STATIC['SKILL_FINISHING_MIN']))
+        if not has_skill_finishing_4b:
+            pass  # rim-dependent non-star → falls through to PnR Big / Off-Ball
+        else:
+            result['primary_archetype'] = 'Interior Scorer'
+            raw_conf = (
+                (fg2a_rate / 0.85) * 0.4 +
+                (at_rim_plus_paint / 0.50) * 0.3 +
+                (pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.3
         )
-        result['role_confidence'] = float(min(0.80, raw_conf))  # capped
-        if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
-            result['secondary_archetype'] = 'Rim Finisher'
-        elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-            result['secondary_archetype'] = 'Midrange Scorer'
-        elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-            result['secondary_archetype'] = 'Midrange Lean'
-        elif is_high_scorer:
-            result['secondary_archetype'] = 'High Volume'
-        result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
-        return result
+            result['role_confidence'] = float(min(0.80, raw_conf))  # capped
+            if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+                result['secondary_archetype'] = 'Rim Finisher'
+            elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
+                result['secondary_archetype'] = 'Midrange Scorer'
+            elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
+                result['secondary_archetype'] = 'Inside-the-Arc'
+            elif is_high_scorer:
+                result['secondary_archetype'] = 'High Volume'
+            result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
+            return result
 
     # ---------------------------------------------------------------------------
     # 5. CONNECTOR
@@ -943,16 +982,33 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     # 5. PnR BIG (Rolling / Popping)
     # Primary off-ball play is PnR Roll Man (higher than cuts)
     # Split by FG3A: high 3PA = popper, low = roller
+    # v4.3: Added secondary "prominent" path for interior bigs — PnR Roll Man
+    # does NOT need to be the most common play; just prominent (>= P50) + big profile
     # ---------------------------------------------------------------------------
     prm_gate = p.get('HIGH_PRROLLMAN', 0.06)
-    if prrollman >= prm_gate and prrollman > cut_poss and prrollman >= spotup * 0.5:
-        fg3a_mid = p.get('FG3A_MEDIAN', 5.5)
-        if fg3a_per36 >= fg3a_mid:
+    prm_prominent = p.get('PROMINENT_PRROLLMAN', 0.04)
+    is_interior_profile = (fg2a_rate >= p.get('FG2A_INTERIOR', 0.68) or
+                           at_rim_freq >= p.get('HIGH_AT_RIM', 0.30))
+
+    # Strict path: dominant PnR Roll Man (P70, > cuts, >= 50% of spotup)
+    pnr_big_strict = (prrollman >= prm_gate and prrollman > cut_poss and
+                      prrollman >= spotup * 0.5)
+    # Looser path: prominent PnR (P50) + interior profile (rim-running bigs)
+    pnr_big_prominent = (prrollman >= prm_prominent and is_interior_profile and
+                         not is_playmaker)
+
+    if pnr_big_strict or pnr_big_prominent:
+        fg3a_mid = p.get('FG3A_MEDIAN', 5.5)  # P50
+        fg3a_pop_gate = p.get('FG3A_MEDIAN', 5.5) * 0.67
+        if fg3a_per36 >= fg3a_pop_gate:
             result['primary_archetype'] = 'PnR Popping Big'
         else:
             result['primary_archetype'] = 'PnR Rolling Big'
         prm_cap = max(p.get('HIGH_PRROLLMAN', 0.06) * 2.5, 0.15)
         result['role_confidence'] = float(min(1.0, np.sqrt(prrollman / prm_cap)))
+        if not pnr_big_strict:
+            # Cap confidence for prominent-path (not dominant PnR usage)
+            result['role_confidence'] = float(min(0.85, result['role_confidence']))
         if transition > 0.15:
             result['secondary_archetype'] = 'Transition Player'
         result['role_effectiveness'] = compute_role_effectiveness(row, result['primary_archetype'], p)
@@ -960,10 +1016,26 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
 
     # ---------------------------------------------------------------------------
     # 6. OFF-BALL FINISHER (cuts, transition, putbacks — not primarily roll man)
+    # v4.3: Before assigning Off-Ball Finisher, redirect bigs with prominent
+    # PnR Roll Man activity to PnR Big (catches rim-running bigs who cut AND roll)
     # ---------------------------------------------------------------------------
     offball_finish_score = cut_pnrrm + putback * 0.5 + transition * 0.3
     cut_pnrrm_gate = p.get('HIGH_CUT_PNRRM', 0.18)
     if cut_pnrrm >= cut_pnrrm_gate or offball_finish_score > 0.20:
+        # Redirect: if player looks like a big with prominent PnR activity → PnR Big
+        if (prrollman >= prm_prominent and is_interior_profile and not is_playmaker):
+            fg3a_mid = p.get('FG3A_MEDIAN', 5.5)
+            if fg3a_per36 >= fg3a_mid:
+                result['primary_archetype'] = 'PnR Popping Big'
+            else:
+                result['primary_archetype'] = 'PnR Rolling Big'
+            prm_cap = max(p.get('HIGH_PRROLLMAN', 0.06) * 2.5, 0.15)
+            result['role_confidence'] = float(min(0.80, np.sqrt(prrollman / prm_cap)))
+            if transition > 0.15:
+                result['secondary_archetype'] = 'Transition Player'
+            result['role_effectiveness'] = compute_role_effectiveness(row, result['primary_archetype'], p)
+            return result
+
         result['primary_archetype'] = 'Off-Ball Finisher'
         ob_cap = max(cut_pnrrm_gate * 1.5, 0.25)
         result['role_confidence'] = float(min(1.0, np.sqrt(offball_finish_score / ob_cap)))
@@ -974,7 +1046,7 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
 
     # ---------------------------------------------------------------------------
     # 7. OFF-BALL MOVEMENT SHOOTER
-    # movement >= P70 AND movement/(movement+spotup) >= 0.40
+    # movement >= P60 AND movement/(movement+spotup) >= 0.30  (v4.2 loosened)
     # ---------------------------------------------------------------------------
     movement_gate = p.get('HIGH_MOVEMENT', 0.10)
     total_shoot = movement + spotup
@@ -983,6 +1055,28 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         result['primary_archetype'] = 'Off-Ball Movement Shooter'
         result['role_confidence'] = float(min(1.0, np.sqrt(movement / max(movement_gate * 2, 0.15))))
         result['role_effectiveness'] = compute_role_effectiveness(row, 'Off-Ball Movement Shooter', p)
+        return result
+
+    # ---------------------------------------------------------------------------
+    # 7b. PERIMETER SCORER (moderate self-creation, non-playmaker)
+    # Players with enough ball handling to create their own shot — not pure
+    # spot-up guys.  Redirects capable ball-handlers away from Off-Ball
+    # Stationary Shooter.  Requires BD >= P50 AND scoring above P25.
+    # ---------------------------------------------------------------------------
+    bd_base_gate = p.get('BD_BASE', 0.17)
+    low_scoring_gate = p.get('LOW_SCORING', 13.0)
+    if (ball_dom >= bd_base_gate and
+        not is_playmaker and
+        pts_per36 >= low_scoring_gate):
+        result['primary_archetype'] = 'Perimeter Scorer'
+        bd_cap = max(p.get('BD_MIN', 0.30), 0.25)
+        result['role_confidence'] = float(min(1.0,
+            np.sqrt(ball_dom / bd_cap) * 0.5 +
+            np.sqrt(pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.5
+        ))
+        if is_high_scorer:
+            result['secondary_archetype'] = 'High Volume'
+        result['role_effectiveness'] = compute_role_effectiveness(row, 'Perimeter Scorer', p)
         return result
 
     # ---------------------------------------------------------------------------
@@ -1049,7 +1143,7 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
         result['secondary_archetype'] = 'Midrange Scorer'
     elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-        result['secondary_archetype'] = 'Midrange Lean'
+        result['secondary_archetype'] = 'Inside-the-Arc'
     elif transition > 0.10:
         result['secondary_archetype'] = 'Transition Player'
 
@@ -1073,6 +1167,232 @@ def classify_all_players(features: pd.DataFrame, pctiles: dict) -> pd.DataFrame:
     output = features.merge(class_df, on=['PLAYER_ID', 'PLAYER_NAME', 'SEASON'])
 
     return output
+
+
+# =============================================================================
+# ARCHETYPE EMBEDDING (v4.3 — Soft Role Model)
+# =============================================================================
+# Reuses the same gate math from classify_archetype() to produce a continuous,
+# confidence-weighted embedding vector for each player.  Instead of a one-hot
+# classification, each archetype gets a weight ∈ [0, 1] reflecting how well
+# the player fits that role.
+#
+# Algorithm:
+#   1. For each archetype, compute a raw_score using the normalised components
+#      from the classification hierarchy (uncapped — can go negative or > 1).
+#   2. Convert raw_score to confidence via exponential decay:
+#        confidence[A] = exp(-α · max(0, 1 − raw_score))
+#   3. Build weights:
+#        weight[A] = max(0, raw_score) * confidence[A]
+#   4. L1-normalise weights to produce a probability-like embedding.
+#
+# The resulting vector has dimensionality = number of archetypes (11).
+# Strong, clean archetype fits dominate; weak / accidental fits fade out.
+# =============================================================================
+
+ARCHETYPE_ORDER = [
+    'Ball Dominant Creator',
+    'All-Around Scorer',
+    'Ballhandler',
+    'Interior Scorer',
+    'Perimeter Scorer',
+    'Connector',
+    'PnR Rolling Big',
+    'PnR Popping Big',
+    'Off-Ball Finisher',
+    'Off-Ball Movement Shooter',
+    'Off-Ball Stationary Shooter',
+]
+
+# Temperature / decay rate for confidence transformation
+EMBEDDING_ALPHA = 2.0  # higher = steeper falloff for weak fits
+
+
+def compute_archetype_embedding(row: pd.Series, pctiles: dict) -> dict:
+    """
+    Compute a soft archetype embedding for a single player.
+
+    Returns dict with:
+      - 'emb_{archetype}': float weight for each archetype (sums to ~1.0)
+      - 'emb_entropy': Shannon entropy of the embedding (higher = more hybrid)
+      - 'emb_dominance': weight of the strongest archetype (higher = purer role)
+    """
+    p = pctiles
+
+    # ---- Extract metrics (same as classify_archetype) ----
+    ball_dom = row.get('BALL_DOMINANT_PCT', 0) or 0
+    on_ball = row.get('ON_BALL_CREATION', 0) or 0
+    post_up = row.get('POSTUP_POSS_PCT', 0) or 0
+    ast_per36 = row.get('AST_PER36', 0) or 0
+    pts_per36 = row.get('PTS_PER36', 0) or 0
+    fg2a_rate = row.get('FG2A_RATE', 0.5)
+    if pd.isna(fg2a_rate):
+        fg2a_rate = 0.5
+    fg3a_per36 = row.get('FG3A_PER36', 0) or 0
+    fg3_pct = row.get('FG3_PCT', 0) or 0
+    ts = row.get('TS_PCT', 0)
+    if pd.isna(ts) or ts == 0:
+        ts = 0.55
+    cut_pnrrm = row.get('CUT_PNRRM_PCT', 0) or 0
+    spotup = row.get('SPOTUP_PCT', 0) or 0
+    movement = row.get('MOVEMENT_SHOOTER_PCT', 0) or 0
+    transition = row.get('TRANSITION_PCT', 0) or 0
+    putback = row.get('PUTBACK_PCT', 0) or 0
+    prrollman = row.get('PRROLLMAN_POSS_PCT', 0) or 0
+    at_rim_freq = row.get('AT_RIM_FREQ', 0) or 0
+    if pd.isna(at_rim_freq):
+        at_rim_freq = 0
+    midrange_freq = row.get('MIDRANGE_FREQ', 0) or 0
+    if pd.isna(midrange_freq):
+        midrange_freq = 0
+    touches = row.get('TOUCHES', 0) or 0
+    sec_per_touch = row.get('AVG_SEC_PER_TOUCH', 3.0)
+    if pd.isna(sec_per_touch):
+        sec_per_touch = 3.0
+    playmaking = row.get('PLAYMAKING_SCORE', 0) or 0
+
+    # ---- Normalisation denominators (threshold → P95 range) ----
+    bd_floor = p.get('BD_MIN', 0.37)
+    bd_ceil = max(p.get('BD_P95', 0.51), bd_floor + 0.10)
+    pts_floor_moderate = p.get('MODERATE_SCORING', 15.5)
+    pts_ceil = max(p.get('PTS_P95', 26.0), pts_floor_moderate + 5.0)
+    ast_floor = p.get('PLAYMAKER', 5.0)
+    ast_ceil = max(p.get('AST_P95', 7.8), ast_floor + 1.5)
+
+    # Helper: uncapped normalisation
+    def norm(val, floor, ceil):
+        denom = ceil - floor
+        if denom <= 0:
+            return 0.0
+        return (val - floor) / denom
+
+    # ---- Raw scores per archetype (uncapped) ----
+    raw = {}
+
+    # 1. Ball Dominant Creator
+    bd_s = norm(ball_dom, bd_floor, bd_ceil)
+    pts_s = norm(pts_per36, pts_floor_moderate, pts_ceil)
+    ast_s = norm(ast_per36, ast_floor, ast_ceil)
+    raw['Ball Dominant Creator'] = 0.60 * (0.50 * bd_s + 0.50 * pts_s) + 0.40 * ast_s
+
+    # 2. All-Around Scorer (playmaker + scorer)
+    aa_ast = norm(ast_per36, ast_floor, ast_ceil)
+    aa_pts = norm(pts_per36, pts_floor_moderate, pts_ceil)
+    raw['All-Around Scorer'] = 0.50 * aa_ast + 0.50 * aa_pts
+
+    # 3. Ballhandler (high playmaking, moderate scoring — penalise high scorers)
+    bh_ast = norm(ast_per36, ast_floor, ast_ceil)
+    # Inverse scoring: high scoring reduces ballhandler fit
+    high_scoring_gate = p.get('HIGH_SCORING', 18.5)
+    bh_pts_inv = max(0, 1.0 - (pts_per36 / max(high_scoring_gate, 12.0)))
+    raw['Ballhandler'] = 0.70 * bh_ast + 0.30 * bh_pts_inv
+
+    # 4. Interior Scorer (ball dominant + interior profile)
+    bd_all_around_floor = p.get('BD_ALL_AROUND', 0.23)
+    int_bd = norm(ball_dom, bd_all_around_floor, bd_ceil)
+    int_fg2a = norm(fg2a_rate, p.get('FG2A_INTERIOR', 0.68), 0.95)
+    int_pts = norm(pts_per36, pts_floor_moderate, pts_ceil)
+    int_mr = midrange_freq / max(p.get('HIGH_MIDRANGE', 0.15), 0.05)  # skill finishing proxy
+    raw['Interior Scorer'] = 0.30 * int_bd + 0.25 * int_fg2a + 0.25 * int_pts + 0.20 * int_mr
+
+    # 5. Perimeter Scorer (ball dominant + perimeter profile)
+    perim_base = p.get('BD_BASE', 0.17)
+    per_bd = norm(ball_dom, perim_base, bd_ceil)
+    per_fg2a_inv = max(0, 1.0 - fg2a_rate) / max(1.0 - p.get('FG2A_PERIMETER', 0.49), 0.20)
+    per_pts = norm(pts_per36, p.get('LOW_SCORING', 13.0), pts_ceil)
+    raw['Perimeter Scorer'] = 0.35 * per_bd + 0.35 * per_fg2a_inv + 0.30 * per_pts
+
+    # 6. Connector (moderate playmaking + activity)
+    conn_ast_floor = p.get('CONNECTOR_AST', 3.3)
+    conn_ast = norm(ast_per36, conn_ast_floor, ast_ceil)
+    conn_touch = touches / max(p.get('TOUCHES_MEDIAN', 40.0), 10.0)
+    conn_sec = max(0, 1.0 - sec_per_touch / STATIC['CONNECTOR_SEC_PER_TOUCH_MAX'])
+    conn_pts_inv = max(0, 1.0 - (pts_per36 / max(high_scoring_gate, 12.0)))
+    raw['Connector'] = 0.50 * conn_ast + 0.20 * conn_touch + 0.10 * conn_sec + 0.20 * conn_pts_inv
+
+    # 7. PnR Rolling Big (roll man + interior + low 3PA)
+    prm_gate = p.get('HIGH_PRROLLMAN', 0.06)
+    prm_prominent = p.get('PROMINENT_PRROLLMAN', 0.04)
+    prm_s = prrollman / max(prm_gate, 0.01)
+    fg3a_mid = p.get('FG3A_MEDIAN', 5.5)
+    roll_fg3_inv = max(0, 1.0 - fg3a_per36 / max(fg3a_mid, 1.0))
+    roll_interior = fg2a_rate / 0.85
+    raw['PnR Rolling Big'] = 0.55 * prm_s + 0.25 * roll_interior + 0.20 * roll_fg3_inv
+
+    # 8. PnR Popping Big (roll man + perimeter shooting)
+    pop_fg3 = fg3a_per36 / max(fg3a_mid, 1.0)
+    raw['PnR Popping Big'] = 0.55 * prm_s + 0.45 * pop_fg3
+
+    # 9. Off-Ball Finisher (cuts, transition, putbacks)
+    cut_gate = p.get('HIGH_CUT_PNRRM', 0.18)
+    finish_score = cut_pnrrm + putback * 0.5 + transition * 0.3
+    ob_cut = cut_pnrrm / max(cut_gate, 0.05)
+    ob_finish = finish_score / 0.25
+    raw['Off-Ball Finisher'] = 0.50 * ob_cut + 0.50 * ob_finish
+
+    # 10. Off-Ball Movement Shooter
+    move_gate = p.get('HIGH_MOVEMENT', 0.10)
+    move_s = movement / max(move_gate, 0.02)
+    total_shoot = movement + spotup
+    move_ratio = movement / total_shoot if total_shoot > 0 else 0
+    move_r = move_ratio / max(STATIC['MOVEMENT_RATIO_MIN'], 0.10)
+    raw['Off-Ball Movement Shooter'] = 0.60 * move_s + 0.40 * move_r
+
+    # 11. Off-Ball Stationary Shooter
+    spot_gate = p.get('HIGH_SPOTUP', 0.25)
+    spot_s = spotup / max(spot_gate, 0.05)
+    fg3_s = fg3_pct / max(p.get('HIGH_FG3_PCT', 0.37), 0.30)
+    raw['Off-Ball Stationary Shooter'] = 0.65 * spot_s + 0.35 * fg3_s
+
+    # ---- Convert raw scores → confidence-weighted embedding ----
+    alpha = EMBEDDING_ALPHA
+    weights = {}
+    for arch in ARCHETYPE_ORDER:
+        r = raw.get(arch, 0.0)
+        # Confidence: exponential decay of distance from score=1.0
+        # If r >= 1 → confidence = 1; if r ≈ 0 → confidence ≈ exp(-alpha) ≈ 0.13
+        distance = max(0.0, 1.0 - r)
+        confidence = float(np.exp(-alpha * distance))
+        # Weight = positive raw score × confidence
+        weights[arch] = max(0.0, r) * confidence
+
+    total = sum(weights.values())
+
+    # Build embedding dict
+    embedding = {}
+    for arch in ARCHETYPE_ORDER:
+        key = f"emb_{arch.lower().replace(' ', '_').replace('-', '_')}"
+        embedding[key] = float(weights[arch] / total) if total > 0 else 1.0 / len(ARCHETYPE_ORDER)
+
+    # Compute entropy (Shannon) — higher = more hybrid player
+    probs = [embedding[f"emb_{a.lower().replace(' ', '_').replace('-', '_')}"] for a in ARCHETYPE_ORDER]
+    entropy = 0.0
+    for prob in probs:
+        if prob > 1e-10:
+            entropy -= prob * np.log2(prob)
+    embedding['emb_entropy'] = float(entropy)
+
+    # Max entropy for 11 categories ≈ 3.459
+    max_entropy = np.log2(len(ARCHETYPE_ORDER))
+    embedding['emb_entropy_norm'] = float(entropy / max_entropy) if max_entropy > 0 else 0.0
+
+    # Dominance: weight of the strongest archetype
+    embedding['emb_dominance'] = float(max(probs))
+
+    return embedding
+
+
+def compute_all_embeddings(features: pd.DataFrame, pctiles: dict) -> pd.DataFrame:
+    """Compute archetype embeddings for all players in the features dataframe."""
+    embeddings = []
+    for idx, row in features.iterrows():
+        emb = compute_archetype_embedding(row, pctiles)
+        emb['PLAYER_ID'] = row['PLAYER_ID']
+        emb['PLAYER_NAME'] = row['PLAYER_NAME']
+        emb['SEASON'] = row['SEASON']
+        embeddings.append(emb)
+
+    return pd.DataFrame(embeddings)
 
 
 # =============================================================================
@@ -1125,7 +1445,8 @@ def main():
         print(f"   Percentile thresholds computed ({len(pctiles)} metrics)")
         for key in ['BD_MIN', 'PLAYMAKER', 'HIGH_SCORING', 'FG2A_INTERIOR', 'FG2A_PERIMETER',
                      'HIGH_CUT_PNRRM', 'HIGH_SPOTUP', 'HIGH_MOVEMENT', 'CONNECTOR_AST',
-                     'ALL_AROUND_SCORING', 'HIGH_PRROLLMAN', 'FG3A_MEDIAN', 'TOUCHES_MEDIAN',
+                     'ALL_AROUND_SCORING', 'HIGH_PRROLLMAN', 'PROMINENT_PRROLLMAN',
+                     'FG3A_MEDIAN', 'TOUCHES_MEDIAN',
                      'HIGH_AT_RIM', 'HIGH_MIDRANGE', 'MODERATE_MIDRANGE',
                      'AT_RIM_PAINT_P60']:
             print(f"      {key}: {pctiles.get(key, '?'):.4f}")
@@ -1155,6 +1476,30 @@ def main():
     if all_results:
         final_df = pd.concat(all_results, ignore_index=True)
 
+        # ---- Compute archetype embeddings per-season ----
+        print("\n Computing archetype embeddings...")
+        all_emb = []
+        for season in SEASONS:
+            season_data = final_df[final_df['SEASON'] == season]
+            if season_data.empty:
+                continue
+            # Re-compute pctiles for embedding (use same qualified pool)
+            season_pctiles = compute_season_percentiles(season_data)
+            emb_df = compute_all_embeddings(season_data, season_pctiles)
+            all_emb.append(emb_df)
+
+        if all_emb:
+            embedding_df = pd.concat(all_emb, ignore_index=True)
+            # Merge embeddings into final_df
+            emb_cols = [c for c in embedding_df.columns if c.startswith('emb_')]
+            merge_cols = ['PLAYER_ID', 'PLAYER_NAME', 'SEASON'] + emb_cols
+            final_df = final_df.merge(embedding_df[merge_cols],
+                                      on=['PLAYER_ID', 'PLAYER_NAME', 'SEASON'], how='left')
+            # Save standalone embedding file
+            embedding_df.to_parquet(OUTPUT_DIR / "archetype_embeddings.parquet", index=False)
+            embedding_df.to_csv(OUTPUT_DIR / "archetype_embeddings.csv", index=False)
+            print(f"   Saved {len(embedding_df)} embeddings to data/processed/archetype_embeddings.parquet")
+
         final_df.to_parquet(OUTPUT_DIR / "player_archetypes.parquet", index=False)
         final_df.to_csv(OUTPUT_DIR / "player_archetypes.csv", index=False)
 
@@ -1174,6 +1519,7 @@ def main():
             'Joel Embiid', 'Clint Capela', 'Rudy Gobert', 'Nicolas Batum',
             'Domantas Sabonis', 'Trae Young', 'Devin Booker',
             'Klay Thompson', 'Buddy Hield', 'Brook Lopez',
+            'Jarrett Allen', 'Daniel Gafford',
         ]
 
         for name in stars:
@@ -1197,6 +1543,39 @@ def main():
                     rc = pp.get('role_confidence', 0)
                     re = pp.get('role_effectiveness', 0)
                     print(f"  {pp['PLAYER_NAME']:<25} {pp['primary_archetype']}{sec}  conf={rc:.0%} eff={re:.0%} [{pp['SEASON']}]")
+
+        # ---- Embedding example output ----
+        if 'emb_dominance' in final_df.columns:
+            print("\n" + "=" * 70)
+            print("ARCHETYPE EMBEDDINGS (sample 2024-25)")
+            print("=" * 70)
+            emb_cols_display = [c for c in final_df.columns if c.startswith('emb_') and c not in
+                                ('emb_entropy', 'emb_entropy_norm', 'emb_dominance')]
+            emb_stars = ['LeBron James', 'Stephen Curry', 'Nikola Jokic', 'Jarrett Allen',
+                         'Klay Thompson', 'Draymond Green', 'Clint Capela']
+            for name in emb_stars:
+                player = s25[s25['PLAYER_NAME'].str.contains(name, case=False, na=False)]
+                if len(player) == 0:
+                    continue
+                pp = player.iloc[0]
+                if 'emb_dominance' not in pp.index:
+                    # Merge back from final_df
+                    pp = final_df[(final_df['PLAYER_NAME'].str.contains(name, case=False, na=False)) &
+                                  (final_df['SEASON'] == '2024-25')]
+                    if len(pp) == 0:
+                        continue
+                    pp = pp.iloc[0]
+                dom = pp.get('emb_dominance', 0)
+                ent = pp.get('emb_entropy_norm', 0)
+                top3 = []
+                for c in emb_cols_display:
+                    val = pp.get(c, 0)
+                    if val and val > 0.05:
+                        arch_name = c.replace('emb_', '').replace('_', ' ').title()
+                        top3.append((arch_name, val))
+                top3.sort(key=lambda x: x[1], reverse=True)
+                top3_str = " | ".join(f"{a}: {v:.0%}" for a, v in top3[:4])
+                print(f"  {pp['PLAYER_NAME']:<25} dominance={dom:.0%} hybrid={ent:.0%}  [{top3_str}]")
 
     return final_df
 

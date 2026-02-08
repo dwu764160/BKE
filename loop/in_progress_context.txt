@@ -46,10 +46,33 @@ DO NOT CHANGE this file format or the section headings; other automated agents r
 
 ---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
 CONTEXT:
-- Task: Player Profile System Enhancement + Offensive Archetypes v4
+- Task: Player Profile System Enhancement + Offensive Archetypes v4.3
 - Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: data/processed/player_archetypes.parquet, data/processed/defensive_archetypes_v2.parquet, data/tracking/{season}/shot_zones.parquet
-- Status: ✅ Offensive Archetypes v4 COMPLETE — shot zones fetched, Rotation Piece eliminated, Midrange Scorer/Rim Finisher subtypes added
+- Key files: data/processed/player_archetypes.parquet, data/processed/archetype_embeddings.parquet, data/processed/defensive_archetypes_v2.parquet, data/tracking/{season}/shot_zones.parquet
+- Status: ✅ Offensive Archetypes v4.3 COMPLETE — PnR Big absorption, harsher Interior Scorer, archetype embeddings, Inside-the-Arc rename
+
+COMPLETED (2025-06-11):
+================================================================================
+Phase 3b++: Offensive Archetypes v4.3 — PnR Big Absorption + Archetype Embeddings
+================================================================================
+
+✅ OFFENSIVE ARCHETYPES v4.3 - COMPLETE
+- PnR Big absorption: bigs with PROMINENT_PRROLLMAN (P50) redirected from Off-Ball Finisher / Interior Scorer → PnR Rolling Big
+- Harsher Interior Scorer: rim-runner bigs (HIGH_AT_RIM + LOW_MIDRANGE + PROMINENT_PRROLLMAN) always fall through
+- SKILL_FINISHING_MIN raised 0.25 → 0.40
+- "Midrange Lean" subtype renamed → "Inside-the-Arc" across all files
+- Distribution shift: PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19
+- Validated: Jarrett Allen → PnR Rolling Big, Daniel Gafford → PnR Rolling Big, Gobert/Capela stable
+
+✅ ARCHETYPE EMBEDDINGS - COMPLETE (1,680 player-seasons, 11-dim vectors)
+- compute_archetype_embedding(): softmax-weighted 11-dim vectors per player
+- Uses pctile ranks + archetype-feature relevance matrix → confidence scores → α-scaled softmax
+- Output: data/processed/archetype_embeddings.parquet + .csv
+- Enables similarity search, clustering, and smooth archetype transitions
+
+✅ HTML VIEWER UPDATED
+- Reset All button added (clears search, dropdowns, resets sort)
+- "Inside-the-Arc" subtype reflected in reason text
 
 COMPLETED (2025-06-09):
 ================================================================================
@@ -141,6 +164,6 @@ NEXT_STEPS:
 5. ✅ Viewer updated for v4 - DONE
 6. Grand Unified Model: Create compute_rapm_metrics.py (Layer 3 — RAPM + BPM prior → EPM-like metric)
 7. Player Profile Enhancement: Decide on salary data source, implement fetcher, create unified export
-- RESULTS: Full v4 validation: 0 Rotation Piece assignments, 42 Midrange Scorers, 14 Rim Finishers, key player validations passed
-- RECENT WORK: v4 classifier with shot zone integration, best-fit fallback replacing Rotation Piece catch-all
+- RESULTS: Full v4.3 validation: 0 Rotation Piece, PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19, Stationary 45, Movement 26, Perimeter 17, Connector 29. Allen/Gafford→PnR Rolling Big. Archetype embeddings (1,680 player-seasons, 11-dim).
+- RECENT WORK: v4.3 — PnR Big absorption (prominent P50 path), harsher Interior Scorer (SKILL_FINISHING_MIN 0.40, rim-runner check), Inside-the-Arc rename, archetype embeddings, Reset All button in viewer
 - SOURCES_READ: NBA.com LeagueDashPlayerShotLocations API docs, local repo files
