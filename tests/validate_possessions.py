@@ -12,9 +12,10 @@ import sys
 
 DATA_DIR = "data/historical"
 
-def validate_file(filepath):
+def validate_file(filepath, is_clean=False):
     filename = os.path.basename(filepath)
-    print(f"\n--- Validating {filename} ---")
+    tag = "[CLEAN]" if is_clean else "[RAW]"
+    print(f"\n--- Validating {filename} {tag} ---")
     
     try:
         df = pd.read_parquet(filepath)
@@ -80,9 +81,21 @@ def validate_file(filepath):
     if bad_off == 0 and bad_def == 0:
         print("✅ Lineup Integrity: Perfect (All rows have 5v5).")
     else:
-        print(f"❌ Lineup Errors: {bad_off} bad offense, {bad_def} bad defense lineups.")
+        pct_bad = (bad_off + bad_def) / (2 * len(df)) * 100
+        if is_clean:
+            # Clean files should have zero lineup errors
+            print(f"❌ Lineup Errors in CLEAN file: {bad_off} bad offense, {bad_def} bad defense lineups.")
+        else:
+            # Raw files may have some lineup issues that get cleaned
+            print(f"⚠️ Lineup Issues (raw data): {bad_off} offense, {bad_def} defense ({pct_bad:.2f}% of rows)")
         if bad_off > 0:
             print("   Sample bad off: ", df[off_lens != 5]['off_lineup'].iloc[0])
+
+def validate_file_adjusted(filepath):
+    """Wrapper that adjusts severity for raw vs clean files."""
+    filename = os.path.basename(filepath)
+    is_clean = "_clean_" in filename
+    validate_file(filepath, is_clean=is_clean)
 
 def main():
     files = sorted(glob.glob(os.path.join(DATA_DIR, "possessions_*.parquet")))
@@ -91,7 +104,7 @@ def main():
         return
         
     for f in files:
-        validate_file(f)
+        validate_file_adjusted(f)
 
 if __name__ == "__main__":
     main()

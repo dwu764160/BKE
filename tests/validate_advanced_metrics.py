@@ -210,13 +210,13 @@ def validate():
     vorp_ok = np.mean(vorp_errors) < 1.0
     
     print("\n" + "="*80)
-    print("PASS/FAIL STATUS")
+    print("METRIC VERDICT")
     print("="*80)
-    print(f"  WS:   {'✅ PASS' if ws_ok else '❌ FAIL'}")
-    print(f"  OWS:  {'✅ PASS' if ows_ok else '❌ FAIL'}")
-    print(f"  DWS:  {'✅ PASS' if dws_ok else '❌ FAIL'}")
-    print(f"  BPM:  {'✅ PASS' if bpm_ok else '❌ FAIL'}")
-    print(f"  VORP: {'✅ PASS' if vorp_ok else '❌ FAIL'}")
+    print(f"  WS:   {'✅' if ws_ok else '❌'} (MAE {np.mean(ws_errors):.2f}, target <1.5)")
+    print(f"  OWS:  {'✅' if ows_ok else '❌'} (MAE {np.mean(ows_errors):.2f}, target <1.0)")
+    print(f"  DWS:  {'✅' if dws_ok else '❌'} (MAE {np.mean(dws_errors):.2f}, target <1.0)")
+    print(f"  BPM:  {'✅' if bpm_ok else '❌'} (MAE {np.mean(bpm_errors):.2f}, target <1.0)")
+    print(f"  VORP: {'✅' if vorp_ok else '❌'} (MAE {np.mean(vorp_errors):.2f}, target <1.0)")
 
 if __name__ == "__main__":
     validate()

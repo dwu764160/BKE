@@ -41,7 +41,73 @@ def _upper_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFrame:
+def _extract_team_abbrev(matchup: str) -> str | None:
+    if not isinstance(matchup, str):
+        return None
+    parts = matchup.split()
+    if not parts:
+        return None
+    return parts[0].strip()
+
+
+def _load_team_abbrev_map(teams_path: str) -> dict[str, str]:
+    if not os.path.exists(teams_path):
+        return {}
+    teams_df = pd.read_parquet(teams_path)
+    if teams_df.empty:
+        return {}
+    cols = {c.lower(): c for c in teams_df.columns}
+    abbr_col = cols.get('abbreviation')
+    id_col = cols.get('team_id') or cols.get('id')
+    if not abbr_col or not id_col:
+        return {}
+    mapping = {}
+    for _, row in teams_df[[abbr_col, id_col]].dropna().iterrows():
+        abbr = str(row[abbr_col]).strip().upper()
+        try:
+            tid = str(int(float(row[id_col])))
+        except (ValueError, TypeError):
+            tid = str(row[id_col]).strip()
+        if abbr and tid:
+            mapping[abbr] = tid
+    return mapping
+
+
+def _build_player_team_stats(player_logs_path: str, teams_path: str) -> pd.DataFrame:
+    if not os.path.exists(player_logs_path):
+        return pd.DataFrame()
+    pdf = pd.read_parquet(player_logs_path)
+    if pdf.empty:
+        return pd.DataFrame()
+
+    pdf = _upper_cols(pdf)
+    if 'MATCHUP' not in pdf.columns or 'GAME_ID' not in pdf.columns:
+        return pd.DataFrame()
+
+    abbr_map = _load_team_abbrev_map(teams_path)
+    if not abbr_map:
+        return pd.DataFrame()
+
+    pdf['_TEAM_ABBREV'] = pdf['MATCHUP'].astype(str).map(_extract_team_abbrev)
+    pdf['TEAM_ID'] = pdf['_TEAM_ABBREV'].map(abbr_map)
+    pdf = pdf.dropna(subset=['TEAM_ID', 'GAME_ID', 'SEASON'])
+
+    stat_cols = [c for c in CORE_STATS if c in pdf.columns]
+    if not stat_cols:
+        return pd.DataFrame()
+
+    agg = (
+        pdf.groupby(['SEASON', 'TEAM_ID', 'GAME_ID'], as_index=False)[stat_cols]
+        .sum()
+    )
+    return agg
+
+
+def summarize(path: str | None = None) -> pd.DataFrame:
+    data_dir = os.environ.get('DATA_DIR', 'data')
+    hist_dir = os.path.join(data_dir, 'historical')
+    if path is None:
+        path = os.path.join(hist_dir, 'team_game_logs.parquet')
     if not os.path.exists(path):
         print(f'ERROR: {path} not found', file=sys.stderr)
         return pd.DataFrame()
@@ -55,6 +121,12 @@ def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFr
 
     # Build and write a padded per-team-per-game table (30 teams x 82 games x seasons)
     def build_padded_team_games(df: pd.DataFrame) -> pd.DataFrame:
+        # Normalize TEAM_ID to string to avoid float-vs-string comparison issues
+        if 'TEAM_ID' in df.columns:
+            df = df.copy()
+            df['TEAM_ID'] = df['TEAM_ID'].dropna().astype(float).astype(int).astype(str)
+            df['TEAM_ID'] = df['TEAM_ID'].where(df['TEAM_ID'] != '<NA>', other=None)
+
         # determine seasons
         if 'SEASON' in df.columns and not df['SEASON'].dropna().empty:
             seasons = sorted(df['SEASON'].dropna().unique().tolist())
@@ -64,9 +136,9 @@ def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFr
 
         # determine observed teams
         if 'TEAM_ID' in df.columns:
-            observed = [str(t) for t in sorted(df['TEAM_ID'].dropna().unique().tolist())]
+            observed = sorted(df['TEAM_ID'].dropna().unique().tolist())
         elif 'TEAM_ABBREVIATION' in df.columns:
-            observed = [str(t) for t in sorted(df['TEAM_ABBREVIATION'].dropna().unique().tolist())]
+            observed = sorted(df['TEAM_ABBREVIATION'].dropna().unique().tolist())
         else:
             # try to derive from MATCHUP tokens
             observed = []
@@ -90,12 +162,30 @@ def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFr
         else:
             team_list = team_list[:30]
 
+        # If team_game_logs lacks core stats, attempt to enrich from player game logs
+        player_stats = pd.DataFrame()
+        if any(c not in df.columns for c in CORE_STATS):
+            player_logs_path = os.path.join(hist_dir, 'final_player_game_logs.parquet')
+            teams_path = os.path.join(hist_dir, 'teams.parquet')
+            player_stats = _build_player_team_stats(player_logs_path, teams_path)
+
+        player_stats_map = {}
+        if not player_stats.empty:
+            player_stats_map = (
+                player_stats.set_index(['SEASON', 'TEAM_ID', 'GAME_ID'])
+                .to_dict('index')
+            )
+
         rows = []
         for s in seasons:
             for t in team_list:
                 team_rows = df[(df.get('SEASON') == s) & (df.get('TEAM_ID') == t)] if 'TEAM_ID' in df.columns else df[(df.get('SEASON') == s) & (df.get('TEAM_ABBREVIATION') == t)] if 'TEAM_ABBREVIATION' in df.columns else pd.DataFrame()
                 # select core stat columns if present, else zero
                 stat_cols = [c for c in CORE_STATS if c in df.columns]
+                if not player_stats.empty:
+                    for c in CORE_STATS:
+                        if c in player_stats.columns and c not in stat_cols:
+                            stat_cols.append(c)
                 if not stat_cols:
                     # fallback to common numeric stats
                     stat_cols = [c for c in ['PTS','AST','REB','OREB','DREB','STL','BLK','TOV','PF','MIN'] if c in df.columns]
@@ -108,7 +198,11 @@ def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFr
                     for _, r in team_rows.iterrows():
                         out = {'SEASON': s, 'TEAM_ID': t, 'GAME_INDEX': idx, 'GAME_ID': r.get('GAME_ID')}
                         for sc in stat_cols:
-                            out[sc] = r.get(sc, 0)
+                            if sc in df.columns:
+                                out[sc] = r.get(sc, 0)
+                            else:
+                                lookup = player_stats_map.get((s, t, str(r.get('GAME_ID'))), {})
+                                out[sc] = lookup.get(sc, 0)
                         rows.append(out)
                         idx += 1
                     # pad to 82
@@ -134,7 +228,7 @@ def summarize(path: str = 'data/historical/team_game_logs.parquet') -> pd.DataFr
     try:
         games_df = build_padded_team_games(df)
         # write per-game details without modifying the seasonal summary
-        out_dir = 'data/historical'
+        out_dir = hist_dir
         os.makedirs(out_dir, exist_ok=True)
         games_df.to_parquet(os.path.join(out_dir, 'team_game_details.parquet'), index=False)
         games_df.to_csv(os.path.join(out_dir, 'team_game_details.csv'), index=False)
@@ -328,7 +422,8 @@ def summarize_from_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    out_dir = 'data/historical'
+    data_dir = os.environ.get('DATA_DIR', 'data')
+    out_dir = os.path.join(data_dir, 'historical')
     os.makedirs(out_dir, exist_ok=True)
     summary = summarize()
     if summary.empty:
