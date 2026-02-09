@@ -190,6 +190,10 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
         if getattr(team_agg, 'empty', False):
             print("Warning: provided team_game_df is empty — computing team aggregates from player logs instead.")
             team_agg = None
+        # If the provided team_game_df lacks critical stat columns, fall back to player logs
+        elif not any(c in team_agg.columns for c in ['FGA', 'TEAM_FGA', 'FGM', 'TEAM_FGM']):
+            print("Warning: provided team_game_df lacks stat columns (FGA, FGM, etc.) — computing team aggregates from player logs instead.")
+            team_agg = None
         
     # If after copying/inspection we don't have a valid team_agg, compute it from player logs
     if team_agg is None:
@@ -268,8 +272,21 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
 
     # Perform merge: if we don't have a team column in team_agg, merge on GAME_ID only
     if merge_team_col is None:
-        df = df.merge(team_agg, on=["GAME_ID"], how="left")
+        # Drop overlapping columns from team_agg to avoid _x/_y suffixes (e.g. SEASON, GAME_DATE)
+        merge_keys = ["GAME_ID"]
+        overlap = [c for c in team_agg.columns if c in df.columns and c not in merge_keys]
+        if overlap:
+            team_agg = team_agg.drop(columns=overlap)
+        df = df.merge(team_agg, on=merge_keys, how="left")
     else:
+        # Cast merge keys to string to avoid object vs float64 type mismatch
+        df[team_col] = df[team_col].astype(str)
+        team_agg[merge_team_col] = team_agg[merge_team_col].astype(str)
+        # Drop overlapping columns from team_agg to avoid _x/_y suffixes (e.g. SEASON, GAME_DATE)
+        merge_keys_right = ["GAME_ID", merge_team_col]
+        overlap = [c for c in team_agg.columns if c in df.columns and c not in merge_keys_right]
+        if overlap:
+            team_agg = team_agg.drop(columns=overlap)
         df = df.merge(team_agg, left_on=["GAME_ID", team_col], right_on=["GAME_ID", merge_team_col], how="left")
 
     # Compute per-game derived columns (player-level)

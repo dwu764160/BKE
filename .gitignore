@@ -7,6 +7,8 @@ __pycache__/
 
 # Data and models
 data/
+data_temp_reprod/
+data_backup_20260208/
 models/
 reports/
 

@@ -45,13 +45,13 @@ def clean_file(filepath):
     print(f"  Clean:   {len(clean_df):,}")
     print(f"  Dropped: {dropped:,} ({pct:.3f}%)")
     
+    # Always save the clean file so downstream scripts can find it
+    clean_path = filepath.replace("possessions_", "possessions_clean_")
+    clean_df.to_parquet(clean_path, index=False)
     if dropped > 0:
-        # Save 'clean' version
-        clean_path = filepath.replace("possessions_", "possessions_clean_")
-        clean_df.to_parquet(clean_path, index=False)
         print(f"✅ Saved to {clean_path}")
     else:
-        print("✅ File was already perfect.")
+        print(f"✅ File was already perfect. Saved to {clean_path}")
 
 def main():
     files = sorted(glob.glob(os.path.join(DATA_DIR, "possessions_*.parquet")))

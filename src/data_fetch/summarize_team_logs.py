@@ -253,6 +253,9 @@ def pad_and_finalize(summary: pd.DataFrame) -> pd.DataFrame:
     if summary is None or summary.empty:
         out = full.copy()
     else:
+        # Ensure TEAM_ID types match (both as strings) to avoid object vs float64 merge errors
+        full['TEAM_ID'] = full['TEAM_ID'].astype(str)
+        summary['TEAM_ID'] = summary['TEAM_ID'].astype(str)
         out = full.merge(summary, on=['SEASON', 'TEAM_ID'], how='left')
 
     # ensure WINS present (use column-existence check to avoid scalar default)

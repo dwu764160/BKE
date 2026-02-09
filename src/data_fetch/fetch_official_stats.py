@@ -88,10 +88,10 @@ def fetch_official_advanced(season):
             return
             
         json_data = resp.json()
-        headers = json_data['resultSets'][0]['headers']
+        col_headers = json_data['resultSets'][0]['headers']
         rows = json_data['resultSets'][0]['rowSet']
         
-        df = pd.DataFrame(rows, columns=headers)
+        df = pd.DataFrame(rows, columns=col_headers)
         
         # Save
         outfile = DATA_DIR / f"official_advanced_{season}.parquet"

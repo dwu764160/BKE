@@ -77,9 +77,9 @@ def run():
                 advanced_metrics=excluded.advanced_metrics,
                 last_updated=excluded.last_updated
         """, team_data)
-        conn.commit()
         # small delay to avoid hammering the NBA stats site
         time.sleep(0.6)
+    conn.commit()  # batch commit all teams at once
     conn.close()
     print("✅ Teams fetched and updated")
 

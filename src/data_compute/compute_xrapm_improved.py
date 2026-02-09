@@ -39,39 +39,40 @@ from compute_xrapm import (
 def detect_collinear_pairs(full_df, season, threshold=0.60):
     """
     Detect player pairs that share a high percentage of possessions.
+    Uses vectorized operations for performance.
     
     Returns dict: {(player_a, player_b): overlap_ratio}
     """
+    from itertools import combinations
+    
     season_df = full_df[full_df['season'] == season]
     
-    # Count offensive possessions per player
-    player_poss = {}
-    pair_poss = {}
+    # Vectorized: explode off_lineup, count per player, build pair counts
+    exploded = season_df[['off_lineup']].reset_index(drop=True)
+    exploded['_idx'] = range(len(exploded))
+    exploded = exploded.explode('off_lineup').dropna(subset=['off_lineup'])
+    exploded['off_lineup'] = exploded['off_lineup'].apply(clean_id)
+    exploded = exploded[exploded['off_lineup'] != '0']
     
-    for _, row in season_df.iterrows():
-        off_lineup = row['off_lineup']
-        if not isinstance(off_lineup, (list, np.ndarray)):
+    # Player possession counts
+    player_poss = exploded.groupby('off_lineup')['_idx'].nunique().to_dict()
+    
+    # Pair co-occurrence: group by possession index, list players, generate pairs
+    poss_groups = exploded.groupby('_idx')['off_lineup'].apply(list)
+    pair_counts = {}
+    for players in poss_groups:
+        if len(players) < 2:
             continue
-        
-        players = [clean_id(p) for p in off_lineup if clean_id(p) != '0']
-        
-        for p in players:
-            player_poss[p] = player_poss.get(p, 0) + 1
-        
-        for i, p1 in enumerate(players):
-            for p2 in players[i+1:]:
-                key = tuple(sorted([p1, p2]))
-                pair_poss[key] = pair_poss.get(key, 0) + 1
+        for p1, p2 in combinations(sorted(set(players)), 2):
+            key = (p1, p2)
+            pair_counts[key] = pair_counts.get(key, 0) + 1
     
     # Find high-overlap pairs
     collinear_pairs = {}
-    for (p1, p2), shared in pair_poss.items():
+    for (p1, p2), shared in pair_counts.items():
         p1_total = player_poss.get(p1, 1)
         p2_total = player_poss.get(p2, 1)
-        
-        overlap_a = shared / p1_total
-        overlap_b = shared / p2_total
-        max_overlap = max(overlap_a, overlap_b)
+        max_overlap = max(shared / p1_total, shared / p2_total)
         
         if max_overlap >= threshold:
             collinear_pairs[(p1, p2)] = max_overlap
@@ -449,32 +450,47 @@ def main():
     print(f"   Possessions loaded: {len(full_df):,}")
     print(f"   Box score loaded: {len(box_df) if box_df is not None else 0}")
     
-    # Run for 2024-25 season
-    target_season = '2024-25'
+    # Run for 2024-25 and 2023-24 seasons (to match reference output)
+    all_results = []
+    for target_season in ['2024-25', '2023-24']:
+        improved_results = run_improved_xrapm(full_df, target_season, box_df, n_prior_seasons=2)
+        
+        if improved_results.empty:
+            print(f"❌ No results generated for {target_season}")
+            continue
+        
+        # Save per-season CSV
+        improved_results.to_csv(os.path.join(OUTPUT_DIR, f"player_xrapm_improved_{target_season}.csv"), index=False)
+        print(f"\n✅ Saved improved xRAPM to player_xrapm_improved_{target_season}.csv")
+        
+        # Load original for comparison
+        original_path = os.path.join(OUTPUT_DIR, f"player_xrapm_{target_season}.csv")
+        if os.path.exists(original_path):
+            original_df = pd.read_csv(original_path)
+            original_df['player_id'] = original_df['player_id'].astype(str)
+            validate_improvement(improved_results, original_df)
+        
+        all_results.append(improved_results)
     
-    improved_results = run_improved_xrapm(full_df, target_season, box_df, n_prior_seasons=2)
-    
-    if improved_results.empty:
-        print("❌ No results generated")
+    if not all_results:
+        print("❌ No results generated for any season")
         return
     
-    # Load original for comparison
-    original_path = os.path.join(OUTPUT_DIR, "player_xrapm_2024-25.csv")
-    if os.path.exists(original_path):
-        original_df = pd.read_csv(original_path)
-        original_df['player_id'] = original_df['player_id'].astype(str)
-        validate_improvement(improved_results, original_df)
+    # Concat all seasons and rename column for consistency with reference data
+    combined = pd.concat(all_results, ignore_index=True)
+    if 'xRAPM_improved' in combined.columns:
+        combined = combined.rename(columns={'xRAPM_improved': 'xRAPM'})
     
-    # Save
-    improved_results.to_csv(os.path.join(OUTPUT_DIR, "player_xrapm_improved_2024-25.csv"), index=False)
-    print(f"\n✅ Saved improved xRAPM to player_xrapm_improved_2024-25.csv")
+    # Save combined parquet
+    combined.to_parquet(os.path.join(OUTPUT_DIR, "player_xrapm_v2.parquet"), index=False)
+    print(f"✅ Saved combined improved xRAPM to player_xrapm_v2.parquet ({len(combined)} rows)")
     
     # Show sample
     print("\n=== SAMPLE IMPROVED xRAPM ===")
-    top_players = improved_results.nlargest(15, 'xRAPM_improved')
+    top_players = combined.nlargest(15, 'xRAPM')
     for _, row in top_players.iterrows():
         collin = "⚠️" if row['is_collinear'] else ""
-        print(f"  {row['player_id']}: {row['xRAPM_improved']:+.2f} {collin}")
+        print(f"  {row['player_id']}: {row['xRAPM']:+.2f} {collin}")
 
 
 if __name__ == "__main__":
