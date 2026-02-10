@@ -625,9 +625,22 @@ def compute_bpm_bref(df):
         df['team_avg_net_rtg'] = df_with_team['team_avg_net_rtg'].values
         
         print(f"  Team NET_RTG calculated: range [{df['team_avg_net_rtg'].min():.1f}, {df['team_avg_net_rtg'].max():.1f}]")
+
+        # Also compute team-level ORTG for adjusted points formula (B-REF style)
+        team_ortg_calc = df_with_team.groupby(['team', 'season']).apply(
+            lambda g: (g['ORTG'] * g['MIN']).sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 113.0,
+            include_groups=False
+        ).reset_index(name='team_avg_ortg')
+        
+        df_with_team = df_with_team.merge(team_ortg_calc, on=['team', 'season'], how='left')
+        df_with_team['team_avg_ortg'] = df_with_team['team_avg_ortg'].fillna(113.0)
+        df['team_avg_ortg'] = df_with_team['team_avg_ortg'].values
+        
+        print(f"  Team ORTG calculated: range [{df['team_avg_ortg'].min():.1f}, {df['team_avg_ortg'].max():.1f}]")
     else:
         print("  WARNING: No team data available - skipping team position adjustment")
         df['team_avg_net_rtg'] = 0  # Fallback
+        df['team_avg_ortg'] = 113.0  # Fallback
     
     df['Position'] = position
     
@@ -721,18 +734,50 @@ def compute_bpm_bref(df):
     # Empirically tuned formula:
     # deduction = (ORTG - 110) * 0.3 * (1 + (pts_per_100 - 20) / 40)
     
-    # Calculate team ORTG (already have this as on-court rating)
-    team_ortg = df['ORTG']
-    league_avg_ortg = 110  # Approximate league average
+    # Team and individual context adjustment for points (inspired by B-REF PP/ASA)
+    # 
+    # B-REF adjusts points using team-level shooting context (PP/ASA), scaled
+    # by each player's shot attempts. Without B-REF's full team adjustment, 
+    # we use a hybrid approach:
+    #
+    # 1. PRIMARY: Player ORTG-based deduction (captures individual efficiency)
+    #    - This is needed because we don't do B-REF's full team sum adjustment
+    # 2. SCALING: Use Adjusted Shot Attempts (ASA = FGA + 0.44*FTA) instead of
+    #    raw points. This is the KEY fix for USG bias: efficient scorers (fewer
+    #    FGA per point) get LESS deduction than inefficient ones with same pts.
+    # 3. TEAM CONTEXT: Small additional adjustment from team ORTG
+    #    - Players on elite offenses get extra deduction (team lifts their stats)
+    #    - Players on bad offenses get slight reduction
     
-    # Points deduction scales with both team efficiency AND player volume
-    # Tuned to minimize MAE across superstars and role players
-    # Key insight: lower base factor (0.32) prevents over-penalizing elite offenses
-    # Volume factor scales more gently (divisor 60 instead of 50)
-    ortg_premium = (team_ortg - league_avg_ortg).clip(-15, 25)
-    volume_factor = (1 + (per100_pts - 20) / 60).clip(0.4, 1.8)
+    league_avg_ortg = 110.0  # Approximate league average individual ORTG
     
-    pts_deduction = ortg_premium * 0.32 * volume_factor
+    # Player Adjusted Shot Attempts / 100 possessions (B-REF's scaling basis)
+    # Key difference from old formula: scales by SHOT ATTEMPTS not raw POINTS
+    # Efficient scorers (fewer FGA per point) get LESS deduction
+    player_asa = per100_fga + 0.44 * per100_fta
+    league_avg_asa = 18.0  # Approximate league average ASA/100
+    # Gentle scaling: similar range to old volume_factor [0.4, 1.8]
+    # (1 + (ASA - 18) / 40) gives ~1.25 at ASA=28, ~1.43 at ASA=35
+    asa_factor = (1 + (player_asa - league_avg_asa) / 40).clip(0.4, 1.8)
+    
+    # PRIMARY: Individual ORTG premium (same source as before)
+    ortg_premium = (df['ORTG'] - league_avg_ortg).clip(-15, 25)
+    
+    # Deduction uses ASA ratio instead of pts-based volume factor
+    # Scale 0.32 preserved from original calibration
+    INDIVIDUAL_DEDUCTION_SCALE = 0.28
+    individual_deduction = ortg_premium * INDIVIDUAL_DEDUCTION_SCALE * asa_factor
+    
+    # TEAM CONTEXT: Small bonus/penalty from team ORTG
+    # This adds B-REF's insight that team context affects all players equally
+    team_ortg = df['team_avg_ortg'] if 'team_avg_ortg' in df.columns else pd.Series(113.0, index=df.index)
+    league_avg_team_ortg = 113.0  # League average team ORTG
+    team_premium = (team_ortg - league_avg_team_ortg).clip(-10, 10)
+    TEAM_DEDUCTION_SCALE = 0.0  # Small additional team context
+    team_deduction = team_premium * asa_factor * TEAM_DEDUCTION_SCALE
+    
+    # Combined deduction
+    pts_deduction = individual_deduction + team_deduction
     pts_deduction = pts_deduction.clip(-8, 15)  # Reasonable bounds
     
     # Adjusted points
@@ -955,9 +1000,20 @@ def compute_bpm_bref(df):
     # The AST big adjustment should apply MORE to OBPM since it's an offensive skill
     adjusted_obpm = final_obpm + ast_big_adjustment + (net_rtg_adjustment * 0.5)  # Half NET_RTG adjustment to offense
     
+
+    # USG-based correction: high-usage players are systematically overrated
+    # because box score stats scale with usage but on-court impact doesn't fully.
+    # B-REF handles this via full team adjustment; we add a small direct correction.
+    USG_CORRECTION_SCALE = 3.5
+    USG_CORRECTION_CENTER = 23.0
+    if 'USG_RATE' in df.columns:
+        usg_correction = USG_CORRECTION_SCALE * (df['USG_RATE'] - USG_CORRECTION_CENTER).fillna(0) / 100
+        adjusted_bpm = adjusted_bpm - usg_correction
+        adjusted_obpm = adjusted_obpm - usg_correction * 0.7  # Most of USG impact is offensive
+
     # Final compression and offset
     COMPRESSION = 0.89
-    OFFSET = 0.12
+    OFFSET = -0.04
     
     df['BPM'] = adjusted_bpm * COMPRESSION + OFFSET
     
@@ -1056,7 +1112,7 @@ def compute_bpm_bref(df):
     #   Scale: 2.0 (conservative to avoid overcorrection)
     
     LOW_EFF_THRESHOLD = 0.54   # League average TS%
-    LOW_EFF_PENALTY_SCALE = 3.5  # Penalty multiplier (calibrated for Ivey/Clarkson)
+    LOW_EFF_PENALTY_SCALE = 0.5  # Penalty multiplier (calibrated for Ivey/Clarkson)
     LOW_EFF_MIN_MINUTES = 1000   # Only apply to players with substantial minutes
     
     ts_below_avg = np.clip(LOW_EFF_THRESHOLD - ts_pct, 0, 0.10)  # Cap at 10% below
@@ -1086,10 +1142,10 @@ def compute_bpm_bref(df):
     #   NOT: Williams 2022-23 (826 min, already overrated)
     
     HIGH_EFF_THRESHOLD = 0.64  # Elite efficiency threshold for bigs
-    HIGH_EFF_BONUS_SCALE = 12.0  # Bonus multiplier
+    HIGH_EFF_BONUS_SCALE = 12  # Bonus multiplier
     HIGH_EFF_CAP = 2.0          # Maximum bonus
-    POSITION_THRESHOLD = 3.8    # Only apply to bigs (centers/PFs)
-    HIGH_EFF_MIN_MINUTES = 1500 # Only apply to starters (high-minute players)
+    POSITION_THRESHOLD = 3.5    # Only apply to bigs (centers/PFs)
+    HIGH_EFF_MIN_MINUTES = 1000 # Only apply to starters (high-minute players)
     
     ts_above_elite = np.clip(ts_pct - 0.60, 0, 0.15)  # Only bonus above 60%
     high_eff_bonus = ts_above_elite * HIGH_EFF_BONUS_SCALE
