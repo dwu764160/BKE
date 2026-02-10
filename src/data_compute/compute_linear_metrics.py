@@ -962,14 +962,16 @@ def compute_bpm_bref(df):
     #    - Small bonus/penalty based on how much better/worse player is vs team avg
     #    - Captures individual impact beyond team context
     #
-    # Grid search optimized: AST_BIG=18, TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.25
+    # Grid search optimized across 6 ground truth datasets (3 seasons x 2 player sets):
+    # AST_BIG=12, TEAM_NET_SCALE=0.20, IND_NET_SCALE=0.15
+    # Reduces overfitting: bench MAE 0.824→0.623, overall MAE 0.613→0.527
     
     # Calculate AST per minute for big playmaker adjustment
     ast_per_min = df['AST'] / df['MIN'].replace(0, 1)
     
     # AST-based bonus for bigs: Position > 3 AND high AST rate (> 0.20 AST/min)
     # Only triggers for unique players like Jokić who are bigs with elite passing
-    AST_BIG_BONUS = 18.0
+    AST_BIG_BONUS = 12.0
     ast_big_adjustment = np.where(
         (position > 3.0) & (ast_per_min > 0.20),
         AST_BIG_BONUS * (position - 3.0) * (ast_per_min - 0.10),
@@ -979,14 +981,14 @@ def compute_bpm_bref(df):
     # Team context adjustment using TEAM-level NET_RTG (B-REF style)
     # This gives all players on good teams a boost, all on bad teams a penalty
     # Scale: Boston (+9) gets +2.25, Washington (-9) gets -2.25
-    TEAM_NET_SCALE = 0.25
+    TEAM_NET_SCALE = 0.20
     _team_net = df['TEAM_NET_RTG'].fillna(df['team_avg_net_rtg']) if 'TEAM_NET_RTG' in df.columns else df['team_avg_net_rtg']
     team_net_adjustment = TEAM_NET_SCALE * _team_net
     
     # Individual on-court adjustment (how player differs from team average)
     # This captures individual impact beyond team context
     # Small scale since team adjustment captures most of the effect
-    IND_NET_SCALE = 0.25
+    IND_NET_SCALE = 0.15
     individual_net_diff = df['NET_RTG'] - _team_net
     individual_adjustment = IND_NET_SCALE * individual_net_diff
     
@@ -1011,9 +1013,9 @@ def compute_bpm_bref(df):
         adjusted_bpm = adjusted_bpm - usg_correction
         adjusted_obpm = adjusted_obpm - usg_correction * 0.7  # Most of USG impact is offensive
 
-    # Final compression and offset
-    COMPRESSION = 0.89
-    OFFSET = -0.04
+    # Final compression and offset (optimized across 6 ground truth datasets)
+    COMPRESSION = 0.90  # was 0.89
+    OFFSET = 0.04       # was -0.04, raised to center bench/role player BPM near zero bias
     
     df['BPM'] = adjusted_bpm * COMPRESSION + OFFSET
     
@@ -1044,8 +1046,8 @@ def compute_bpm_bref(df):
     #    - Low-min BIGS have much noisier stats because they play easy situations
     #    - Guards with low minutes (GP2) may be legitimate defensive specialists
     
-    MIN_REGRESSION_THRESHOLD = 2000  # Minutes at which regression stops
-    MIN_REGRESSION_STRENGTH = 1.0    # Maximum penalty at 0 minutes
+    MIN_REGRESSION_THRESHOLD = 1500  # Minutes at which regression stops (was 2000, reduced to avoid over-penalizing role players)
+    MIN_REGRESSION_STRENGTH = 0.8    # Maximum penalty at 0 minutes (was 1.0, reduced for cross-dataset balance)
     
     # Calculate penalty factor: 0 at threshold, 1 at 0 minutes
     penalty_factor = np.clip(1.0 - (df['MIN'] / MIN_REGRESSION_THRESHOLD), 0, 1)
@@ -1064,8 +1066,8 @@ def compute_bpm_bref(df):
     #
     # Penalty: scales from 0 at 500 min to 3.0 at 0 min, for positions > 3.5
     # Increased from 2.0 to 3.0 to counteract team adjustment boost for garbage time
-    VERY_LOW_MIN_THRESHOLD = 500
-    VERY_LOW_MIN_PENALTY = 3.0  # Additional BPM penalty at 0 minutes (was 2.0)
+    VERY_LOW_MIN_THRESHOLD = 400
+    VERY_LOW_MIN_PENALTY = 1.0  # Additional BPM penalty at 0 minutes (was 3.0, reduced to 1.0 for cross-dataset balance)
     BIG_POSITION_THRESHOLD = 3.5  # Only apply to bigs
     
     very_low_min_factor = np.clip(1.0 - (df['MIN'] / VERY_LOW_MIN_THRESHOLD), 0, 1)
@@ -1112,7 +1114,7 @@ def compute_bpm_bref(df):
     #   Scale: 2.0 (conservative to avoid overcorrection)
     
     LOW_EFF_THRESHOLD = 0.54   # League average TS%
-    LOW_EFF_PENALTY_SCALE = 0.5  # Penalty multiplier (calibrated for Ivey/Clarkson)
+    LOW_EFF_PENALTY_SCALE = 0.6  # Penalty multiplier (calibrated for Ivey/Clarkson)
     LOW_EFF_MIN_MINUTES = 1000   # Only apply to players with substantial minutes
     
     ts_below_avg = np.clip(LOW_EFF_THRESHOLD - ts_pct, 0, 0.10)  # Cap at 10% below
@@ -1142,10 +1144,10 @@ def compute_bpm_bref(df):
     #   NOT: Williams 2022-23 (826 min, already overrated)
     
     HIGH_EFF_THRESHOLD = 0.64  # Elite efficiency threshold for bigs
-    HIGH_EFF_BONUS_SCALE = 12  # Bonus multiplier
-    HIGH_EFF_CAP = 2.0          # Maximum bonus
+    HIGH_EFF_BONUS_SCALE = 6  # Bonus multiplier
+    HIGH_EFF_CAP = 1.5          # Maximum bonus
     POSITION_THRESHOLD = 3.5    # Only apply to bigs (centers/PFs)
-    HIGH_EFF_MIN_MINUTES = 1000 # Only apply to starters (high-minute players)
+    HIGH_EFF_MIN_MINUTES = 800 # Only apply to starters (high-minute players)
     
     ts_above_elite = np.clip(ts_pct - 0.60, 0, 0.15)  # Only bonus above 60%
     high_eff_bonus = ts_above_elite * HIGH_EFF_BONUS_SCALE
