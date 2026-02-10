@@ -2,6 +2,8 @@
 src/data_compute/compute_defensive_archetypes.py
 Classifies NBA players into defensive archetypes based on matchup and tracking data.
 
+*************************NOT IN USE, REPLACED BY v2*************************
+
 Defensive Archetype Definitions:
 ================================
 1. Lockdown Perimeter Defender - High versatility, guards best perimeter scorers, low FG% allowed

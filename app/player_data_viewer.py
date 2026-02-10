@@ -208,38 +208,59 @@ def get_defensive_reasons(row):
     reasons = []
     arch = row.get('defensive_archetype', 'Unknown')
     sec = row.get('defensive_secondary', '')
-    vpctl = row.get('versatility_pctl', 0)
-    dpctl = row.get('difficulty_pctl', 0)
-    opp = row.get('avg_opponent_ppg', 0)
-    elite = row.get('elite_matchup_pct', 0)
-    blk = row.get('BLK_PER36', 0)
-    stl = row.get('STL_PER36', 0)
-    dres = row.get('d_results_pctl', 0)
+    vpctl = row.get('versatility_pctl', 0) or 0
+    dpctl = row.get('difficulty_pctl', 0) or 0
+    opp = row.get('avg_opponent_ppg', 0) or 0
+    elite = row.get('elite_matchup_pct', 0) or 0
+    blk_pct = row.get('BLK_PCT', 0) or 0
+    stl_p100 = row.get('STL_PER100_DEF_POSS', 0) or 0
+    dres = row.get('d_results_pctl', 0) or 0
+    eng = row.get('engagement_pctl', 0) or 0
+    rim_fg = row.get('DEF_RIM_FG_PCT', 0) or 0
+    hustle = row.get('hustle_pctl', 0) or 0
 
     if arch == 'POA Defender':
-        reasons += [f"Tough assignments (top {100*(1-dpctl):.0f}% difficulty)", f"Elite matchup %: {elite*100:.1f}%", f"Avg opponent PPG: {opp:.1f}"]
-        if sec == 'Ball Hawk': reasons.append(f"High steals ({stl:.1f}/36)")
-        elif sec == 'Switchable': reasons.append("Also versatile defender")
-    elif arch == 'Switchable Defender':
-        reasons += [f"High versatility (top {100*(1-vpctl):.0f}%)", "Guards multiple positions"]
-        if dres >= 0.7: reasons.append("With strong results")
-        if sec == 'Rim Protector': reasons.append("Can also protect the rim")
-        elif sec == 'Lockdown': reasons.append("Elite defensive results")
+        reasons.append(f"Tough assignments ({dpctl*100:.0f}th pctl difficulty)")
+        reasons.append(f"Elite matchup share: {elite*100:.1f}%")
+        reasons.append(f"Avg opponent PPG: {opp:.1f}")
+        if sec == 'Ball Hawk': reasons.append(f"High steals ({stl_p100:.1f} per 100 def poss)")
+        elif sec == 'Switchable': reasons.append("Versatile — switches across positions")
+        elif sec == 'Hustler': reasons.append("High hustle / effort metrics")
+    elif arch == 'Wing Stopper':
+        reasons.append("Forward/wing assignment specialist")
+        reasons.append(f"Matchup difficulty: {dpctl*100:.0f}th pctl")
+        reasons.append(f"Defensive results: {dres*100:.0f}th pctl")
+        if sec == 'Lockdown': reasons.append("Elite defensive results")
+        elif sec == 'Hustler': reasons.append("High hustle metrics")
+    elif arch == 'Off-Ball Chaser':
+        reasons.append(f"High steals: {stl_p100:.1f} per 100 def poss")
+        reasons.append("Lower matchup difficulty (roaming/off-ball)")
+        if sec == 'Ball Hawk': reasons.append("Elite steal rate")
+        elif sec == 'Hustler': reasons.append("High hustle metrics")
     elif arch == 'Rim Protector':
-        reasons += [f"High blocks ({blk:.1f} per 36)", "Interior defense anchor"]
+        reasons.append(f"Block rate: {blk_pct:.1%}")
+        reasons.append(f"Opponent rim FG%: {rim_fg:.1%}")
         if sec == 'Switchable': reasons.append("Can also switch on perimeter")
-        elif sec == 'Shot Blocker': reasons.append("Elite shot blocking")
-    elif arch == 'Rotation Defender':
-        reasons += ["Help/rotation defense", "Medium assignment difficulty"]
-        if sec == 'Active Hands': reasons.append(f"Good steals ({stl:.1f}/36)")
-        elif sec == 'Solid': reasons.append("Solid defensive results")
-        else: reasons.append("Team defense contributor")
-    elif arch == 'Off-Ball Defender':
-        reasons.append("Gets easier assignments")
-        if sec == 'Liability': reasons += ["Poor defensive results", "Hidden on defense"]
-        else: reasons += ["Low versatility", f"Avg opponent PPG: {opp:.1f}"]
+        elif sec == 'Shot Blocker': reasons.append("Elite shot blocking volume")
+        else: reasons.append("Interior anchor")
+    elif arch == 'Dropping Big':
+        reasons.append("Interior-focused, stays in paint")
+        reasons.append(f"Low versatility ({vpctl*100:.0f}th pctl)")
+        reasons.append("Strong rebounding / rim presence")
+    elif arch == 'Mobile Big':
+        reasons.append(f"High versatility ({vpctl*100:.0f}th pctl)")
+        reasons.append("Switches across positions as a big")
+        reasons.append(f"Defensive results: {dres*100:.0f}th pctl")
+        if sec == 'Lockdown': reasons.append("Strong results across matchup types")
+        elif sec == 'Hustler': reasons.append("High hustle metrics")
+    elif arch == 'Low-Activity Defender':
+        reasons.append(f"Low engagement ({eng*100:.0f}th pctl)")
+        if sec == 'Liability': reasons.append("Poor defensive results")
+        else: reasons.append("Hidden on defense / low involvement")
+        reasons.append(f"Defensive results: {dres*100:.0f}th pctl")
     elif arch == 'Insufficient Minutes':
-        reasons += [f"Only {row.get('MIN',0):.0f} minutes", "Not enough data"]
+        reasons.append(f"Only {row.get('MIN', 0):.0f} minutes")
+        reasons.append("Not enough data")
     return reasons
 
 
@@ -278,8 +299,14 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
                 'defensive_confidence', 'assignment_difficulty',
                 'switch_score', 'versatility_pctl', 'avg_opponent_ppg',
-                'elite_matchup_pct', 'difficulty_pctl', 'BLK_PER36', 'STL_PER36',
-                'd_results_pctl']
+                'elite_matchup_pct', 'difficulty_pctl',
+                'STL_PER100_DEF_POSS', 'stl_pctl', 'BLK_PCT', 'blk_pctl',
+                'DEF_RIM_FG_PCT', 'RIM_FGA_RATE',
+                'engagement_score', 'engagement_pctl',
+                'hustle_score', 'hustle_pctl',
+                'D_FG_DIFF', 'd_results_pctl',
+                'poa_score', 'wing_score', 'chaser_score',
+                'rim_score', 'drop_big_score', 'mobile_big_score']
     def_cols = [c for c in def_cols if c in def_df.columns]
 
     merged = off_df.merge(def_df[def_cols], on=['player_id', 'SEASON'], how='left')
