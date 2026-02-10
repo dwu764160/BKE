@@ -56,6 +56,7 @@ warnings.filterwarnings('ignore')
 DATA_DIR = Path("data")
 TRACKING_DIR = DATA_DIR / "tracking"
 HISTORICAL_DIR = DATA_DIR / "historical"
+OFFICIAL_DIR = DATA_DIR / "official_stats"
 OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -438,11 +439,31 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
         0
     )
 
-    # USG proxy (soft signal only — never used as hard gate)
+    # ---- USG%: prefer official NBA.com value, fall back to proxy ----
+    # First, try to fill USG_PCT from official advanced stats (covers seasons
+    # where the box-score parquet lacks the advanced column).
+    official_adv_path = OFFICIAL_DIR / f"official_advanced_{season}.parquet"
+    if official_adv_path.exists():
+        try:
+            off_adv = pd.read_parquet(official_adv_path)
+            if 'USG_PCT' in off_adv.columns and 'PLAYER_ID' in off_adv.columns:
+                off_usg = off_adv[['PLAYER_ID', 'USG_PCT']].rename(
+                    columns={'USG_PCT': '_OFFICIAL_USG_PCT'})
+                features = features.merge(off_usg, on='PLAYER_ID', how='left')
+                if 'USG_PCT' not in features.columns or features['USG_PCT'].isna().all():
+                    features['USG_PCT'] = features['_OFFICIAL_USG_PCT']
+                else:
+                    features['USG_PCT'] = features['USG_PCT'].fillna(features['_OFFICIAL_USG_PCT'])
+                features.drop(columns=['_OFFICIAL_USG_PCT'], inplace=True, errors='ignore')
+        except Exception:
+            pass  # silently fall through to proxy
+
+    # Proxy for any remaining NaN: approximate standard USG% formula.
+    # Constant 2.0 ≈ league-avg team possessions per minute (100 poss / 48 min ≈ 2.08).
     poss_used = features['FGA'] + 0.44 * features['FTA'] + features['TOV']
     computed_usg = np.where(
         features['MIN'] > 0,
-        poss_used * 2.4 / (features['MIN'] * 5),
+        poss_used * 2.0 / (features['MIN'] * 5),
         np.nan
     )
 

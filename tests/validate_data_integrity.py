@@ -624,7 +624,7 @@ def validate_usg_reconciliation(profiles, archetypes, official):
     print("=" * 100)
     print("Three USG% sources:")
     print("  1. USG_RATE (profiles):    (FGA + 0.44*FTA + TOV) / TEAM_PLAYS_ON_COURT * 100")
-    print("  2. USG_PCT  (archetypes):  (FGA + 0.44*FTA + TOV) * 2.4 / (MIN * 5)")
+    print("  2. USG_PCT  (archetypes):  Official NBA.com value (fallback: proxy formula)")
     print("  3. USG_PCT  (NBA.com):     Official formula with actual team stats")
     print()
 
@@ -680,7 +680,7 @@ def validate_usg_reconciliation(profiles, archetypes, official):
         print()
         print(f"    ROOT CAUSE ANALYSIS:")
         print(f"    Profile formula uses TEAM_PLAYS_ON_COURT (our PBP-derived → possession count issue)")
-        print(f"    Archetype formula uses constant 2.4 multiplier (simplified, always biased upward)")
+        print(f"    Archetype formula uses official NBA.com USG_PCT (proxy with 2.0 constant as fallback)")
         print(f"    NBA.com uses actual team game-by-game totals")
 
     return results
@@ -906,8 +906,17 @@ def main():
     if os.path.exists(bref_path):
         report['tier7_bref'] = validate_vs_bref(profiles, bref_path)
 
-    # Generate template for later
-    generate_bref_template(season)
+    # Generate template ONLY if file doesn't exist or is empty
+    bref_template_path = f"tests/bref_ground_truth_{season}.csv"
+    if not os.path.exists(bref_template_path):
+        generate_bref_template(season)
+    else:
+        try:
+            existing = pd.read_csv(bref_template_path)
+            if existing.dropna(subset=['bref_GP']).empty:
+                generate_bref_template(season)
+        except Exception:
+            generate_bref_template(season)
 
     # Save JSON report
     if args.output:
@@ -935,16 +944,21 @@ def main():
         print(f"     → Directly causes ORTG/DRTG inflation/deflation")
     if usg_diffs and abs(np.mean(usg_diffs)) > 0.5:
         print(f"  2. USG% DRIFT: Profile USG is Δ{np.mean(usg_diffs):+.1f}pp vs NBA.com")
-        print(f"     → Partially caused by possession count issue, partially by formula difference")
+        print(f"     → Profile formula uses PBP-derived TEAM_PLAYS_ON_COURT (slightly inflated)")
     if ortg_diffs and abs(np.mean(ortg_diffs)) > 1.0:
         print(f"  3. ORTG/DRTG INFLATION: Our ratings are {np.mean(ortg_diffs):+.1f} pts vs NBA.com")
         print(f"     → Direct consequence of undercounted possessions")
 
-    print("\n  RECOMMENDATIONS:")
-    print("  • Investigate PBP possession derivation (likely missing some possession-ending events)")
-    print("  • Consider using NBA.com POSS as calibration target")
-    print("  • Archetype USG_PCT formula needs team-level denominators, not constant 2.4")
-    print("  • Fill in bref_ground_truth CSV for authoritative box-score cross-check")
+    if not (poss_diffs and abs(np.mean(poss_diffs)) > 1.0) and \
+       not (ortg_diffs and abs(np.mean(ortg_diffs)) > 1.0):
+        print("  ✅ No critical issues detected")
+
+    arch_diffs = [r['arch_vs_official'] for r in report.get('tier5_usg', []) if 'arch_vs_official' in r]
+    print("\n  STATUS:")
+    print(f"  • Possession count drift:   mean {np.mean(poss_diffs):+.2f}%" if poss_diffs else "  • No possession data")
+    print(f"  • Profile USG vs Official:  mean Δ{np.mean(usg_diffs):+.2f}pp" if usg_diffs else "  • No USG data")
+    print(f"  • Archetype USG vs Official: mean Δ{np.mean(arch_diffs):+.2f}pp" if arch_diffs else "  • No archetype USG data")
+    print(f"  • ORTG drift:               mean {np.mean(ortg_diffs):+.1f} pts" if ortg_diffs else "  • No ORTG data")
     print()
 
 

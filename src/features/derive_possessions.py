@@ -132,6 +132,8 @@ def process_game(game_df):
         
         if etype in ['FIELD_GOAL', 'FIELD_GOAL_2PT', 'FIELD_GOAL_3PT', 'FREE_THROW', 'TURNOVER']:
             current['has_play'] = True
+        elif etype == 'VIOLATION' and 'TURNOVER' in desc:
+            current['has_play'] = True
             
         # 4. End Logic (Strict Flip)
         
@@ -169,6 +171,18 @@ def process_game(game_df):
             if '1 OF 1' in desc or '2 OF 2' in desc or '3 OF 3' in desc:
                 next_team = get_opponent(current['off_team_id']) if current['off_team_id'] else None
                 finalize(i, "FT_MAKE", next_team)
+
+        # E. VIOLATION-TURNOVERS (traveling, 5-sec, 8-sec, 3-sec, etc.)
+        #    These are tagged event_type=VIOLATION but contain "TURNOVER" in text.
+        elif etype == 'VIOLATION' and 'TURNOVER' in desc:
+            next_team = get_opponent(current['off_team_id']) if current['off_team_id'] else None
+            finalize(i, "TURNOVER", next_team)
+
+        # F. JUMP_BALL (mid-game held balls → possession change)
+        #    Tip-offs at period start have off_team_id=None so are correctly skipped.
+        elif etype == 'JUMP_BALL':
+            if current['off_team_id'] is not None:
+                finalize(i, "JUMP_BALL", None)
                 
     finalize(num_rows - 1, "GAME_END", None)
     return pd.DataFrame(possessions)

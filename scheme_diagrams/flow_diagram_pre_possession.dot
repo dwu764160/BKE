@@ -12,11 +12,17 @@ digraph repo_flow {
   subgraph cluster_fetch {
     label="Data Fetch / Ingest";
     style=rounded;
+    fetch_data_script [label="fetch_data.sh\n(runs all fetchers)", shape=hexagon, style=filled, fillcolor="#e6f7ff"];
     fetch_historical [label="fetch_historical_data.py\n(nba_api)\n-> team_game_logs.parquet, player logs"];
     fetch_pbp_cdn [label="CDN_pbp_fetch.py\n(fast CDN)\nreads: team_game_logs.parquet\n-> pbp_cache/pbp_GAME_ID.parquet\n-> play_by_play_SEASON.parquet"];
     fetch_pbp_playwright [label="fetch_play_by_play.py\n(playwright Next.js DOM fallback)\nreads: team_game_logs.parquet\n-> pbp_cache/pbp_GAME_ID.parquet\n-> play_by_play_SEASON.parquet"];
     capture_headers [label="capture_nba_headers.py\n-> data/nba_headers.json"];
     bootstrap_session [label="bootstrap_nba_session.py\n-> data/nba_session.json"];
+    fetch_data_script -> fetch_historical [label="calls", style=dashed];
+    fetch_data_script -> fetch_pbp_cdn [label="calls", style=dashed];
+    fetch_data_script -> fetch_pbp_playwright [label="calls", style=dashed];
+    fetch_data_script -> capture_headers [label="calls", style=dashed];
+    fetch_data_script -> bootstrap_session [label="calls", style=dashed];
   }
 
   // Derivation cluster
@@ -31,8 +37,10 @@ digraph repo_flow {
   subgraph cluster_normalize {
     label="Normalization";
     style=rounded;
+    compute_data_script [label="compute_data.sh\n(runs normalization, features, metrics, export)", shape=hexagon, style=filled, fillcolor="#fffbe6"];
     pbp_parser [label="pbp_parser.py\n(core row normalizer)\nused by run_normalization.py", shape=component];
     run_normalize [label="run_normalization.py\nreads: play_by_play_*.parquet\n-> pbp_normalized_SEASON.parquet"];
+    compute_data_script -> run_normalize [label="calls", style=dashed];
   }
 
   // Features
@@ -74,6 +82,8 @@ digraph repo_flow {
   team_game_details [label="data/historical/team_game_details.parquet/csv", shape=invhouse];
   player_team_db [label="data/player_team_profiles.db", shape=cylinder];
   advanced_metrics [label="data/advanced_local_metrics.parquet", shape=invhouse];
+  fetch_data_script;
+  compute_data_script;
 
   // Edges: fetchers -> artifacts
   fetch_historical -> team_game_logs [label="writes / updates", color=green];
@@ -124,4 +134,44 @@ digraph repo_flow {
   { rank=same; fetch_historical; fetch_pbp_cdn; fetch_pbp_playwright }
   { rank=same; derive_team_logs; run_normalize }
   { rank=same; derive_lineups; compute_schedule }
+    // Additional fetchers
+    fetch_box_scores_complete [label="fetch_box_scores_complete.py\n-> player box scores", shape=box];
+    fetch_matchup_data [label="fetch_matchup_data.py\n-> matchup data", shape=box];
+    fetch_shot_zones [label="fetch_shot_zones.py\n-> shot zone data", shape=box];
+    fetch_data_script -> fetch_box_scores_complete [label="calls", style=dashed];
+    fetch_data_script -> fetch_matchup_data [label="calls", style=dashed];
+    fetch_data_script -> fetch_shot_zones [label="calls", style=dashed];
+    // Derive / Normalize / Features
+    compute_data_script -> derive_team_logs [label="calls", style=dashed];
+    compute_data_script -> summarize_team_logs [label="calls", style=dashed];
+    compute_data_script -> export_db_to_parquet [label="calls", style=dashed];
+    compute_data_script -> run_normalize [label="calls", style=dashed];
+    compute_data_script -> derive_lineups [label="calls", style=dashed];
+    compute_data_script -> derive_possessions [label="calls", style=dashed];
+    compute_data_script -> compute_schedule [label="calls", style=dashed];
+    // Compute / Metrics
+    compute_clean_possessions [label="compute_clean_possessions.py\n-> possessions_clean.parquet", shape=box];
+    compute_rapm [label="compute_rapm.py\n-> RAPM metrics", shape=box];
+    compute_xrapm_improved [label="compute_xrapm_improved.py\n-> xRAPM metrics (supersedes xrapm)", shape=box, style=filled, fillcolor="#e6ffe6"];
+    compute_local_metrics [label="compute_local_metrics.py\n-> advanced_local_metrics.parquet", shape=box];
+    compute_linear_metrics [label="compute_linear_metrics.py\n-> metrics_linear.parquet", shape=box];
+    compute_advanced_metrics [label="compute_advanced_metrics.py\n-> team/lineup advanced stats", shape=box];
+    compute_player_profiles [label="compute_player_profiles.py\n-> player profiles", shape=box];
+    compute_player_archetypes [label="compute_player_archetypes.py\n-> offensive archetypes", shape=box];
+    compute_defensive_archetypes_v2 [label="compute_defensive_archetypes_v2.py\n-> defensive archetypes (supersedes v1)", shape=box, style=filled, fillcolor="#ffe6e6"];
+    compute_data_script -> compute_clean_possessions [label="calls", style=dashed];
+    compute_data_script -> compute_rapm [label="calls", style=dashed];
+    compute_data_script -> compute_xrapm_improved [label="calls", style=dashed];
+    compute_data_script -> compute_local_metrics [label="calls", style=dashed];
+    compute_data_script -> compute_linear_metrics [label="calls", style=dashed];
+    compute_data_script -> compute_advanced_metrics [label="calls", style=dashed];
+    compute_data_script -> compute_player_profiles [label="calls", style=dashed];
+    compute_data_script -> compute_player_archetypes [label="calls", style=dashed];
+    compute_data_script -> compute_defensive_archetypes_v2 [label="calls", style=dashed];
+    // Visualization / Export
+    player_archetypes_viewer [label="player_archetypes_viewer.py\n-> archetype HTML export", shape=box];
+    player_data_viewer [label="player_data_viewer.py\n-> player data HTML export", shape=box];
+    compute_data_script -> player_archetypes_viewer [label="calls", style=dashed];
+    compute_data_script -> player_data_viewer [label="calls", style=dashed];
+    compute_data_script -> export_db_to_parquet [label="calls", style=dashed];
 }
