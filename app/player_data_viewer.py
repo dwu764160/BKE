@@ -53,6 +53,9 @@ def load_xrapm():
 def load_xrapm_v2():
     return _load_parquet(f"{PROCESSED_DIR}/player_xrapm_v2.parquet")
 
+def load_linear_metrics():
+    return _load_parquet(f"{PROCESSED_DIR}/metrics_linear.parquet")
+
 def load_team_map():
     path = f"{HISTORICAL_DIR}/teams.parquet"
     if not os.path.exists(path):
@@ -255,7 +258,7 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, team_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, team_map):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -271,6 +274,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
     rapm_map     = build_record_map(rapm_df,     ["player_id", "SEASON"], ["player_name", "season"])
     xrapm_map    = build_record_map(xrapm_df,    ["player_id", "SEASON"], ["player_name", "season"])
     xrapm_v2_map = build_record_map(xrapm_v2_df, ["player_id", "SEASON"], ["season"])
+    linear_map   = build_record_map(linear_df,   ["player_id", "SEASON"], ["player_name", "season"])
 
     bios_map = {}
     if bios_df is not None and not bios_df.empty:
@@ -331,6 +335,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
             'rapm': rapm_map.get((pid, season), {}),
             'xrapm': xrapm_map.get((pid, season), {}),
             'xrapm_v2': xrapm_v2_map.get((pid, season), {}),
+            'linear': linear_map.get((pid, season), {}),
         }
         details[key] = detail
 
@@ -419,6 +424,7 @@ input{{width:300px}}select{{min-width:180px}}
 .mx{{background:transparent;border:1px solid #2a3b70;color:#8aa0d6;width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:18px}}
 .msec{{margin-top:16px;padding-top:12px;border-top:1px solid #1f2a4f}}
 .msec h3{{margin:0 0 14px 0;font-size:15px;text-transform:uppercase;letter-spacing:1.5px;color:#6a789f;cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}}
+.msec h4.msec-sub{{margin:18px 0 10px 0;font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:#4ecdc4;font-weight:600;border-bottom:1px solid #1f2a4f;padding-bottom:6px}}
 .collapse-toggle{{transition:transform .2s;display:inline-block;font-size:13px;color:#7c8bb5}}
 .msec.collapsed>:not(h3){{display:none}}
 .msec.collapsed .collapse-toggle{{transform:rotate(-90deg)}}
@@ -627,12 +633,19 @@ function openModal(key){
   var ps=d.profile_stats||{};
   var ra=d.rapm||{};
   var xr=d.xrapm||{};
+  var ln=d.linear||{};
   function add(l,v){if(v!==null&&v!==undefined&&v!=='')hl.push({label:l,value:v});}
   add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);add('MPG',p.mpg);
-  add('USG%',p.usg);add('TS%',p.ts);
-  add('ORTG',ps.ORTG);add('DRTG',ps.DRTG);add('NET RTG',ps.NET_RTG);
-  add('RAPM',ra.RAPM);add('ORAPM',ra.ORAPM);add('DRAPM',ra.DRAPM);
-  add('xRAPM',xr.xRAPM);add('O_xRAPM',xr.O_xRAPM);add('D_xRAPM',xr.D_xRAPM);
+
+  var adv=[];
+  function addAdv(l,v){if(v!==null&&v!==undefined&&v!=='')adv.push({label:l,value:v});}
+  addAdv('USG%',p.usg);addAdv('TS%',p.ts);
+  addAdv('ORTG',ps.ORTG);addAdv('DRTG',ps.DRTG);addAdv('NET RTG',ps.NET_RTG);
+  addAdv('WS',ln.WS);addAdv('OWS',ln.OWS);addAdv('DWS',ln.DWS);
+  addAdv('BPM',ln.BPM);addAdv('OBPM',ln.OBPM);addAdv('DBPM',ln.DBPM);
+  addAdv('VORP',ln.VORP);addAdv('GmSc',ln.GMSC_AVG);
+  addAdv('RAPM',ra.RAPM);addAdv('ORAPM',ra.ORAPM);addAdv('DRAPM',ra.DRAPM);
+  addAdv('xRAPM',xr.xRAPM);addAdv('O_xRAPM',xr.O_xRAPM);addAdv('D_xRAPM',xr.D_xRAPM);
 
   var arch='<div class="msec"><h3>Archetypes</h3><div class="sg">'
     +'<div class="sc"><div class="lb">Offense</div><div class="vl">'+p.off_archetype+'</div></div>'
@@ -642,7 +655,7 @@ function openModal(key){
     +'</div></div>';
 
   document.getElementById('mBody').innerHTML=
-    (hl.length?'<div class="msec"><h3>Season Highlights</h3>'+renderSG(hl)+'</div>':'')
+    (hl.length?'<div class="msec"><h3>Season Highlights</h3><h4 class="msec-sub">General Box Score</h4>'+renderSG(hl)+(adv.length?'<h4 class="msec-sub">Advanced Statistics</h4>'+renderSG(adv):'')+'</div>':'')
     +arch
     +renderPT(d.playtypes)
     +renderReasons(d.off_reasons,d.def_reasons)
@@ -651,7 +664,8 @@ function openModal(key){
     +renderKV('Profile Stats',d.profile_stats||{})
     +renderKV('RAPM',d.rapm||{})
     +renderKV('xRAPM',d.xrapm||{})
-    +renderKV('xRAPM v2',d.xrapm_v2||{});
+    +renderKV('xRAPM v2',d.xrapm_v2||{})
+    +renderKV('Linear Metrics (BKE-computed)',d.linear||{});
 
   /* add collapsible toggles to each section */
   document.querySelectorAll('#mBody .msec').forEach(function(sec){
@@ -737,11 +751,13 @@ def main():
     rapm_df     = load_rapm()
     xrapm_df    = load_xrapm()
     xrapm_v2_df = load_xrapm_v2()
+    linear_df   = load_linear_metrics()
 
     print(f"  Offensive archetypes: {len(off_df)}")
     print(f"  Defensive archetypes: {len(def_df)}")
+    print(f"  Linear metrics: {len(linear_df)}")
 
-    html = generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, team_map)
+    html = generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, team_map)
 
     os.makedirs("app", exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
