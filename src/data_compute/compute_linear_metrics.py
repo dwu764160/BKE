@@ -458,6 +458,19 @@ def compute_win_shares_bref(df, league_ctx):
     # =========================================================================
     # TOTAL WIN SHARES
     # =========================================================================
+    # DWS NORMALIZATION: Scale per season so total WS ≈ 1230
+    for season in df['season'].unique():
+        mask = df['season'] == season
+        total_ows = df.loc[mask, 'OWS'].sum()
+        total_dws = df.loc[mask, 'DWS'].sum()
+        target = 30 * 82 / 2  # 1230
+        if total_dws > 0:
+            dws_share = total_dws / max(total_ows + total_dws, 1)
+            target_dws = target * dws_share
+            scale = target_dws / total_dws
+            df.loc[mask, 'DWS'] = df.loc[mask, 'DWS'] * scale
+            print(f"  DWS norm {season}: {total_dws:.1f} -> {df.loc[mask, 'DWS'].sum():.1f} (scale {scale:.3f})")
+
     df['WS'] = df['OWS'] + df['DWS']
     
     # =========================================================================
@@ -904,14 +917,14 @@ def compute_bpm_bref(df):
     #    - Small bonus/penalty based on how much better/worse player is vs team avg
     #    - Captures individual impact beyond team context
     #
-    # Grid search optimized: AST_BIG=14, TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.06
+    # Grid search optimized: AST_BIG=18, TEAM_NET_SCALE=0.25, IND_NET_SCALE=0.25
     
     # Calculate AST per minute for big playmaker adjustment
     ast_per_min = df['AST'] / df['MIN'].replace(0, 1)
     
     # AST-based bonus for bigs: Position > 3 AND high AST rate (> 0.20 AST/min)
     # Only triggers for unique players like Jokić who are bigs with elite passing
-    AST_BIG_BONUS = 14.0
+    AST_BIG_BONUS = 18.0
     ast_big_adjustment = np.where(
         (position > 3.0) & (ast_per_min > 0.20),
         AST_BIG_BONUS * (position - 3.0) * (ast_per_min - 0.10),
@@ -922,13 +935,14 @@ def compute_bpm_bref(df):
     # This gives all players on good teams a boost, all on bad teams a penalty
     # Scale: Boston (+9) gets +2.25, Washington (-9) gets -2.25
     TEAM_NET_SCALE = 0.25
-    team_net_adjustment = TEAM_NET_SCALE * df['team_avg_net_rtg']
+    _team_net = df['TEAM_NET_RTG'].fillna(df['team_avg_net_rtg']) if 'TEAM_NET_RTG' in df.columns else df['team_avg_net_rtg']
+    team_net_adjustment = TEAM_NET_SCALE * _team_net
     
     # Individual on-court adjustment (how player differs from team average)
     # This captures individual impact beyond team context
     # Small scale since team adjustment captures most of the effect
-    IND_NET_SCALE = 0.06
-    individual_net_diff = df['NET_RTG'] - df['team_avg_net_rtg']
+    IND_NET_SCALE = 0.25
+    individual_net_diff = df['NET_RTG'] - _team_net
     individual_adjustment = IND_NET_SCALE * individual_net_diff
     
     # Combined NET_RTG adjustment
@@ -943,7 +957,7 @@ def compute_bpm_bref(df):
     
     # Final compression and offset
     COMPRESSION = 0.89
-    OFFSET = 0.60
+    OFFSET = 0.12
     
     df['BPM'] = adjusted_bpm * COMPRESSION + OFFSET
     

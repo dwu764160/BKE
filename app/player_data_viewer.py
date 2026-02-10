@@ -56,6 +56,20 @@ def load_xrapm_v2():
 def load_linear_metrics():
     return _load_parquet(f"{PROCESSED_DIR}/metrics_linear.parquet")
 
+def load_player_season_stats():
+    path = f"{HISTORICAL_DIR}/complete_player_season_stats.parquet"
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    df = pd.read_parquet(path)
+    if df.empty:
+        return df
+    df = df.copy()
+    if "PLAYER_ID" in df.columns:
+        df["player_id"] = df["PLAYER_ID"].astype(str)
+    if "SEASON" in df.columns:
+        df["SEASON"] = df["SEASON"].astype(str)
+    return df
+
 def load_team_map():
     path = f"{HISTORICAL_DIR}/teams.parquet"
     if not os.path.exists(path):
@@ -258,7 +272,7 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, team_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -275,6 +289,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
     xrapm_map    = build_record_map(xrapm_df,    ["player_id", "SEASON"], ["player_name", "season"])
     xrapm_v2_map = build_record_map(xrapm_v2_df, ["player_id", "SEASON"], ["season"])
     linear_map   = build_record_map(linear_df,   ["player_id", "SEASON"], ["player_name", "season"])
+    season_stats_map = build_record_map(season_stats_df, ["player_id", "SEASON"], ["PLAYER_NAME", "TEAM_ABBREVIATION", "season"])
 
     bios_map = {}
     if bios_df is not None and not bios_df.empty:
@@ -336,6 +351,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
             'xrapm': xrapm_map.get((pid, season), {}),
             'xrapm_v2': xrapm_v2_map.get((pid, season), {}),
             'linear': linear_map.get((pid, season), {}),
+            'season_stats': season_stats_map.get((pid, season), {}),
         }
         details[key] = detail
 
@@ -517,6 +533,19 @@ var ptCols={
 
 function eBadge(t){if(!t)return '';var c=t==='Elite'?'elite':t==='High'?'high':t==='Low'?'low':'avg';return '<span class="eff-badge '+c+'">'+t+'</span>';}
 function fs(v,s){if(v===null||v===undefined)return '<span class="na">&mdash;</span>';return v+(s||'');}
+function fp(v){
+    if(v===null||v===undefined||v==='')return null;
+    var num=Number(v);
+    if(!isFinite(num))return String(v);
+    if(Math.abs(num)<1.5)num=num*100;
+    return num.toFixed(1)+'%';
+}
+function perGame(val,gp){
+    if(val===null||val===undefined||gp===null||gp===undefined||gp===0)return null;
+    var num=Number(val)/Number(gp);
+    if(!isFinite(num))return null;
+    return Number(num.toFixed(2));
+}
 function fv(v){
   if(v===null||v===undefined||v==='')return '&mdash;';
   if(typeof v==='number'){if(Number.isInteger(v))return v.toString();var a=Math.abs(v);if(a>=100)return v.toFixed(1);if(a>=10)return v.toFixed(2);return v.toFixed(3);}
@@ -634,8 +663,18 @@ function openModal(key){
   var ra=d.rapm||{};
   var xr=d.xrapm||{};
   var ln=d.linear||{};
+    var ss=d.season_stats||{};
+    var am=d.archetype_model||{};
+    var gp=ps.GP||ss.GP||null;
   function add(l,v){if(v!==null&&v!==undefined&&v!=='')hl.push({label:l,value:v});}
-  add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);add('MPG',p.mpg);
+    add('MPG',p.mpg);add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);
+    add('TOV/G',perGame(ps.TOV,gp));add('STL/G',perGame(ps.STL,gp));add('BLK/G',perGame(ps.BLK,gp));
+    add('FG%',fp(ss.FG_PCT!=null?ss.FG_PCT:am.FG_PCT));
+    add('3P%',fp(ss.FG3_PCT!=null?ss.FG3_PCT:am.FG3_PCT));
+    add('FT%',fp(ss.FT_PCT!=null?ss.FT_PCT:am.FT_PCT));
+    add('PF/G',perGame(ps.PF,gp));
+    add('DD',ss.DD2);add('TD',ss.TD3);
+    add('+/-/G',perGame(ss.PLUS_MINUS,gp));
 
   var adv=[];
   function addAdv(l,v){if(v!==null&&v!==undefined&&v!=='')adv.push({label:l,value:v});}
@@ -752,12 +791,14 @@ def main():
     xrapm_df    = load_xrapm()
     xrapm_v2_df = load_xrapm_v2()
     linear_df   = load_linear_metrics()
+    season_stats_df = load_player_season_stats()
 
     print(f"  Offensive archetypes: {len(off_df)}")
     print(f"  Defensive archetypes: {len(def_df)}")
     print(f"  Linear metrics: {len(linear_df)}")
+    print(f"  Season stats: {len(season_stats_df)}")
 
-    html = generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, team_map)
+    html = generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map)
 
     os.makedirs("app", exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
