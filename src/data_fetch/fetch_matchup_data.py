@@ -248,19 +248,22 @@ def compute_matchup_versatility(rollup_df: pd.DataFrame) -> pd.DataFrame:
     if rollup_df.empty:
         return pd.DataFrame()
     
+    # Filter out TOTAL rows — only keep G, F, C position breakdowns
+    pos_df = rollup_df[rollup_df['POSITION'].isin(['G', 'F', 'C'])].copy()
+    
     # Group by defender
     versatility = []
     
-    for (def_id, season), group in rollup_df.groupby(['DEF_PLAYER_ID', 'SEASON']):
+    for (def_id, season), group in pos_df.groupby(['DEF_PLAYER_ID', 'SEASON']):
         positions = group['POSITION'].unique()
         pct_by_pos = group.groupby('POSITION')['PERCENT_OF_TIME'].sum()
         
-        # Normalize percentages
+        # Normalize percentages so G+F+C = 1.0
         total_pct = pct_by_pos.sum()
         if total_pct > 0:
             pct_by_pos = pct_by_pos / total_pct
         
-        # Shannon entropy for versatility
+        # Shannon entropy for versatility (over G/F/C only)
         entropy = -sum(p * np.log2(p + 1e-10) for p in pct_by_pos if p > 0)
         max_entropy = np.log2(len(pct_by_pos)) if len(pct_by_pos) > 1 else 1
         normalized_entropy = entropy / max_entropy if max_entropy > 0 else 0
@@ -268,12 +271,21 @@ def compute_matchup_versatility(rollup_df: pd.DataFrame) -> pd.DataFrame:
         # Switch score (1 = perfectly even, 0 = single position)
         switch_score = normalized_entropy
         
-        # Primary position
+        # Primary position defended (G, F, or C — not TOTAL)
         primary_pos = pct_by_pos.idxmax() if not pct_by_pos.empty else 'Unknown'
         
-        # Total matchup minutes and possessions
-        total_min = group['MATCHUP_MIN'].sum()
-        total_poss = group['PARTIAL_POSS'].sum()
+        # Also get TOTAL row for minutes/poss if present
+        total_rows = rollup_df[
+            (rollup_df['DEF_PLAYER_ID'] == def_id)
+            & (rollup_df['SEASON'] == season)
+            & (rollup_df['POSITION'] == 'TOTAL')
+        ]
+        if not total_rows.empty:
+            total_min = total_rows['MATCHUP_MIN'].sum()
+            total_poss = total_rows['PARTIAL_POSS'].sum()
+        else:
+            total_min = group['MATCHUP_MIN'].sum()
+            total_poss = group['PARTIAL_POSS'].sum()
         
         versatility.append({
             'DEF_PLAYER_ID': def_id,
