@@ -115,14 +115,49 @@ def main():
 
     # Merge with player ID map
     merged = pd.merge(salary_df, id_map, on="norm_name", how="left")
-    # Compute years in league: for each player, min season to current
-    merged["season_start"] = merged.groupby("PERSON_ID")["season"].transform("min")
-    merged["years_in_league"] = merged.apply(lambda row: int(row["season"].split("-")[0]) - int(row["season_start"].split("-")[0]) + 1 if pd.notnull(row["season_start"]) else None, axis=1)
+    # Map normalized team names to NBA TEAM_IDs
+    TEAM_NAME_TO_ID = {
+        "atlanta hawks": "1610612737",
+        "boston celtics": "1610612738",
+        "brooklyn nets": "1610612751",
+        "charlotte hornets": "1610612766",
+        "chicago bulls": "1610612741",
+        "cleveland cavaliers": "1610612739",
+        "dallas mavericks": "1610612742",
+        "denver nuggets": "1610612743",
+        "detroit pistons": "1610612765",
+        "golden state warriors": "1610612744",
+        "houston rockets": "1610612745",
+        "indiana pacers": "1610612754",
+        "la clippers": "1610612746",
+        "los angeles clippers": "1610612746",
+        "los angeles lakers": "1610612747",
+        "memphis grizzlies": "1610612763",
+        "miami heat": "1610612748",
+        "milwaukee bucks": "1610612749",
+        "minnesota timberwolves": "1610612750",
+        "new orleans pelicans": "1610612740",
+        "new york knicks": "1610612752",
+        "oklahoma city thunder": "1610612760",
+        "orlando magic": "1610612753",
+        "philadelphia 76ers": "1610612755",
+        "phoenix suns": "1610612756",
+        "portland trail blazers": "1610612757",
+        "sacramento kings": "1610612758",
+        "san antonio spurs": "1610612759",
+        "toronto raptors": "1610612761",
+        "utah jazz": "1610612762",
+        "washington wizards": "1610612764"
+    }
+    def get_team_id(team_name):
+        norm = re.sub(r"[^a-z0-9 ]", "", str(team_name).lower()) if pd.notnull(team_name) else None
+        return TEAM_NAME_TO_ID.get(norm, None)
+    merged["team_id"] = merged["team"].apply(get_team_id)
 
     # Write one parquet file per season
     os.makedirs(os.path.dirname(OUTPUT_PARQUET), exist_ok=True)
     for season, group in merged.groupby("season"):
-        out = group[["PERSON_ID", "DISPLAY_FIRST_LAST", "team", "years_in_league", "season", "salary"]].rename(columns={
+        out = group[["PERSON_ID", "DISPLAY_FIRST_LAST", "team", "team_id", "season", "salary"]].rename(columns={
             "PERSON_ID": "player_id",
             "DISPLAY_FIRST_LAST": "player_name"
         })
