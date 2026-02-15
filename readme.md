@@ -61,7 +61,9 @@ python3 src/data_compute/compute_linear_metrics.py
 python3 src/data_compute/compute_advanced_metrics.py
 python3 src/data_compute/compute_player_profiles.py
 python3 src/data_compute/compute_player_archetypes.py
-# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.2 role competition: deterministic size-band, anchor eligibility, 0.05 margin rule)
+# Position estimate from lineup height-rank (PG/SG/SF/PF/C shares)
+python3 src/data_compute/compute_position_estimate.py
+# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.3 role competition: deterministic size-band, no Rotational Big, 0.05 margin on guard/wing)
 python3 src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
@@ -88,7 +90,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches
-- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
+- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
 - `data/tracking/` — tracking-derived JSONs
 
 # Notes

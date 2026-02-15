@@ -32,6 +32,10 @@ def _load_parquet(path):
     if df.empty:
         return df
     df = df.copy()
+    if "PLAYER_ID" in df.columns and "player_id" not in df.columns:
+        df["player_id"] = df["PLAYER_ID"].astype(str)
+    if "SEASON" in df.columns:
+        df["SEASON"] = df["SEASON"].astype(str)
     if "player_id" in df.columns:
         df["player_id"] = df["player_id"].astype(str)
     if "season" in df.columns:
@@ -43,6 +47,33 @@ def load_player_profiles():
 
 def load_player_bios():
     return _load_parquet(f"{HISTORICAL_DIR}/players.parquet")
+
+def load_position_estimates():
+    files = []
+    try:
+        files = sorted([
+            os.path.join(PROCESSED_DIR, f)
+            for f in os.listdir(PROCESSED_DIR)
+            if f.startswith("player_position_estimates_") and f.endswith(".parquet")
+        ])
+    except Exception:
+        files = []
+
+    if files:
+        frames = []
+        for path in files:
+            df = _load_parquet(path)
+            if df.empty:
+                continue
+            if "SEASON" not in df.columns:
+                season = os.path.basename(path).replace("player_position_estimates_", "").replace(".parquet", "")
+                df["SEASON"] = season
+            frames.append(df)
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+
+    # Backward compatibility with legacy single-file output
+    return _load_parquet(f"{PROCESSED_DIR}/player_position_estimates.parquet")
 
 def load_rapm():
     return _load_parquet(f"{PROCESSED_DIR}/player_rapm.parquet")
@@ -293,7 +324,7 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -317,6 +348,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
     xrapm_v2_map = build_record_map(xrapm_v2_df, ["player_id", "SEASON"], ["season"])
     linear_map   = build_record_map(linear_df,   ["player_id", "SEASON"], ["player_name", "season"])
     season_stats_map = build_record_map(season_stats_df, ["player_id", "SEASON"], ["PLAYER_NAME", "TEAM_ABBREVIATION", "season"])
+    pos_est_map = build_record_map(pos_est_df, ["player_id", "SEASON"], [])
 
     bios_map = {}
     if bios_df is not None and not bios_df.empty:
@@ -344,6 +376,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
             continue
         pid, season = str(row['player_id']), row['SEASON']
         key = f"{pid}::{season}"
+        pos_est = pos_est_map.get((pid, season), {})
 
         card = {
             'key': key,
@@ -364,11 +397,25 @@ def generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm
             'mpg': round(row.get('MPG', 0), 1),
             'eff_tier': row.get('efficiency_tier', ''),
             'at_rim': round(row.get('AT_RIM_FREQ', 0) * 100, 1) if pd.notna(row.get('AT_RIM_FREQ')) else None,
+            'position_primary': pos_est.get('primary_position_estimate') or pos_est.get('primary_position') or '',
         }
         cards.append(card)
+        profile = dict(bios_map.get(pid, {}))
+        profile["position"] = (
+            pos_est.get("primary_position_estimate")
+            or pos_est.get("primary_position")
+            or profile.get("position")
+        )
+        for col in [
+            "position_estimate_method",
+            "pct_pg", "pct_sg", "pct_sf", "pct_pf", "pct_c",
+            "pct_guards_own", "pct_forwards_own", "pct_centers_own",
+        ]:
+            if col in pos_est:
+                profile[col] = pos_est.get(col)
 
         detail = {
-            'profile': bios_map.get(pid, {}),
+            'profile': profile,
             'off_reasons': get_offensive_reasons(row),
             'def_reasons': get_defensive_reasons(row),
             'playtypes': get_playtype_rankings(row),
@@ -420,6 +467,9 @@ input,select{{padding:10px 15px;border:1px solid #333;border-radius:8px;backgrou
 input{{width:300px}}select{{min-width:180px}}
 .sort-btn{{padding:8px 14px;border:1px solid #444;border-radius:8px;background:#16213e;color:#aaa;cursor:pointer;font-size:13px}}
 .sort-btn.active{{border-color:#00d9ff;color:#00d9ff}}
+.chip-row{{display:flex;gap:8px;flex-wrap:wrap;margin:-6px 0 16px 0}}
+.chip-btn{{padding:6px 12px;border:1px solid #2d3e70;border-radius:999px;background:#16213e;color:#8aa0d6;cursor:pointer;font-size:12px}}
+.chip-btn.active{{border-color:#00d9ff;color:#00d9ff}}
 .reset-btn{{padding:8px 14px;border:1px solid #e63946;border-radius:8px;background:#16213e;color:#e63946;cursor:pointer;font-size:13px;font-weight:600;transition:background .2s,color .2s}}
 .reset-btn:hover{{background:#e63946;color:#fff}}
 .stats-bar{{display:flex;gap:20px;margin-bottom:20px;color:#888}}
@@ -513,6 +563,15 @@ input{{width:300px}}select{{min-width:180px}}
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
 </div>
 
+<div class="chip-row" id="positionChips">
+    <button class="chip-btn active" data-pos="" onclick="setPositionChip(this)">All Positions</button>
+    <button class="chip-btn" data-pos="Guard" onclick="setPositionChip(this)">Guard</button>
+    <button class="chip-btn" data-pos="Guard-Forward" onclick="setPositionChip(this)">Guard-Forward</button>
+    <button class="chip-btn" data-pos="Forward" onclick="setPositionChip(this)">Forward</button>
+    <button class="chip-btn" data-pos="Forward-Center" onclick="setPositionChip(this)">Forward-Center</button>
+    <button class="chip-btn" data-pos="Center" onclick="setPositionChip(this)">Center</button>
+</div>
+
 <div class="stats-bar"><span id="totalCount">Loading...</span></div>
 <div id="loadBar" class="load-wrap active" aria-live="polite">
   <div class="load-label" id="loadLabel">Preparing...</div>
@@ -539,6 +598,7 @@ input{{width:300px}}select{{min-width:180px}}
 /* ---- card index (small, parsed immediately) ---- */
 var cards=__CARDS_JSON__;
 var curSort='ppg';
+var curPos='';
 var CHUNK=80;
 var fData=[],rendered=0,gen=0;
 var _detailCache=null;  /* lazy-parsed on first modal open */
@@ -670,6 +730,34 @@ function renderReasons(off,def){
   return h;
 }
 
+function renderPositionEstimate(pr){
+    if(!pr)return '';
+    var hasShares = pr.pct_pg!=null || pr.pct_sg!=null || pr.pct_sf!=null || pr.pct_pf!=null || pr.pct_c!=null;
+    if(!hasShares && !pr.position)return '';
+
+    function pct(v){
+        if(v===null||v===undefined||v==='')return '&mdash;';
+        var n=Number(v);
+        if(!isFinite(n))return '&mdash;';
+        if(Math.abs(n)<=1.5)n=n*100;
+        return n.toFixed(1)+'%';
+    }
+
+    var method = pr.position_estimate_method ? '<div class="reason">Method: '+pr.position_estimate_method+'</div>' : '';
+    var shares = '<div class="sg">'
+        +'<div class="sc"><div class="lb">PG</div><div class="vl">'+pct(pr.pct_pg)+'</div></div>'
+        +'<div class="sc"><div class="lb">SG</div><div class="vl">'+pct(pr.pct_sg)+'</div></div>'
+        +'<div class="sc"><div class="lb">SF</div><div class="vl">'+pct(pr.pct_sf)+'</div></div>'
+        +'<div class="sc"><div class="lb">PF</div><div class="vl">'+pct(pr.pct_pf)+'</div></div>'
+        +'<div class="sc"><div class="lb">C</div><div class="vl">'+pct(pr.pct_c)+'</div></div>'
+        +'</div>';
+
+    return '<div class="msec"><h3>Position Estimate</h3>'
+        +'<div class="reasons"><div class="reason">Primary: '+(pr.position||'Unknown')+'</div>'+method+'</div>'
+        +shares
+        +'</div>';
+}
+
 function openModal(key){
   /* find the card record for basic info */
   var p=null;for(var i=0;i<cards.length;i++){if(cards[i].key===key){p=cards[i];break;}}
@@ -723,6 +811,7 @@ function openModal(key){
   document.getElementById('mBody').innerHTML=
     (hl.length?'<div class="msec"><h3>Season Highlights</h3><h4 class="msec-sub">General Box Score</h4>'+renderSG(hl)+(adv.length?'<h4 class="msec-sub">Advanced Statistics</h4>'+renderSG(adv):'')+'</div>':'')
     +arch
+        +renderPositionEstimate(pr)
     +renderPT(d.playtypes)
     +renderReasons(d.off_reasons,d.def_reasons)
     +renderKV('Profile',pr)
@@ -760,11 +849,21 @@ function setSort(el){
   document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});
   el.classList.add('active');curSort=el.dataset.sort;filterPlayers();
 }
+function setPositionChip(el){
+    document.querySelectorAll('.chip-btn').forEach(function(b){b.classList.remove('active');});
+    el.classList.add('active');
+    curPos=el.dataset.pos||'';
+    filterPlayers();
+}
 function resetFilters(){
   document.getElementById('search').value='';
   document.getElementById('offFilter').value='';
   document.getElementById('defFilter').value='';
   document.getElementById('seasonFilter').value='';
+    curPos='';
+    document.querySelectorAll('.chip-btn').forEach(function(b){b.classList.remove('active');});
+    var defaultChip=document.querySelector('.chip-btn[data-pos=""]');
+    if(defaultChip)defaultChip.classList.add('active');
   document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});
   document.querySelector('.sort-btn[data-sort="ppg"]').classList.add('active');
   curSort='ppg';filterPlayers();
@@ -781,6 +880,7 @@ function filterPlayers(){
       if(of&&p.off_archetype!==of)return false;
       if(df&&p.def_archetype!==df)return false;
       if(sn&&p.season!==sn)return false;
+            if(curPos&&p.position_primary!==curPos)return false;
       return true;
     });
     f.sort(function(a,b){return(b[curSort]!=null?b[curSort]:-999)-(a[curSort]!=null?a[curSort]:-999);});
@@ -813,6 +913,7 @@ def main():
     off_df, def_df = load_archetypes()
     profiles_df = load_player_profiles()
     bios_df     = load_player_bios()
+    pos_est_df  = load_position_estimates()
     team_map    = load_team_map()
     rapm_df     = load_rapm()
     xrapm_df    = load_xrapm()
@@ -822,10 +923,14 @@ def main():
 
     print(f"  Offensive archetypes: {len(off_df)}")
     print(f"  Defensive archetypes: {len(def_df)}")
+    print(f"  Position estimates: {len(pos_est_df)}")
     print(f"  Linear metrics: {len(linear_df)}")
     print(f"  Season stats: {len(season_stats_df)}")
 
-    html = generate_html(off_df, def_df, profiles_df, bios_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map)
+    html = generate_html(
+        off_df, def_df, profiles_df, bios_df, pos_est_df,
+        rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map,
+    )
 
     os.makedirs("app", exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:

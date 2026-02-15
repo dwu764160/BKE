@@ -1,6 +1,11 @@
 """
 src/data_compute/compute_defensive_archetypes_v2.py
-Role-based defensive archetype classification (v3.2).
+Role-based defensive archetype classification (v3.3).
+
+v3.3 Key Changes from v3.2:
+    - Removed Rotational Big archetype from assignment path
+    - Big-band players now route to Rim Protector, Dropping Big, or Mobile Big
+    - Margin fallback is retained for wing/guard rotational role only
 
 v3.2 Key Changes from v3.1:
     - Replaced hard-threshold routing with confidence-scored role selection
@@ -10,7 +15,7 @@ v3.2 Key Changes from v3.1:
     - Rotational Defender / Rotational Big now positive identity roles (not pure leftovers)
     - Defensive effectiveness/fit retained as post-classification overlay only
 
-Defensive Archetype Definitions (v3.2 — Confidence-Scored Decision Flow):
+Defensive Archetype Definitions (v3.3 — Confidence-Scored Decision Flow):
 =============================================================
 Primary Roles:
     1. POA Defender       — High ball pressure + screen navigation guard specialist
@@ -21,8 +26,7 @@ Primary Roles:
     6. Dropping Big       — Deep-coverage interior big
     7. Mobile Big         — Switch-capable big without elite rim profile
     8. Rotational Defender — Help-side / generalist wing-guard role
-    9. Rotational Big     — Generalist big role
- 10. Low-Activity Defender — Low-engagement behavior profile
+    9. Low-Activity Defender — Low-engagement behavior profile
 """
 
 import warnings
@@ -212,22 +216,29 @@ def load_hustle_stats() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def load_player_bios() -> pd.DataFrame:
-    """Load player bio data for own-position and height.
-    
-    players.parquet columns: player_id, full_name, primary_position,
-    height_inches, weight_lbs, ...
-    primary_position values: Guard, Guard-Forward, Forward, Forward-Guard,
-    Forward-Center, Center-Forward, Center
-    """
-    path = HISTORICAL_DIR / "players.parquet"
+def load_position_estimates() -> pd.DataFrame:
+    """Load season-level position estimate profiles (PG/SG/SF/PF/C shares)."""
+    season_files = sorted(OUTPUT_DIR.glob("player_position_estimates_*.parquet"))
+    frames = []
+
+    for path in season_files:
+        df = pd.read_parquet(path)
+        if "SEASON" not in df.columns:
+            season = path.stem.replace("player_position_estimates_", "")
+            df["SEASON"] = season
+        frames.append(df)
+
+    if frames:
+        merged = pd.concat(frames, ignore_index=True)
+        merged = merged.rename(columns={"player_id": "PLAYER_ID"})
+        return merged
+
+    # Backward compatibility with legacy single-file output
+    path = OUTPUT_DIR / "player_position_estimates.parquet"
     if not path.exists():
         return pd.DataFrame()
     df = pd.read_parquet(path)
-    df = df.rename(columns={
-        "player_id": "PLAYER_ID",
-        "full_name": "PLAYER_NAME",
-    })
+    df = df.rename(columns={"player_id": "PLAYER_ID"})
     return df
 
 
@@ -257,7 +268,7 @@ def compute_features(
     speed_dist: pd.DataFrame,
     reb_tracking: pd.DataFrame,
     hustle: pd.DataFrame,
-    bios: pd.DataFrame,
+    position_estimates: pd.DataFrame,
     season: str,
 ) -> pd.DataFrame:
     vers = versatility[versatility["SEASON"] == season].copy() if len(versatility) > 0 else pd.DataFrame()
@@ -269,8 +280,13 @@ def compute_features(
     spd = speed_dist[speed_dist["SEASON"] == season].copy() if len(speed_dist) > 0 else pd.DataFrame()
     reb = reb_tracking[reb_tracking["SEASON"] == season].copy() if len(reb_tracking) > 0 else pd.DataFrame()
     hst = hustle[hustle["SEASON"] == season].copy() if len(hustle) > 0 else pd.DataFrame()
+    pos_est = (
+        position_estimates[position_estimates["SEASON"] == season].copy()
+        if len(position_estimates) > 0 and "SEASON" in position_estimates.columns
+        else pd.DataFrame()
+    )
 
-    for frame in [vers, diff, def_trk, trk_def, bx, prof, spd, reb, hst]:
+    for frame in [vers, diff, def_trk, trk_def, bx, prof, spd, reb, hst, pos_est]:
         normalize_player_id(frame)
 
     if bx.empty:
@@ -346,15 +362,21 @@ def compute_features(
         hustle_cols = [c for c in hustle_cols if c in hst.columns]
         features = features.merge(hst[hustle_cols], on="PLAYER_ID", how="left")
 
-    # Merge player bios (own position, height)
-    if not bios.empty:
-        bios_c = bios.copy()
-        normalize_player_id(bios_c)
-        bio_cols = ["PLAYER_ID", "primary_position", "height_inches"]
-        bio_cols = [c for c in bio_cols if c in bios_c.columns]
-        if bio_cols:
+    # Merge season-level position estimates (own-position usage and height)
+    if not pos_est.empty:
+        est_cols = [
+            "PLAYER_ID",
+            "primary_position",
+            "primary_position_estimate",
+            "height_inches",
+            "pct_pg", "pct_sg", "pct_sf", "pct_pf", "pct_c",
+            "pct_guards_own", "pct_forwards_own", "pct_centers_own",
+            "position_estimate_method",
+        ]
+        est_cols = [c for c in est_cols if c in pos_est.columns]
+        if est_cols:
             features = features.merge(
-                bios_c[bio_cols].drop_duplicates(subset=["PLAYER_ID"]),
+                pos_est[est_cols].drop_duplicates(subset=["PLAYER_ID"]),
                 on="PLAYER_ID", how="left",
             )
 
@@ -439,25 +461,48 @@ def _own_position_group(pos_str):
 
 
 def _classify_size_band(row):
-    """Deterministic size band routing (v3.2 role competition spec)."""
+    """Size-band routing using own-position distributions + height priors."""
     height = row.get("height_inches", 78)
-    pg_share = row.get("pct_guards", 0.33)
-    c_share = row.get("pct_centers", 0.33)
+    guard_share = row.get("pct_guards_own", row.get("pct_guards", 0.33))
+    forward_share = row.get("pct_forwards_own", row.get("pct_forwards", 0.33))
+    center_share = row.get("pct_centers_own", row.get("pct_centers", 0.33))
+    primary_est = str(row.get("primary_position_estimate", row.get("primary_position", ""))).strip()
 
-    if c_share >= 0.50 or height >= 81:
+    if primary_est in ("Center", "Forward-Center", "Center-Forward") and (center_share >= 0.30 or height >= 80):
         return "Big"
-    if pg_share >= 0.60:
+    if center_share >= 0.55:
+        return "Big"
+    if center_share >= 0.40 and height >= 80:
+        return "Big"
+
+    if primary_est in ("Guard", "Guard-Forward", "Forward-Guard") and (guard_share >= 0.35 or height <= 78):
         return "Guard"
+    if guard_share >= 0.62:
+        return "Guard"
+    if guard_share >= 0.55 and center_share <= 0.20 and height <= 79:
+        return "Guard"
+
+    if forward_share >= 0.45:
+        return "Wing"
+    if height >= 82:
+        return "Big"
+    if height <= 76:
+        return "Guard"
+    if center_share > guard_share and center_share >= 0.33:
+        return "Big"
+    if guard_share > center_share and guard_share >= 0.33:
+        return "Guard"
+
     return "Wing"
 
 
-def _pick_with_margin(scores: dict[str, float], rotational_role: str):
-    """Pick role by max score; if separation is small, route to rotational role."""
+def _pick_with_margin(scores: dict[str, float], rotational_role: str | None):
+    """Pick role by max score; if separation is small, optionally route to rotational role."""
     ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     top_role, top_score = ordered[0]
     second_score = ordered[1][1] if len(ordered) > 1 else 0.0
     margin = top_score - second_score
-    if margin < MARGIN_RULE_GAP:
+    if rotational_role and margin < MARGIN_RULE_GAP:
         return rotational_role, top_score, second_score, margin
     return top_role, top_score, second_score, margin
 
@@ -519,7 +564,7 @@ def _pick_secondary(archetype, row):
             return "Hustler"
         return "Switchable"
 
-    if archetype in ("Rotational Big", "Rotational Defender"):
+    if archetype == "Rotational Defender":
         if help_idx >= 0.70:
             return "Helper"
         if vpctl >= 0.70:
@@ -577,7 +622,7 @@ def compute_defensive_fit(row, archetype):
 
 
 def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
-    """Role-only defensive classification (v3.2)."""
+    """Role-only defensive classification (v3.3)."""
     df = features.copy()
     qualified = df[(df["MIN"] >= MIN_MINUTES) & (df["GP"] >= MIN_GP)].copy()
     unqualified = df[(df["MIN"] < MIN_MINUTES) | (df["GP"] < MIN_GP)].copy()
@@ -605,10 +650,17 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     qualified["pct_guards"] = safe_col(qualified, "pct_guards", 0.33)
     qualified["pct_forwards"] = safe_col(qualified, "pct_forwards", 0.33)
     qualified["pct_centers"] = safe_col(qualified, "pct_centers", 0.33)
+    qualified["pct_guards_own"] = safe_col(qualified, "pct_guards_own", np.nan).fillna(qualified["pct_guards"])
+    qualified["pct_forwards_own"] = safe_col(qualified, "pct_forwards_own", np.nan).fillna(qualified["pct_forwards"])
+    qualified["pct_centers_own"] = safe_col(qualified, "pct_centers_own", np.nan).fillna(qualified["pct_centers"])
     if "primary_position" not in qualified.columns:
         qualified["primary_position"] = "Unknown"
     else:
         qualified["primary_position"] = qualified["primary_position"].fillna("Unknown")
+    if "primary_position_estimate" not in qualified.columns:
+        qualified["primary_position_estimate"] = qualified["primary_position"]
+    else:
+        qualified["primary_position_estimate"] = qualified["primary_position_estimate"].fillna(qualified["primary_position"])
     qualified["height_inches"] = safe_col(qualified, "height_inches", 78)
 
     # Hustle stat defaults
@@ -937,29 +989,23 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
                 + 0.15 * help_activity
                 + 0.10 * rim_protection
             )
-            versatile_big_score = (
-                0.30 * switch_index
-                + 0.25 * matchup_diversity
-                + 0.20 * help_activity
-                + 0.15 * rim_protection
-                + 0.10 * ball_pressure
-            )
-            rotational_big_score = 1 - np.std([rim_protection, switch_index, help_activity])
 
+            # v3.3: Bigs compete only among true big roles.
+            # Keep anchor-gated primary entries, then fall back to full 3-role competition.
             if rim_protection >= 0.65:
                 eligible_scores["Rim Protector"] = rim_score
             if drop_coverage >= 0.65 and switch_index <= 0.60:
                 eligible_scores["Dropping Big"] = drop_score
             if switch_index >= 0.65 and drop_coverage <= 0.75:
                 eligible_scores["Mobile Big"] = mobile_score
-            if matchup_diversity >= 0.70 and max_position_share <= 0.55:
-                eligible_scores["Versatile Defender"] = versatile_big_score
-            if 0.40 <= rim_protection <= 0.75 and 0.40 <= switch_index <= 0.75:
-                eligible_scores["Rotational Big"] = rotational_big_score
+            if not eligible_scores:
+                eligible_scores["Rim Protector"] = rim_score
+                eligible_scores["Dropping Big"] = drop_score
+                eligible_scores["Mobile Big"] = mobile_score
             if engagement <= 0.30:
                 eligible_scores["Low-Activity Defender"] = low_activity_score
 
-            rotational_role = "Rotational Big"
+            rotational_role = None
 
         if not eligible_scores:
             eligible_scores[rotational_role] = 0.50
@@ -1110,7 +1156,7 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 70)
-    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.2")
+    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.3")
     print("  Confidence-Scored Decision Framework + Margin Rule")
     print("=" * 70)
 
@@ -1122,14 +1168,14 @@ def main():
     speed_dist = load_speed_distance()
     reb_tracking = load_tracking_rebounding()
     hustle = load_hustle_stats()
-    bios = load_player_bios()
+    position_estimates = load_position_estimates()
 
     print(f"  Versatility: {len(versatility)} records")
     print(f"  Difficulty:  {len(difficulty)} records")
     print(f"  Box scores:  {len(box)} records")
     print(f"  Profiles:    {len(profiles)} records")
     print(f"  Hustle:      {len(hustle)} records")
-    print(f"  Bios:        {len(bios)} records")
+    print(f"  Position est:{len(position_estimates)} records")
 
     all_results = []
 
@@ -1139,7 +1185,7 @@ def main():
         trk_def = load_tracking_defense(season)
         features = compute_features(
             versatility, difficulty, def_tracking, trk_def,
-            box, profiles, speed_dist, reb_tracking, hustle, bios, season,
+            box, profiles, speed_dist, reb_tracking, hustle, position_estimates, season,
         )
         if features.empty:
             continue
@@ -1168,7 +1214,7 @@ def main():
     print("\n=== VALIDATION (Known Defenders 2024-25) ===")
     known = [
         ("Jrue Holiday", "POA Defender"),
-        ("Draymond Green", "Versatile Defender or Mobile Big or Rotational Big"),
+        ("Draymond Green", "Versatile Defender or Mobile Big"),
         ("Rudy Gobert", "Rim Protector"),
         ("Anthony Davis", "Rim Protector"),
         ("Herbert Jones", "Wing Stopper or Versatile"),

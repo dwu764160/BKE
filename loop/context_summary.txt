@@ -6,6 +6,13 @@ Purpose
 -------
 - This file captures the complete, project-relevant context from recent development on the offensive archetypes system (v1 → v2 → v3 → v4), viewer updates, data artifacts, and validation runs. Keep this file updated whenever you or an agent encounter important facts, thresholds, decisions, or outputs that affect classification logic, viewer behavior, or downstream evaluation.
 
+Recent Update (2026-02-15)
+--------------------------
+- `app/player_data_viewer.py` now normalizes `PLAYER_ID` → `player_id` when loading parquet files, which fixed missing modal Position Estimate percentages (`pct_pg/pct_sg/pct_sf/pct_pf/pct_c`) that were previously rendering as `—`.
+- Added position filter chips in the player data UI (`All Positions`, `Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`) with client-side state in JS (`curPos`) integrated into `filterPlayers()`.
+- `resetFilters()` now resets position chips to default (`All Positions`) in addition to existing search/dropdown/sort reset behavior.
+- Regenerated `app/player_data.html`; detail payload now includes populated position estimate percentages.
+
 Important Paths
 ---------------
 - Workspace root: /mnt/c/Users/danie/OneDrive/Documents/BKE
@@ -376,3 +383,58 @@ v4.3 changes (applied 2026-02-07):
 		- Low-Activity Defender: `18 -> 37` (`+105.56%`)
 		- Rotational Big: `75 -> 41` (`-45.33%`)
 		- Mobile Big: `33 -> 1` (`-96.97%`)
+
+- 2026-02-14 — Defensive archetypes v3.3 (remove Rotational Big)
+	- Files changed: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`, `data/processed/defensive_archetypes_v2.parquet`, `data/processed/defensive_archetypes_v2.csv`, `data/processed/defensive_archetypes_v2_impact_report.csv`, `data/processed/defensive_archetypes_v2_impact_report.txt`
+	- Summary:
+		- Removed `Rotational Big` from assignment path.
+		- Big-band players now classify via big-role competition only (`Rim Protector`, `Dropping Big`, `Mobile Big`), with low-activity override retained.
+		- Margin fallback remains active for `Rotational Defender` in guard/wing bands.
+	- Repro commands:
+		```bash
+		.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+		```
+	- Observed overall distribution (all qualified seasons):
+		- Rotational Defender: 341
+		- Low-Activity Defender: 287
+		- Rim Protector: 163
+		- Off-Ball Chaser: 159
+		- POA Defender: 131
+		- Wing Stopper: 40
+		- Mobile Big: 22
+		- Versatile Defender: 20
+		- Dropping Big: 16
+		- Rotational Big: 0
+
+- 2026-02-14 — Position estimate pipeline (lineup height ranking) + defensive size-band upgrade
+	- Files changed: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `readme.md`
+	- Summary:
+		- Added new compute stage to produce season-level position estimates from 5-man lineup height ordering on possessions.
+		- New output includes `pct_pg/pct_sg/pct_sf/pct_pf/pct_c` and grouped own-role shares (`pct_guards_own`, `pct_forwards_own`, `pct_centers_own`) per player-season.
+		- Added robust fallback for missing lineup coverage: bio-prior distribution from `primary_position`.
+		- Defensive archetype v2 now loads `data/processed/player_position_estimates.parquet` and uses own-position shares + height + estimated primary position for size-band routing.
+		- This replaces dependency on trivial `players.parquet` primary position for size-band decisions.
+	- Repro commands:
+		```bash
+		python3 src/data_compute/compute_position_estimate.py
+		python3 src/data_compute/compute_defensive_archetypes_v2.py
+		```
+	- Notes:
+		- Direct BRef scraping is currently blocked in this environment (Cloudflare 403), so the implementation uses an internal BRef-style lineup-ranking method.
+
+- 2026-02-14 — Position estimate output contract updated to per-season files + frontend display block
+	- Files changed: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `app/player_data_viewer.py`, `readme.md`
+	- Summary:
+		- `compute_position_estimate.py` now writes one output per season:
+			- `data/processed/player_position_estimates_2022-23.parquet/.csv`
+			- `data/processed/player_position_estimates_2023-24.parquet/.csv`
+			- `data/processed/player_position_estimates_2024-25.parquet/.csv`
+		- Kept combined compatibility artifact (`player_position_estimates.parquet/.csv`) for downstream safety.
+		- Defensive archetype loader now prioritizes seasonal files via glob and falls back to combined file.
+		- Frontend player data viewer now loads seasonal position estimate files and shows a dedicated modal section: **Position Estimate** with PG/SG/SF/PF/C percentages and estimate method.
+	- Repro commands:
+		```bash
+		python3 src/data_compute/compute_position_estimate.py
+		python3 src/data_compute/compute_defensive_archetypes_v2.py
+		python3 app/player_data_viewer.py
+		```

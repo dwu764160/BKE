@@ -1,10 +1,10 @@
-# Player Defensive Archetypes — v3.2 Logic Documentation
+# Player Defensive Archetypes — v3.3 Logic Documentation
 
 ## Overview
 
 This document is the authoritative reference for the defensive archetype classifier implemented in [src/data_compute/compute_defensive_archetypes_v2.py](src/data_compute/compute_defensive_archetypes_v2.py).
 
-The v3.2 system explicitly separates:
+The v3.3 system explicitly separates:
 - **Archetype (role):** what a player is asked to do on defense
 - **Impact (quality):** how well the player performs that role
 
@@ -12,17 +12,16 @@ Archetype assignment is **behavior-only**. Impact metrics (`defensive_effectiven
 
 ---
 
-## 1. Core v3.2 Changes
+## 1. Core v3.3 Changes
 
 - Removed impact from archetype assignment flow.
 - Replaced hard-threshold routing with a **3-layer confidence-scored decision system**:
   1. Size-band gating (Guard / Wing / Big)
   2. Behavioral role confidence scores (continuous, percentile-based)
   3. Margin stability rule (small top-2 gaps route to rotational role)
-- Added explicit fallback archetypes:
+- Added explicit rotational fallback archetype for perimeter bands only:
   - `Rotational Defender`
-  - `Rotational Big`
-- Added positive rotational identity via balanced-role profile (not pure leftover routing).
+- Removed `Rotational Big` from assignment; big-band players now classify as `Rim Protector`, `Dropping Big`, or `Mobile Big` (with `Low-Activity Defender` override still available).
 
 ---
 
@@ -51,7 +50,7 @@ The classifier ranks all qualified players per season for metrics like:
 `engagement_score`, `hustle_score`.
 
 ### Behavioral role indices (assignment-only)
-v3.2 computes percentile-ranked behavior axes:
+v3.3 computes percentile-ranked behavior axes:
 - `ball_pressure_index_pctl`
 - `screen_navigation_index_pctl`
 - `offball_navigation_index_pctl`
@@ -76,7 +75,7 @@ These indices are derived from assignment profile, tracking/hustle events, and m
 
 ## Layer 2: Size-Band Role Confidence Scoring
 
-Instead of "first gate passed wins", v3.2 computes eligible role confidence scores and assigns:
+Instead of "first gate passed wins", v3.3 computes eligible role confidence scores and assigns:
 
 `role = argmax(role_scores)`
 
@@ -102,16 +101,15 @@ Representative examples:
     - Anchors: `drop_coverage >= 0.65` and `switch_index <= 0.60`
   - `mobile_score = 0.40*switch_index + 0.20*mobility_metric + 0.15*matchup_diversity + 0.15*help_activity + 0.10*rim_protection`
     - Anchors: `switch_index >= 0.65` and `drop_coverage <= 0.75`
-  - `versatile_big_score = 0.30*switch_index + 0.25*matchup_diversity + 0.20*help_activity + 0.15*rim_protection + 0.10*ball_pressure`
-    - Anchors: `matchup_diversity >= 0.70` and `max_position_share <= 0.55`
-  - `rotational_big_score = 1 - std([rim_protection, switch_index, help_activity])`
-    - Anchors: `0.40 <= rim_protection <= 0.75` and `0.40 <= switch_index <= 0.75`
+  - Big-band assignment excludes `Rotational Big` in v3.3.
+  - If anchor-gated big roles are empty, fallback competition uses all three big roles: `Rim Protector`, `Dropping Big`, `Mobile Big`.
 
 Role assignment uses score competition among anchor-eligible roles only.
 
 ## Layer 3: Margin Stability Rule
 - Let `top_score` and `second_score` be the top two eligible role scores in-band.
-- If `top_score - second_score < 0.05`, assign rotational role (`Rotational Defender` or `Rotational Big`) when available.
+- If `top_score - second_score < 0.05`, assign `Rotational Defender` for guard/wing bands.
+- Big band does not use rotational fallback in v3.3.
 - This avoids brittle cliff effects and suppresses order bias from branch-style routing.
 
 ## Layer 4: Low-Activity Override
@@ -123,7 +121,7 @@ Role assignment uses score competition among anchor-eligible roles only.
 
 ---
 
-## 5. Archetypes (v3.2)
+## 5. Archetypes (v3.3)
 
 1. `POA Defender`
 2. `Wing Stopper`
@@ -133,8 +131,7 @@ Role assignment uses score competition among anchor-eligible roles only.
 6. `Dropping Big`
 7. `Mobile Big`
 8. `Rotational Defender`
-9. `Rotational Big`
-10. `Low-Activity Defender`
+9. `Low-Activity Defender`
 
 Secondary tags are behavior modifiers (e.g., `Screen Navigator`, `Ball Hawk`, `Switchable`, `Helper`, `Liability`).
 
@@ -155,7 +152,7 @@ Primary files:
 - `data/processed/defensive_archetypes_v2.parquet`
 - `data/processed/defensive_archetypes_v2.csv`
 
-Impact report files (baseline vs v3.2 run):
+Impact report files (baseline vs v3.3 run):
 - `data/processed/defensive_archetypes_v2_impact_report.csv`
 - `data/processed/defensive_archetypes_v2_impact_report.txt`
 
@@ -179,4 +176,4 @@ Key new/updated fields include:
 .venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
-Last updated: 2026-02-13 (v3.2)
+Last updated: 2026-02-14 (v3.3)

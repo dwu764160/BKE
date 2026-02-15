@@ -249,3 +249,78 @@ SOURCES_READ:
 
 NEXT_STEPS (explicit):
 - If further calibration is requested, first target `Mobile Big` recovery by rebalancing big-role anchors/weights without reintroducing hard caps.
+
+CONTEXT:
+- Task: Defensive archetypes v3.3 tuning prep; remove Rotational Big and keep only big-role identities.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+- Status: ✅ Completed. Rotational Big removed from assignment and outputs regenerated.
+
+FAILURE_REASON:
+- N/A (implementation completed successfully).
+
+ATTEMPTED_METHODS:
+- Updated big-band competition to use only `Rim Protector`, `Dropping Big`, `Mobile Big`.
+- Disabled rotational margin fallback for big band while retaining guard/wing rotational fallback.
+- Re-ran classifier and regenerated impact report files.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+
+NEXT_STEPS (explicit):
+- If requested, tune big-role anchor thresholds to rebalance `Mobile Big` vs `Rim Protector` split in v3.3.
+
+CONTEXT:
+- Task: Replace trivial defensive size-band routing inputs with realistic player position distribution estimates from lineup data.
+- Env: Linux, Python 3.10
+- Key files: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `readme.md`
+- Status: ✅ Implemented new position estimate stage and wired defensive archetypes to use it.
+
+FAILURE_REASON:
+- External BRef page ingestion unavailable in environment (Cloudflare 403 and fetch extraction failure).
+
+ATTEMPTED_METHODS:
+- Tried direct BRef fetch and metadata pages; blocked by anti-bot challenge.
+- Implemented internal BRef-style alternative using possession lineups:
+  - shortest->PG, 2nd->SG, 3rd->SF, 4th->PF, tallest->C.
+  - weighted by possession duration seconds.
+  - fallback distributions from bio primary position when lineup coverage is missing.
+- Updated defensive classifier loader to `player_position_estimates.parquet` and switched size-band routing to own-position shares + height + primary estimate.
+
+SOURCES_READ:
+- Local: `data/historical/possessions_clean_2024-25.parquet`
+- Local: `src/features/derive_possessions.py`
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `readme.md`
+- Web: `https://www.basketball-reference.com/robots.txt`
+
+NEXT_STEPS (explicit):
+- Run and validate:
+  1) `python3 src/data_compute/compute_position_estimate.py`
+  2) `python3 src/data_compute/compute_defensive_archetypes_v2.py`
+  3) review size-band and archetype distribution shifts for 2024-25.
+
+CONTEXT:
+- Task: Make position estimate outputs strictly per-season and surface PG/SG/SF/PF/C shares in frontend modal.
+- Env: Linux, Python 3.10
+- Key files: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `app/player_data_viewer.py`, `readme.md`
+- Status: ✅ Completed.
+
+FAILURE_REASON:
+- N/A (request was implementation scope expansion, not a runtime failure).
+
+ATTEMPTED_METHODS:
+- Updated position-estimate compute stage to save one parquet/csv per season plus combined compatibility artifact.
+- Updated defensive classifier loader to consume `player_position_estimates_{season}.parquet` via glob with fallback to combined file.
+- Updated frontend viewer loader to consume per-season files and added modal “Position Estimate” block with PG/SG/SF/PF/C percentages.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_position_estimate.py`
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `app/player_data_viewer.py`
+- Local: `readme.md`
+
+NEXT_STEPS (explicit):
+- Optional: add compact consistency audit in viewer generation to flag players where `primary_position_estimate` disagrees with legacy bio position.
