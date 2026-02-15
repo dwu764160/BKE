@@ -61,7 +61,7 @@ python3 src/data_compute/compute_linear_metrics.py
 python3 src/data_compute/compute_advanced_metrics.py
 python3 src/data_compute/compute_player_profiles.py
 python3 src/data_compute/compute_player_archetypes.py
-# Defensive archetypes: Use compute_defensive_archetypes_v2.py (supersedes compute_defensive_archetypes.py)
+# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.2 role competition: deterministic size-band, anchor eligibility, 0.05 margin rule)
 python3 src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
@@ -88,7 +88,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches
-- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, validation report
+- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
 - `data/tracking/` — tracking-derived JSONs
 
 # Notes

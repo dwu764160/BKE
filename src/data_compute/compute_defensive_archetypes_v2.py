@@ -1,29 +1,28 @@
 """
 src/data_compute/compute_defensive_archetypes_v2.py
-Score-based defensive archetype classification (v3.0).
+Role-based defensive archetype classification (v3.2).
 
-v3.0 Key Changes from v2.1:
-  - Positional feasibility masks (guards can't be bigs, bigs can't be POA)
-  - Versatile Defender added as 8th primary archetype
-  - Role repulsion terms (incompatible archetypes suppress each other)
-  - Fixed BLK_PCT (tracking DEF_RIM_FGA is per-game, box BLK must be per-game too)
-  - Integrated hustle stats (deflections, contested shots, loose balls, charges)
-  - Defensive fit (scheme suitability) + defensive effectiveness (results quality)
-  - POA Defender tightened with on-ball exclusivity signal
-  - Mobile Big tightened to require actual big evidence
-  - Confidence formula improved via masks + repulsion score separation
+v3.2 Key Changes from v3.1:
+    - Replaced hard-threshold routing with confidence-scored role selection
+    - Role is selected via argmax across eligible role confidence scores within size band
+    - Added margin rule for stability: if top-second < 0.05, assign rotational role
+    - Versatile Defender and Mobile Big now selected by confidence competition, not branch order
+    - Rotational Defender / Rotational Big now positive identity roles (not pure leftovers)
+    - Defensive effectiveness/fit retained as post-classification overlay only
 
-Defensive Archetype Definitions (v3.0 — Score-Based + Masks):
+Defensive Archetype Definitions (v3.2 — Confidence-Scored Decision Flow):
 =============================================================
-Primary Roles (7 scored + 1 filter):
-  1. POA Defender       — Guards primary ball handlers exclusively, high elite %
-  2. Wing Stopper       — Forward/wing assignments, strong results, specialist
-  3. Off-Ball Chaser    — High steals/deflections, roaming, lower difficulty
-  4. Versatile Defender — Switches across all positions effectively (no dominant share)
-  5. Rim Protector      — Elite blocks + rim FG suppression, anchors interior
-  6. Dropping Big       — Interior-only, low versatility, stays in paint
-  7. Mobile Big         — Versatile big who switches, must be an actual big
-  8. Low-Activity Defender — Engagement filter (bottom ~18% + poor results)
+Primary Roles:
+    1. POA Defender       — High ball pressure + screen navigation guard specialist
+    2. Wing Stopper       — Point-of-attack wing with switch support
+    3. Off-Ball Chaser    — Event-driven off-ball disruptor
+    4. Versatile Defender — Rare high-diversity switch defender
+    5. Rim Protector      — Paint deterrence / rim denial anchor
+    6. Dropping Big       — Deep-coverage interior big
+    7. Mobile Big         — Switch-capable big without elite rim profile
+    8. Rotational Defender — Help-side / generalist wing-guard role
+    9. Rotational Big     — Generalist big role
+ 10. Low-Activity Defender — Low-engagement behavior profile
 """
 
 import warnings
@@ -410,20 +409,15 @@ def compute_features(
 
 
 # =============================================================================
-# CLASSIFICATION (v3.0 — Score-Based + Masks + Repulsion)
+# CLASSIFICATION (v3.2 — Confidence-Scored Decision Framework)
 # =============================================================================
 
-SCORE_ROLES = [
-    "POA Defender", "Wing Stopper", "Off-Ball Chaser", "Versatile Defender",
-    "Rim Protector", "Dropping Big", "Mobile Big",
-]
 SCORE_COLS = [
     "poa_score", "wing_score", "chaser_score", "versatile_score",
     "rim_score", "drop_big_score", "mobile_big_score",
 ]
 
-LOW_ACTIVITY_ENGAGEMENT_GATE = 0.18
-LOW_ACTIVITY_RESULTS_GATE = 0.40
+MARGIN_RULE_GAP = 0.05
 
 
 def _own_position_group(pos_str):
@@ -444,128 +438,66 @@ def _own_position_group(pos_str):
     return "unknown"
 
 
-def _apply_positional_masks(scores, own_pos, pct_guards, pct_centers, height):
-    """Soft positional feasibility masks (multipliers, not hard gates)."""
-    masked = scores.copy()
+def _classify_size_band(row):
+    """Deterministic size band routing (v3.2 role competition spec)."""
+    height = row.get("height_inches", 78)
+    pg_share = row.get("pct_guards", 0.33)
+    c_share = row.get("pct_centers", 0.33)
 
-    is_short = height < 77   # < 6\'5"
-    is_tall = height >= 80    # >= 6\'8"
-
-    # Guards cannot be bigs
-    if own_pos in ("guard", "guard-wing"):
-        masked["rim_score"] *= 0.10
-        masked["drop_big_score"] *= 0.05
-        masked["mobile_big_score"] *= 0.15
-        if is_short:
-            masked["rim_score"] *= 0.05
-            masked["drop_big_score"] *= 0.02
-            masked["mobile_big_score"] *= 0.05
-
-    # Pure bigs cannot be POA
-    if own_pos == "big":
-        masked["poa_score"] *= 0.15
-        masked["chaser_score"] *= 0.30
-        if pct_guards < 0.20:
-            masked["poa_score"] *= 0.10
-
-    # Wing-bigs get moderate POA suppression
-    if own_pos == "wing-big":
-        masked["poa_score"] *= 0.40
-        masked["chaser_score"] *= 0.60
-
-    # Low guard share -> suppress POA
-    if pct_guards < 0.30:
-        masked["poa_score"] *= 0.50
-
-    # Low center share -> suppress big roles
-    if pct_centers < 0.15:
-        masked["rim_score"] *= 0.30
-        masked["drop_big_score"] *= 0.20
-        masked["mobile_big_score"] *= 0.25
-
-    # Tall players suppress POA
-    if is_tall:
-        masked["poa_score"] *= 0.50
-        masked["chaser_score"] *= 0.70
-
-    # Wing Stopper: suppress for pure guards unless tall
-    if own_pos == "guard" and not is_tall:
-        masked["wing_score"] *= 0.50
-
-    return masked
+    if c_share >= 0.50 or height >= 81:
+        return "Big"
+    if pg_share >= 0.60:
+        return "Guard"
+    return "Wing"
 
 
-def _apply_role_repulsion(scores):
-    """High affinity for one role suppresses incompatible roles."""
-    r = scores.copy()
-
-    if scores["rim_score"] > 0.60:
-        f = 1 - (scores["rim_score"] - 0.60) * 0.5
-        r["poa_score"] *= max(f, 0.3)
-        r["chaser_score"] *= max(f, 0.4)
-
-    if scores["poa_score"] > 0.55:
-        f = 1 - (scores["poa_score"] - 0.55) * 0.5
-        r["rim_score"] *= max(f, 0.3)
-        r["drop_big_score"] *= max(f, 0.2)
-        r["mobile_big_score"] *= max(f, 0.3)
-
-    if scores["chaser_score"] > 0.55:
-        f = 1 - (scores["chaser_score"] - 0.55) * 0.4
-        r["wing_score"] *= max(f, 0.5)
-
-    if scores["drop_big_score"] > 0.55:
-        f = 1 - (scores["drop_big_score"] - 0.55) * 0.5
-        r["versatile_score"] *= max(f, 0.3)
-        r["mobile_big_score"] *= max(f, 0.4)
-
-    if scores["versatile_score"] > 0.60:
-        f = 1 - (scores["versatile_score"] - 0.60) * 0.3
-        r["drop_big_score"] *= max(f, 0.4)
-        r["wing_score"] *= max(f, 0.6)
-
-    return r
+def _pick_with_margin(scores: dict[str, float], rotational_role: str):
+    """Pick role by max score; if separation is small, route to rotational role."""
+    ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_role, top_score = ordered[0]
+    second_score = ordered[1][1] if len(ordered) > 1 else 0.0
+    margin = top_score - second_score
+    if margin < MARGIN_RULE_GAP:
+        return rotational_role, top_score, second_score, margin
+    return top_role, top_score, second_score, margin
 
 
 def _pick_secondary(archetype, row):
-    """Pick secondary tag for the given primary."""
+    """Pick behavior-only secondary tag for the given primary."""
     vpctl = row["versatility_pctl"]
     stl_pctl = row["stl_pctl"]
     blk_pctl = row["blk_pctl"]
-    d_res = row["d_results_pctl"]
     hustle_pctl = row["hustle_pctl"]
     defl_pctl = row.get("deflections_pctl", 0.5)
+    screen_nav = row.get("screen_navigation_index_pctl", 0.5)
+    help_idx = row.get("help_activity_index_pctl", 0.5)
 
     if archetype == "POA Defender":
-        if vpctl >= 0.75:
-            return "Switchable"
+        if screen_nav >= 0.80:
+            return "Screen Navigator"
         if stl_pctl >= 0.75 or defl_pctl >= 0.80:
             return "Ball Hawk"
-        if hustle_pctl >= 0.75:
-            return "Hustler"
         return "Primary"
 
     if archetype == "Wing Stopper":
-        if d_res >= 0.75:
-            return "Lockdown"
-        if hustle_pctl >= 0.75:
-            return "Hustler"
+        if vpctl >= 0.75:
+            return "Switchable"
+        if help_idx >= 0.75:
+            return "Helper"
         return "Primary"
 
     if archetype == "Off-Ball Chaser":
         if stl_pctl >= 0.85 or defl_pctl >= 0.85:
             return "Ball Hawk"
-        if hustle_pctl >= 0.75:
+        if hustle_pctl >= 0.75 or screen_nav >= 0.70:
             return "Hustler"
         return "Active Hands"
 
     if archetype == "Versatile Defender":
-        if d_res >= 0.75:
-            return "Lockdown"
-        if stl_pctl >= 0.70:
-            return "Ball Hawk"
-        if hustle_pctl >= 0.75:
-            return "Hustler"
+        if vpctl >= 0.85:
+            return "Switchable"
+        if help_idx >= 0.75:
+            return "Helper"
         return "Switchable"
 
     if archetype == "Rim Protector":
@@ -581,13 +513,23 @@ def _pick_secondary(archetype, row):
         return "Help"
 
     if archetype == "Mobile Big":
-        if d_res >= 0.70:
-            return "Lockdown"
+        if vpctl >= 0.80:
+            return "Switchable"
         if hustle_pctl >= 0.75:
             return "Hustler"
         return "Switchable"
 
-    return "Help"
+    if archetype in ("Rotational Big", "Rotational Defender"):
+        if help_idx >= 0.70:
+            return "Helper"
+        if vpctl >= 0.70:
+            return "Switchable"
+        return "Primary"
+
+    if archetype == "Low-Activity Defender":
+        return "Liability"
+
+    return "Primary"
 
 
 def compute_defensive_effectiveness(row, archetype):
@@ -635,7 +577,7 @@ def compute_defensive_fit(row, archetype):
 
 
 def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
-    """Score-based defensive classification (v3.0)."""
+    """Role-only defensive classification (v3.2)."""
     df = features.copy()
     qualified = df[(df["MIN"] >= MIN_MINUTES) & (df["GP"] >= MIN_GP)].copy()
     unqualified = df[(df["MIN"] < MIN_MINUTES) | (df["GP"] < MIN_GP)].copy()
@@ -659,6 +601,7 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     qualified["DREB_CHANCES"] = safe_col(qualified, "DREB_CHANCES", 0)
     qualified["DREB_CHANCE_PCT"] = safe_col(qualified, "DREB_CHANCE_PCT", 0)
     qualified["REB_PCT"] = safe_col(qualified, "REB_PCT", 0)
+    qualified["DREB_CHANCE_PCT"] = safe_col(qualified, "DREB_CHANCE_PCT", 0)
     qualified["pct_guards"] = safe_col(qualified, "pct_guards", 0.33)
     qualified["pct_forwards"] = safe_col(qualified, "pct_forwards", 0.33)
     qualified["pct_centers"] = safe_col(qualified, "pct_centers", 0.33)
@@ -688,6 +631,8 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     qualified["center_pctl"] = qualified["pct_centers"].rank(pct=True)
     qualified["speed_pctl"] = qualified["AVG_SPEED_DEF"].rank(pct=True)
     qualified["height_pctl"] = qualified["height_inches"].rank(pct=True)
+    qualified["rim_presence_pctl"] = qualified["RIM_FGA_RATE"].rank(pct=True)
+    qualified["dreb_chance_pctl"] = qualified["DREB_CHANCE_PCT"].rank(pct=True)
 
     # Hustle percentiles
     qualified["deflections_pctl"] = qualified["DEFLECTIONS"].rank(pct=True)
@@ -734,146 +679,325 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     ).clip(0, 2)
     qualified["onball_pctl"] = qualified["onball_exclusivity"].rank(pct=True)
 
-    # ==== Role Affinity Scores (0-1, weighted percentile sums) ====
-
-    # POA Defender
-    qualified["poa_score"] = (
-        qualified["elite_matchup_pctl"] * 0.25
-        + qualified["difficulty_pctl"] * 0.20
-        + qualified["onball_pctl"] * 0.20
-        + qualified["guard_pctl"] * 0.15
-        + qualified["deflections_pctl"] * 0.10
-        + qualified["d_results_pctl"] * 0.10
-    )
-
-    # Wing Stopper
-    qualified["wing_score"] = (
-        qualified["forward_pctl"] * 0.25
-        + qualified["difficulty_pctl"] * 0.20
-        + qualified["d_results_pctl"] * 0.25
-        + qualified["contested_shots_pctl"] * 0.10
-        + (1 - qualified["guard_pctl"]) * 0.10
-        + (1 - qualified["center_pctl"]) * 0.10
-    )
-
-    # Off-Ball Chaser
-    qualified["chaser_score"] = (
-        qualified["stl_pctl"] * 0.25
-        + qualified["deflections_pctl"] * 0.20
-        + qualified["speed_pctl"] * 0.10
-        + (1 - qualified["difficulty_pctl"]) * 0.20
-        + qualified["loose_balls_pctl"] * 0.10
-        + qualified["d_results_pctl"] * 0.15
-    )
-
-    # Versatile Defender
+    # ==== Role feature axes (behavior only; no impact in assignment) ====
     max_pos_share = qualified[["pct_guards", "pct_forwards", "pct_centers"]].max(axis=1)
     qualified["pos_balance_pctl"] = (1 - max_pos_share).rank(pct=True)
-    qualified["versatile_score"] = (
-        qualified["versatility_pctl"] * 0.30
-        + qualified["pos_balance_pctl"] * 0.20
-        + qualified["difficulty_pctl"] * 0.15
-        + qualified["d_results_pctl"] * 0.20
-        + qualified["contested_shots_pctl"] * 0.15
-    )
 
-    # Rim Protector
-    qualified["rim_score"] = (
-        qualified["blk_pctl"] * 0.30
-        + (1 - qualified["rim_fg_pctl"]) * 0.25
+    qualified["ball_pressure_index"] = (
+        qualified["elite_matchup_pctl"] * 0.35
+        + qualified["onball_pctl"] * 0.25
+        + qualified["guard_pctl"] * 0.20
+        + qualified["deflections_pctl"] * 0.10
+        + qualified["contested_3pt_pctl"] * 0.10
+    )
+    qualified["screen_navigation_index"] = (
+        qualified["contested_3pt_pctl"] * 0.45
+        + qualified["deflections_pctl"] * 0.25
+        + qualified["speed_pctl"] * 0.15
+        + qualified["onball_pctl"] * 0.15
+    )
+    qualified["offball_navigation_index"] = (
+        qualified["stl_pctl"] * 0.25
+        + qualified["deflections_pctl"] * 0.25
+        + qualified["speed_pctl"] * 0.20
+        + qualified["loose_balls_pctl"] * 0.15
+        + qualified["contested_3pt_pctl"] * 0.15
+    )
+    qualified["drop_coverage_index"] = (
+        qualified["center_pctl"] * 0.30
+        + qualified["rim_fga_pctl"] * 0.20
+        + (1 - qualified["versatility_pctl"]) * 0.20
+        + qualified["boxouts_pctl"] * 0.15
+        + (1 - qualified["guard_pctl"]) * 0.15
+    )
+    qualified["switch_index"] = (
+        qualified["versatility_pctl"] * 0.45
+        + qualified["pos_balance_pctl"] * 0.25
+        + qualified["forward_pctl"] * 0.15
+        + qualified["center_pctl"] * 0.15
+    )
+    qualified["rim_protection_index"] = (
+        qualified["blk_pctl"] * 0.35
+        + (1 - qualified["rim_fg_pctl"]) * 0.20
         + qualified["rim_fga_pctl"] * 0.15
         + qualified["center_pctl"] * 0.15
-        + qualified["contested_shots_pctl"] * 0.10
-        + qualified["height_pctl"] * 0.05
-    )
-
-    # Dropping Big
-    qualified["drop_big_score"] = (
-        (1 - qualified["versatility_pctl"]) * 0.25
-        + qualified["center_pctl"] * 0.25
-        + qualified["reb_pctl"] * 0.20
-        + qualified["rim_fga_pctl"] * 0.15
-        + qualified["boxouts_pctl"] * 0.10
-        + (1 - qualified["guard_pctl"]) * 0.05
-    )
-
-    # Mobile Big
-    qualified["mobile_big_score"] = (
-        qualified["versatility_pctl"] * 0.20
-        + qualified["center_pctl"] * 0.20
-        + qualified["reb_pctl"] * 0.15
-        + qualified["d_results_pctl"] * 0.15
         + qualified["height_pctl"] * 0.10
-        + qualified["forward_pctl"] * 0.10
-        + qualified["contested_shots_pctl"] * 0.10
+        + qualified["contested_shots_pctl"] * 0.05
+    )
+    qualified["help_activity_index"] = (
+        qualified["boxouts_pctl"] * 0.25
+        + qualified["contested_shots_pctl"] * 0.25
+        + qualified["charges_pctl"] * 0.20
+        + qualified["dreb_chance_pctl"] * 0.15
+        + (1 - qualified["onball_pctl"]) * 0.15
     )
 
-    # ==== Assign archetype via argmax + masks + repulsion ====
-    results = []
+    for base_col in [
+        "ball_pressure_index", "screen_navigation_index", "offball_navigation_index",
+        "drop_coverage_index", "switch_index", "rim_protection_index", "help_activity_index",
+    ]:
+        qualified[f"{base_col}_pctl"] = qualified[base_col].rank(pct=True)
+
+    qualified["matchup_diversity_pctl"] = qualified["pos_balance_pctl"]
+    qualified["liability_index"] = (
+        (1 - qualified["ball_pressure_index_pctl"]) * 0.25
+        + (1 - qualified["help_activity_index_pctl"]) * 0.20
+        + (1 - qualified["rim_protection_index_pctl"]) * 0.20
+        + (1 - qualified["engagement_pctl"]) * 0.20
+        + (1 - qualified["hustle_pctl"]) * 0.15
+    )
+    qualified["liability_index_pctl"] = qualified["liability_index"].rank(pct=True)
+
+    # Schema compatibility role scores (still behavior-only)
+    qualified["poa_score"] = (
+        qualified["ball_pressure_index_pctl"] * 0.70
+        + qualified["screen_navigation_index_pctl"] * 0.30
+    )
+    qualified["wing_score"] = (
+        qualified["ball_pressure_index_pctl"] * 0.55
+        + qualified["switch_index_pctl"] * 0.45
+    )
+    qualified["chaser_score"] = qualified["offball_navigation_index_pctl"]
+    qualified["versatile_score"] = (
+        qualified["switch_index_pctl"] * 0.55
+        + qualified["matchup_diversity_pctl"] * 0.45
+    )
+    qualified["rim_score"] = qualified["rim_protection_index_pctl"]
+    qualified["drop_big_score"] = qualified["drop_coverage_index_pctl"]
+    qualified["mobile_big_score"] = (
+        qualified["switch_index_pctl"] * 0.60
+        + qualified["rim_protection_index_pctl"] * 0.40
+    )
+
+    qualified["size_band"] = qualified.apply(_classify_size_band, axis=1)
+
+    # ==== Confidence-scored role assignment (role only) ====
+    qualified["defensive_archetype"] = "Rotational Defender"
+
+    qualified["poa_candidate_score"] = (
+        qualified["ball_pressure_index_pctl"] * 0.40
+        + qualified["screen_navigation_index_pctl"] * 0.30
+        + qualified["onball_pctl"] * 0.20
+        + qualified["difficulty_pctl"] * 0.10
+    )
+    qualified["offball_candidate_score"] = (
+        qualified["offball_navigation_index_pctl"] * 0.50
+        + qualified["deflections_pctl"] * 0.25
+        + qualified["contested_3pt_pctl"] * 0.15
+        + qualified["help_activity_index_pctl"] * 0.10
+    )
+    qualified["versatile_candidate_score"] = (
+        qualified["switch_index_pctl"] * 0.35
+        + qualified["matchup_diversity_pctl"] * 0.25
+        + np.minimum(
+            qualified["ball_pressure_index_pctl"],
+            qualified["rim_protection_index_pctl"],
+        ) * 0.20
+        + qualified["help_activity_index_pctl"] * 0.20
+    )
+    qualified["rim_candidate_score"] = (
+        qualified["rim_protection_index_pctl"] * 0.55
+        + qualified["rim_fga_pctl"] * 0.15
+        + qualified["height_pctl"] * 0.15
+        + qualified["help_activity_index_pctl"] * 0.15
+    )
+    qualified["drop_candidate_score"] = (
+        qualified["drop_coverage_index_pctl"] * 0.50
+        + (1 - qualified["switch_index_pctl"]) * 0.20
+        + qualified["center_pctl"] * 0.15
+        + qualified["boxouts_pctl"] * 0.15
+    )
+    qualified["mobile_candidate_score"] = (
+        qualified["switch_index_pctl"] * 0.45
+        + qualified["speed_pctl"] * 0.25
+        + qualified["help_activity_index_pctl"] * 0.20
+        + qualified["rim_protection_index_pctl"] * 0.10
+    )
+    role_stack = qualified[[
+        "ball_pressure_index_pctl", "switch_index_pctl",
+        "offball_navigation_index_pctl", "help_activity_index_pctl"
+    ]].copy()
+    balanced_identity = 1 - (role_stack.std(axis=1).clip(0, 0.5) / 0.5)
+    qualified["rotational_def_candidate_score"] = (
+        balanced_identity * 0.60 + qualified["help_activity_index_pctl"] * 0.40
+    )
+    big_mid = (
+        (1 - np.abs(qualified["rim_protection_index_pctl"] - 0.575) / 0.575).clip(0, 1)
+        + (1 - np.abs(qualified["switch_index_pctl"] - 0.575) / 0.575).clip(0, 1)
+    ) / 2
+    qualified["rotational_big_candidate_score"] = (
+        big_mid * 0.65 + qualified["help_activity_index_pctl"] * 0.35
+    )
 
     for idx, row in qualified.iterrows():
-        eng_pctl = row["engagement_pctl"]
-        d_res = row["d_results_pctl"]
+        size_band = row["size_band"]
 
-        # Extended Low-Activity gate: sliding threshold based on results
-        low_act_eng_gate = LOW_ACTIVITY_ENGAGEMENT_GATE
-        if d_res < 0.10:
-            low_act_eng_gate = 0.95
-        elif d_res < 0.15:
-            low_act_eng_gate = 0.50
-        elif d_res < 0.25:
-            low_act_eng_gate = 0.30
-        elif d_res <= LOW_ACTIVITY_RESULTS_GATE:
-            low_act_eng_gate = LOW_ACTIVITY_ENGAGEMENT_GATE
+        ball_pressure = row["ball_pressure_index_pctl"]
+        screen_navigation = row["screen_navigation_index_pctl"]
+        offball_navigation = row["offball_navigation_index_pctl"]
+        deflections = row["deflections_pctl"]
+        help_activity = row["help_activity_index_pctl"]
+        switch_index = row["switch_index_pctl"]
+        matchup_diversity = row["matchup_diversity_pctl"]
+        rim_protection = row["rim_protection_index_pctl"]
+        drop_coverage = row["drop_coverage_index_pctl"]
+        mobility_metric = row["speed_pctl"]
+        engagement = row["engagement_pctl"]
+        difficulty = row["difficulty_pctl"]
+        max_position_share = max(row["pct_guards"], row["pct_forwards"], row["pct_centers"])
+        contest_3pt = row["contested_3pt_pctl"]
+        contest_2pt = row["contested_shots_pctl"]
 
-        is_low_activity = (
-            (eng_pctl <= low_act_eng_gate and d_res <= LOW_ACTIVITY_RESULTS_GATE)
-            or (d_res <= 0.08)  # bottom ~8% results always Low-Activity
+        low_activity_score = 1 - engagement
+
+        eligible_scores = {}
+
+        if size_band == "Guard":
+            poa_score = (
+                0.35 * ball_pressure
+                + 0.25 * screen_navigation
+                + 0.20 * difficulty
+                + 0.10 * matchup_diversity
+                + 0.10 * engagement
+            )
+            offball_score = (
+                0.35 * offball_navigation
+                + 0.25 * deflections
+                + 0.20 * contest_3pt
+                + 0.10 * help_activity
+                + 0.10 * engagement
+            )
+            rotational_score = 1 - np.std([ball_pressure, offball_navigation, switch_index])
+
+            if ball_pressure >= 0.60:
+                eligible_scores["POA Defender"] = poa_score
+            eligible_scores["Off-Ball Chaser"] = offball_score
+            if 0.30 <= ball_pressure <= 0.75 and 0.30 <= offball_navigation <= 0.75:
+                eligible_scores["Rotational Defender"] = rotational_score
+            if engagement <= 0.30:
+                eligible_scores["Low-Activity Defender"] = low_activity_score
+
+            rotational_role = "Rotational Defender"
+
+        elif size_band == "Wing":
+            wing_score = (
+                0.35 * difficulty
+                + 0.25 * ball_pressure
+                + 0.20 * contest_2pt
+                + 0.10 * matchup_diversity
+                + 0.10 * engagement
+            )
+            versatile_score = (
+                0.30 * switch_index
+                + 0.25 * matchup_diversity
+                + 0.20 * help_activity
+                + 0.15 * min(ball_pressure, rim_protection)
+                + 0.10 * engagement
+            )
+            offball_score = (
+                0.35 * offball_navigation
+                + 0.25 * deflections
+                + 0.20 * contest_3pt
+                + 0.10 * help_activity
+                + 0.10 * engagement
+            )
+            rotational_score = 1 - np.std([ball_pressure, offball_navigation, switch_index])
+
+            if difficulty >= 0.60:
+                eligible_scores["Wing Stopper"] = wing_score
+            if switch_index >= 0.65 and max_position_share <= 0.60:
+                eligible_scores["Versatile Defender"] = versatile_score
+            eligible_scores["Off-Ball Chaser"] = offball_score
+            if 0.30 <= ball_pressure <= 0.75 and 0.30 <= offball_navigation <= 0.75:
+                eligible_scores["Rotational Defender"] = rotational_score
+            if engagement <= 0.30:
+                eligible_scores["Low-Activity Defender"] = low_activity_score
+
+            rotational_role = "Rotational Defender"
+
+        else:  # Big
+            rim_score = (
+                0.45 * rim_protection
+                + 0.20 * contest_2pt
+                + 0.15 * help_activity
+                + 0.10 * drop_coverage
+                + 0.10 * engagement
+            )
+            drop_score = (
+                0.40 * drop_coverage
+                + 0.25 * rim_protection
+                + 0.15 * help_activity
+                + 0.10 * difficulty
+                + 0.10 * engagement
+            )
+            mobile_score = (
+                0.40 * switch_index
+                + 0.20 * mobility_metric
+                + 0.15 * matchup_diversity
+                + 0.15 * help_activity
+                + 0.10 * rim_protection
+            )
+            versatile_big_score = (
+                0.30 * switch_index
+                + 0.25 * matchup_diversity
+                + 0.20 * help_activity
+                + 0.15 * rim_protection
+                + 0.10 * ball_pressure
+            )
+            rotational_big_score = 1 - np.std([rim_protection, switch_index, help_activity])
+
+            if rim_protection >= 0.65:
+                eligible_scores["Rim Protector"] = rim_score
+            if drop_coverage >= 0.65 and switch_index <= 0.60:
+                eligible_scores["Dropping Big"] = drop_score
+            if switch_index >= 0.65 and drop_coverage <= 0.75:
+                eligible_scores["Mobile Big"] = mobile_score
+            if matchup_diversity >= 0.70 and max_position_share <= 0.55:
+                eligible_scores["Versatile Defender"] = versatile_big_score
+            if 0.40 <= rim_protection <= 0.75 and 0.40 <= switch_index <= 0.75:
+                eligible_scores["Rotational Big"] = rotational_big_score
+            if engagement <= 0.30:
+                eligible_scores["Low-Activity Defender"] = low_activity_score
+
+            rotational_role = "Rotational Big"
+
+        if not eligible_scores:
+            eligible_scores[rotational_role] = 0.50
+
+        archetype, top_score, second_score, margin = _pick_with_margin(
+            eligible_scores, rotational_role
         )
 
-        if is_low_activity:
+        # Low-activity override
+        if engagement < 0.25 and top_score < 0.65:
             archetype = "Low-Activity Defender"
-            secondary = "Liability" if d_res <= 0.20 else "Hidden"
-            confidence = 0.30 + (1 - eng_pctl) * 0.40
-            effectiveness = compute_defensive_effectiveness(row, archetype)
-            fit = compute_defensive_fit(row, archetype)
-        else:
-            raw_scores = {c: row[c] for c in SCORE_COLS}
+            if "Low-Activity Defender" in eligible_scores:
+                top_score = max(top_score, eligible_scores["Low-Activity Defender"])
+                margin = top_score - second_score
 
-            # Results damping: bad defenders get all scores suppressed
-            results_factor = max(0.35, 0.40 + 0.60 * d_res)
-            raw_scores = {k: v * results_factor for k, v in raw_scores.items()}
+        qualified.at[idx, "defensive_archetype"] = archetype
+        qualified.at[idx, "top_role_score"] = top_score
+        qualified.at[idx, "second_role_score"] = second_score
+        qualified.at[idx, "role_margin"] = margin
 
-            own_pos = _own_position_group(row.get("primary_position", "Unknown"))
-            pct_g = row["pct_guards"]
-            pct_c = row["pct_centers"]
-            height = row.get("height_inches", 78)
+    # ==== Build output rows ====
+    results = []
 
-            masked_scores = _apply_positional_masks(
-                raw_scores, own_pos, pct_g, pct_c, height
-            )
-            final_scores = _apply_role_repulsion(masked_scores)
+    for _, row in qualified.iterrows():
+        archetype = row["defensive_archetype"]
+        eng_pctl = row["engagement_pctl"]
+        d_res = row["d_results_pctl"]
+        secondary = _pick_secondary(archetype, row)
 
-            col_to_role = dict(zip(SCORE_COLS, SCORE_ROLES))
-            sorted_roles = sorted(
-                final_scores.items(), key=lambda x: x[1], reverse=True
-            )
-            archetype = col_to_role[sorted_roles[0][0]]
-            top_score = sorted_roles[0][1]
-            second_score = sorted_roles[1][1]
-            separation = (top_score - second_score) / max(top_score, 0.01)
-            confidence = 0.40 + separation * 0.55
+        top_role_score = row.get("top_role_score", 0.5)
+        role_margin = row.get("role_margin", 0.0)
+        confidence = 0.5 + 0.5 * max(0.0, min(1.0, top_role_score - row.get("second_role_score", 0.0)))
+        if archetype == "Low-Activity Defender":
+            secondary = "Liability"
 
-            # Post-classification override: extreme liability
-            effectiveness = compute_defensive_effectiveness(row, archetype)
-            if effectiveness < 0.15:
-                archetype = "Low-Activity Defender"
-                secondary = "Liability"
-                confidence = 0.35
-
-            secondary = _pick_secondary(archetype, row)
-            effectiveness = compute_defensive_effectiveness(row, archetype)
-            fit = compute_defensive_fit(row, archetype)
+        # Impact overlay is retained for downstream reporting, but not used for assignment
+        effectiveness = compute_defensive_effectiveness(row, archetype)
+        fit = compute_defensive_fit(row, archetype)
 
         diff_pctl = row["difficulty_pctl"]
         difficulty_level = (
@@ -889,10 +1013,11 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "MIN": row["MIN"],
             "defensive_archetype": archetype,
             "defensive_secondary": secondary,
-            "defensive_confidence": min(0.95, confidence),
+            "defensive_confidence": min(1.0, confidence),
             "defensive_effectiveness": round(effectiveness, 3),
             "defensive_fit": fit,
             "assignment_difficulty": difficulty_level,
+            "size_band": row["size_band"],
             "switch_score": row["switch_score"],
             "versatility_pctl": row["versatility_pctl"],
             "avg_opponent_ppg": row["avg_opponent_ppg"],
@@ -914,6 +1039,18 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "deflections_pctl": row.get("deflections_pctl", 0),
             "CONTESTED_SHOTS": row.get("CONTESTED_SHOTS", 0),
             "contested_shots_pctl": row.get("contested_shots_pctl", 0),
+            "ball_pressure_index_pctl": row["ball_pressure_index_pctl"],
+            "screen_navigation_index_pctl": row["screen_navigation_index_pctl"],
+            "offball_navigation_index_pctl": row["offball_navigation_index_pctl"],
+            "drop_coverage_index_pctl": row["drop_coverage_index_pctl"],
+            "switch_index_pctl": row["switch_index_pctl"],
+            "rim_protection_index_pctl": row["rim_protection_index_pctl"],
+            "help_activity_index_pctl": row["help_activity_index_pctl"],
+            "liability_index_pctl": row["liability_index_pctl"],
+            "matchup_diversity_pctl": row["matchup_diversity_pctl"],
+            "top_role_score": top_role_score,
+            "second_role_score": row.get("second_role_score", 0.0),
+            "role_margin": role_margin,
             "poa_score": row["poa_score"],
             "wing_score": row["wing_score"],
             "chaser_score": row["chaser_score"],
@@ -937,6 +1074,7 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "defensive_effectiveness": 0.0,
             "defensive_fit": "N/A",
             "assignment_difficulty": "Unknown",
+            "size_band": "Unknown",
             "switch_score": 0, "versatility_pctl": 0,
             "avg_opponent_ppg": 0, "elite_matchup_pct": 0,
             "difficulty_pctl": 0,
@@ -948,6 +1086,18 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "D_FG_DIFF": 0, "d_results_pctl": 0,
             "DEFLECTIONS": 0, "deflections_pctl": 0,
             "CONTESTED_SHOTS": 0, "contested_shots_pctl": 0,
+            "ball_pressure_index_pctl": 0,
+            "screen_navigation_index_pctl": 0,
+            "offball_navigation_index_pctl": 0,
+            "drop_coverage_index_pctl": 0,
+            "switch_index_pctl": 0,
+            "rim_protection_index_pctl": 0,
+            "help_activity_index_pctl": 0,
+            "liability_index_pctl": 0,
+            "matchup_diversity_pctl": 0,
+            "top_role_score": 0,
+            "second_role_score": 0,
+            "role_margin": 0,
             **_zero,
         })
 
@@ -960,8 +1110,8 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 70)
-    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.0")
-    print("  Score-Based + Positional Masks + Role Repulsion")
+    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.2")
+    print("  Confidence-Scored Decision Framework + Margin Rule")
     print("=" * 70)
 
     print("\nLoading data...")
@@ -1018,7 +1168,7 @@ def main():
     print("\n=== VALIDATION (Known Defenders 2024-25) ===")
     known = [
         ("Jrue Holiday", "POA Defender"),
-        ("Draymond Green", "Versatile Defender or Mobile Big"),
+        ("Draymond Green", "Versatile Defender or Mobile Big or Rotational Big"),
         ("Rudy Gobert", "Rim Protector"),
         ("Anthony Davis", "Rim Protector"),
         ("Herbert Jones", "Wing Stopper or Versatile"),
@@ -1029,8 +1179,8 @@ def main():
         ("Chet Holmgren", "Rim Protector"),
         ("OG Anunoby", "Wing Stopper"),
         ("Derrick White", "POA Defender"),
-        ("Cam Thomas", "Low-Activity or Off-Ball Chaser"),
-        ("Luka Don", "Low-Activity or Off-Ball Chaser"),
+        ("Cam Thomas", "Low-Activity or Rotational Defender"),
+        ("Luka Don", "Low-Activity or Rotational Defender"),
     ]
 
     for name, expected in known:

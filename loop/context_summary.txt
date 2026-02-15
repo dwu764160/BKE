@@ -303,3 +303,76 @@ v4.3 changes (applied 2026-02-07):
 	  - Examples: LeBron 17% dominance/94% hybrid; Curry 43%/75%; Jarrett Allen 35%/48%.
 	- Distribution (2024-25): PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19, Connector 28→29, Perimeter 14→17
 	- All star classifications stable. Reference docs updated to v4.3.
+
+- 2026-02-13 — Defensive archetypes v3.1 (role-only decision flow + hard caps)
+	- Files changed: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+	- Summary:
+		- Removed impact from role assignment; archetype stage is now behavior-only.
+		- Implemented 3-layer classifier: size-band gating (Guard/Wing/Big) → behavior indices → explicit decision tree.
+		- Added hard rarity caps per season: `POA Defender <= 12%`, `Versatile Defender <= 8%` with deterministic demotions.
+		- Added explicit fallback roles: `Rotational Defender`, `Rotational Big`.
+		- Preserved impact outputs (`defensive_effectiveness`, `defensive_fit`) as post-classification overlay only.
+		- Added impact report outputs: `data/processed/defensive_archetypes_v2_impact_report.csv/.txt`.
+	- Repro commands:
+		```bash
+		.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+		python3 - <<'PY'
+		import pandas as pd
+		print(pd.read_csv('data/processed/defensive_archetypes_v2_impact_report.csv').head())
+		PY
+		```
+	- Observed overall impact (baseline vs v3.1, qualified pool):
+		- Rotational Defender: 27.65% → 40.88% (+13.23 pp)
+		- Low-Activity Defender: 10.69% → 20.44% (+9.75 pp)
+		- Off-Ball Chaser: 15.01% → 17.98% (+2.97 pp)
+		- POA Defender: 5.94% → 6.19% (+0.25 pp)
+		- Versatile Defender: 0.00% → 0.25% (+0.25 pp)
+		- Rotational Big: 21.46% → 5.17% (-16.29 pp)
+		- Mobile Big: 11.37% → 0.34% (-11.03 pp)
+
+- 2026-02-13 — Defensive archetypes v3.2 (confidence-scored routing + margin rule)
+	- Files changed: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+	- Summary:
+		- Replaced hard-threshold branch routing with in-band role confidence scoring and argmax assignment.
+		- Added stability margin rule: if top-two role scores are within 0.035, assign rotational role.
+		- Removed hard-cap dependency from assignment path; role balance now emerges from score competition and eligibility anchors.
+		- Tuned POA anchor gating (composite + ball pressure + screen navigation), widened versatile eligibility for high multi-signal wings, and rebalanced big-role competition to reduce Mobile suppression.
+	- Repro commands:
+		```bash
+		.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+		```
+	- Observed overall distribution (qualified pool, v3.2 final run):
+		- Rotational Defender: 310 (26.3%)
+		- Low-Activity Defender: 219 (18.6%)
+		- Off-Ball Chaser: 167 (14.2%)
+		- POA Defender: 154 (13.1%)
+		- Rim Protector: 126 (10.7%)
+		- Versatile Defender: 83 (7.0%)
+		- Mobile Big: 57 (4.8%)
+		- Rotational Big: 55 (4.7%)
+
+- 2026-02-14 — Defensive archetypes v3.2 detailed role competition pass (no caps)
+	- Files changed: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`, `data/processed/defensive_archetypes_v2.parquet`, `data/processed/defensive_archetypes_v2.csv`, `data/processed/defensive_archetypes_v2_impact_report.csv`, `data/processed/defensive_archetypes_v2_impact_report.txt`
+	- Summary:
+		- Implemented deterministic size-band routing exactly per spec: Big (`pct_centers>=0.50` or `height>=81`), Guard (`pct_guards>=0.60`), else Wing.
+		- Replaced branch-routing with in-band role score competition using anchor-eligible roles only.
+		- Updated margin rule to `0.05` and added low-activity override (`engagement<0.25` and `top_score<0.65`).
+		- Confidence now uses role separation scale: `0.5 + 0.5*(top-second)`.
+		- Removed artificial rarity caps from assignment path.
+	- Repro commands:
+		```bash
+		.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+		python3 - <<'PY'
+		import pandas as pd
+		report = pd.read_csv('data/processed/defensive_archetypes_v2_impact_report.csv')
+		print(report.to_string(index=False))
+		PY
+		```
+	- Observed impact vs `defensive_archetypes_v2_baseline_pre_v31.parquet` (2024-25 qualified: MIN>=500, GP>=20, MPG>=15):
+		- Changed archetypes: `220 / 329` players (`66.87%`)
+		- POA Defender: `21 -> 41` (`+95.24%`)
+		- Wing Stopper: `0 -> 13` (`+100%` from none)
+		- Versatile Defender: `0 -> 16` (`+100%` from none)
+		- Low-Activity Defender: `18 -> 37` (`+105.56%`)
+		- Rotational Big: `75 -> 41` (`-45.33%`)
+		- Mobile Big: `33 -> 1` (`-96.97%`)

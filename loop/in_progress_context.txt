@@ -167,3 +167,85 @@ NEXT_STEPS:
 - RESULTS: Full v4.3 validation: 0 Rotation Piece, PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19, Stationary 45, Movement 26, Perimeter 17, Connector 29. Allen/Gafford→PnR Rolling Big. Archetype embeddings (1,680 player-seasons, 11-dim).
 - RECENT WORK: v4.3 — PnR Big absorption (prominent P50 path), harsher Interior Scorer (SKILL_FINISHING_MIN 0.40, rim-runner check), Inside-the-Arc rename, archetype embeddings, Reset All button in viewer
 - SOURCES_READ: NBA.com LeagueDashPlayerShotLocations API docs, local repo files
+
+CONTEXT:
+- Task: Defensive archetypes v3.1 refactor (role-only assignment, structural gates, hard rarity caps) + one-run impact report.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: src/data_compute/compute_defensive_archetypes_v2.py, reference/player_defensive_archetypes.md, data/processed/defensive_archetypes_v2*.parquet/csv
+- Status: ✅ Completed with outputs regenerated and baseline-vs-new report saved.
+
+FAILURE_REASON:
+- Initial v3.1 pass over-routed many players into `Rotational Big` due to broad big gate using rim-presence percentile.
+
+ATTEMPTED_METHODS:
+- Replaced score+damping assignment with layered decision tree and behavior indices.
+- Added POA/Versatile hard caps (`12%` and `8%`) with deterministic demotion logic.
+- Kept effectiveness/fit columns but removed them from assignment path.
+- Fixed size-band gate to prioritize bio position and require stronger center-share+height evidence for Big fallback.
+- Re-ran classifier after gate fix.
+- Generated impact report from baseline snapshot:
+  - data/processed/defensive_archetypes_v2_impact_report.csv
+  - data/processed/defensive_archetypes_v2_impact_report.txt
+
+SOURCES_READ:
+- Local: src/data_compute/compute_defensive_archetypes_v2.py
+- Local: reference/player_defensive_archetypes.md
+- Local: readme.md
+- Web: https://www.nba.com/stats/help/glossary
+- Web: https://www.hooperuniversity.com/breakdowns/ball-screen-defense-playing-drop-coverage
+- Web: https://html.duckduckgo.com/html/?q=NBA+switch+defense+drop+coverage+screen+navigation
+
+NEXT_STEPS (explicit):
+- Evaluate whether Wing Stopper should be broadened (currently very rare) without relaxing POA/Versatile hard caps.
+
+CONTEXT:
+- Task: Defensive archetypes v3.2 implementation per user request (fix routing bias and threshold cliffs).
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+- Status: ✅ Completed v3.2 with confidence-scored in-band routing and margin stabilization.
+
+FAILURE_REASON:
+- v3.1 hard-threshold tree produced routing bias (order effects), suppressing multi-signal players and overusing fallback paths.
+
+ATTEMPTED_METHODS:
+- Replaced branch-first logic with role confidence scoring (argmax over eligible roles per size band).
+- Added margin rule (top-second < 0.035 => rotational role).
+- Removed hard-cap enforcement dependency.
+- Tuned eligibility and score weights:
+  - Guard POA anchor (composite + ball-pressure + screen-nav)
+  - Wing versatile eligibility widened to reduce false suppression
+  - Big role competition rebalanced to let Mobile Big win when appropriate
+- Re-ran script and validated distribution + known-player spot checks.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+- Prior context sources retained in this file (NBA glossary + drop coverage references).
+
+NEXT_STEPS (explicit):
+- If needed, tune Wing Stopper prevalence (currently very rare) by slightly increasing wing_stopper confidence weight and/or lowering wing stopper anchor floor.
+
+CONTEXT:
+- Task: Defensive archetypes v3.2 detailed algorithm retry (replace prior routing behavior, run once, produce percentage-change impact report).
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`, `data/processed/defensive_archetypes_v2_impact_report.csv`
+- Status: ✅ Completed. Script run succeeded and impact report refreshed.
+
+FAILURE_REASON:
+- First report regeneration attempt failed due to schema mismatch (`season` vs `SEASON`, and no precomputed `minutes_per_game` column in baseline parquet).
+
+ATTEMPTED_METHODS:
+- Updated classifier to detailed v3.2 role-competition logic with deterministic size-band gates and anchor-eligible in-band competition.
+- Applied margin rule at `0.05`, low-activity override (`engagement < 0.25` and `top_score < 0.65`), and confidence from score separation.
+- Executed: `.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py`.
+- Regenerated impact files using uppercase schema columns and computed `MPG = MIN / GP` for baseline comparability.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+- Local outputs: `data/processed/defensive_archetypes_v2.parquet`, `data/processed/defensive_archetypes_v2_impact_report.csv`
+
+NEXT_STEPS (explicit):
+- If further calibration is requested, first target `Mobile Big` recovery by rebalancing big-role anchors/weights without reintroducing hard caps.

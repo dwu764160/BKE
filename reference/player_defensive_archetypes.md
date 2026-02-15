@@ -1,293 +1,182 @@
-# Player Defensive Archetypes — v3.0 Logic Documentation
+# Player Defensive Archetypes — v3.2 Logic Documentation
 
 ## Overview
 
 This document is the authoritative reference for the defensive archetype classifier implemented in [src/data_compute/compute_defensive_archetypes_v2.py](src/data_compute/compute_defensive_archetypes_v2.py).
-The model classifies players by defensive role using matchup data, tracking data, hustle stats, defensive workload, player bios, and box-score proxies.
 
-Defensive archetypes provide **role context** (how a player defends) plus **quality context** (how well they do it) via effectiveness and fit scores.
+The v3.2 system explicitly separates:
+- **Archetype (role):** what a player is asked to do on defense
+- **Impact (quality):** how well the player performs that role
 
-**v3.0 key changes from v2.1:**
-- **Positional feasibility masks** — Guards can't be Rim Protectors, bigs can't be POA Defenders. Soft multipliers (not hard gates) based on player's own bio position + matchup position shares.
-- **Versatile Defender** added as 8th primary archetype — absorbs switch-everything defenders (Draymond, Bam, etc.).
-- **Role repulsion terms** — High affinity for one role suppresses incompatible roles (e.g., high rim_score ↓ poa_score).
-- **Fixed BLK_PCT** — Now uses per-game BLK ÷ per-game DEF_RIM_FGA (both from tracking_Defense). v2.1 had a unit mismatch (season total BLK ÷ per-game DEF_RIM_FGA) producing absurd values.
-- **Integrated hustle stats** — Deflections, contested shots (2PT/3PT), charges drawn, loose balls recovered, boxouts from NBA Hustle Dashboard.
-- **Defensive effectiveness** (0–1) — Archetype-specific weighted results quality score.
-- **Defensive fit** — Elite / Good / Average / Poor tier based on effectiveness.
-- **Results damping factor** — All role scores suppressed for players with poor D_FG_DIFF results, improving score separation.
-- **Sliding Low-Activity gate** — Expands engagement threshold when results are terrible (catches bad defenders who play heavy minutes).
-- **On-ball exclusivity signal** — POA score now includes guard assignment share signal, tightening the archetype.
-- **Mobile Big tightened** — Requires actual big evidence (center_pctl, height_pctl, forward_pctl).
-- **Confidence formula** unchanged: `0.40 + separation * 0.55` — but masks + repulsion + damping create better separation.
+Archetype assignment is **behavior-only**. Impact metrics (`defensive_effectiveness`, `defensive_fit`) are retained only as post-classification overlays.
 
 ---
 
-## 1. Data Sources
+## 1. Core v3.2 Changes
 
-1a. Matchup Versatility
-- `data/matchup/matchup_versatility.parquet`
-- Key fields: `switch_score`, `positions_guarded`, `pct_guards`, `pct_forwards`, `pct_centers`, `primary_position` (G/F/C from matchup data)
-
-1b. Matchup Difficulty
-- `data/matchup/matchup_difficulty.parquet`
-- Key fields: `avg_opponent_ppg`, `elite_matchup_pct`
-
-1c. Defensive Tracking (NBA tracking dashboard)
-- `defense_Overall.parquet` — `D_FG_PCT`, `PCT_PLUSMINUS`, `D_FGA`, `FREQ`
-- `defense_LessThan6Ft.parquet` — `LT_06_PCT`, `FGA_LT_06`, `PLUSMINUS`
-- `defense_3Pointers.parquet` — `FG3_PCT`, `FG3A`, `PLUSMINUS`
-- `tracking_Defense.parquet` — PER-GAME: `STL`, `BLK`, `DREB`, `DEF_RIM_FGM`, `DEF_RIM_FGA`, `DEF_RIM_FG_PCT`
-
-1d. Box Score (season totals)
-- `complete_player_season_stats.parquet`
-- Key fields: `STL`, `BLK`, `DREB`, `PF`, `MIN`, `GP`, `REB_PCT`
-
-1e. Player Profiles (defensive workload)
-- `player_profiles_advanced.parquet`
-- Key fields: `POSS_DEF`, `SECONDS_DEF`
-
-1f. Tracking (movement / rebounding)
-- `tracking_SpeedDistance.parquet` — `DIST_MILES_DEF`, `AVG_SPEED_DEF`
-- `tracking_Rebounding.parquet` — `DREB_CHANCES`, `DREB_CHANCE_PCT`
-
-1g. Hustle Stats (NEW in v3.0)
-- `hustle_stats.parquet` — PER-GAME from NBA Hustle Dashboard
-- Key fields: `DEFLECTIONS`, `CONTESTED_SHOTS`, `CONTESTED_SHOTS_2PT`, `CONTESTED_SHOTS_3PT`, `CHARGES_DRAWN`, `DEF_LOOSE_BALLS_RECOVERED`, `DEF_BOXOUTS`
-
-1h. Player Bios (NEW in v3.0)
-- `data/historical/players.parquet`
-- Key fields: `primary_position` (Guard / Guard-Forward / Forward / Forward-Center / Center), `height_inches`
+- Removed impact from archetype assignment flow.
+- Replaced hard-threshold routing with a **3-layer confidence-scored decision system**:
+  1. Size-band gating (Guard / Wing / Big)
+  2. Behavioral role confidence scores (continuous, percentile-based)
+  3. Margin stability rule (small top-2 gaps route to rotational role)
+- Added explicit fallback archetypes:
+  - `Rotational Defender`
+  - `Rotational Big`
+- Added positive rotational identity via balanced-role profile (not pure leftover routing).
 
 ---
 
-## 2. Feature Engineering
+## 2. Data Sources
 
-### Defensive workload normalization
-
-```
-STL_PER100_DEF_POSS = STL / POSS_DEF * 100
-DREB_PER100_DEF_POSS = DREB / POSS_DEF * 100
-DEF_SECONDS_PER_GAME = SECONDS_DEF / GP
-```
-
-### BLK_PCT (v3.0 fix)
-```
-BLK_PG = BLK_PG_TRK  (per-game from tracking_Defense)
-         fallback: BLK / GP  (box score totals / games)
-DEF_RIM_FGA_PG = DEF_RIM_FGA  (per-game from tracking_Defense)
-                 fallback: D_FGA_LessThan6Ft → 3.0
-BLK_PCT = BLK_PG / DEF_RIM_FGA_PG  (clipped 0–1)
-```
-Expected range: 0.00–0.60 (Wembanyama ~0.47, Gobert ~0.24)
-
-### Composite signals
-
-```
-ENGAGEMENT_SCORE = z(POSS_DEF/GP) + z(SECONDS_DEF/GP) + z(DIST_MILES_DEF/GP) + z(AVG_SPEED_DEF)
-HUSTLE_SCORE = z(DREB_CHANCES) + z(DREB_CHANCE_PCT) + 0.5*z(DEFLECTIONS) + 0.5*z(CONTESTED_SHOTS)
-```
-
-### On-ball exclusivity (NEW in v3.0)
-```
-onball_exclusivity = (pct_guards * 2.0 - pct_forwards * 0.5 - pct_centers * 1.5).clip(0, 2)
-onball_pctl = onball_exclusivity.rank(pct=True)
-```
-
-### Position balance (NEW in v3.0)
-```
-max_pos_share = max(pct_guards, pct_forwards, pct_centers)
-pos_balance_pctl = (1 - max_pos_share).rank(pct=True)
-```
-
-### Percentiles computed
-All percentiles rank across all qualified players in a season:
-`versatility_pctl`, `difficulty_pctl`, `elite_matchup_pctl`, `stl_pctl`, `blk_pctl`,
-`rim_fg_pctl`, `rim_fga_pctl`, `d_results_pctl`, `reb_pctl`, `guard_pctl`,
-`forward_pctl`, `center_pctl`, `speed_pctl`, `height_pctl`,
-`deflections_pctl`, `contested_shots_pctl`, `contested_3pt_pctl`,
-`charges_pctl`, `loose_balls_pctl`, `boxouts_pctl`,
-`engagement_pctl`, `hustle_pctl`, `onball_pctl`, `pos_balance_pctl`
+Same primary sources as v3.0:
+- Matchup versatility: `data/matchup/matchup_versatility.parquet`
+- Matchup difficulty: `data/matchup/matchup_difficulty.parquet`
+- Tracking defense dashboards (`defense_Overall`, `defense_LessThan6Ft`, `defense_3Pointers`)
+- Tracking defense player file: `tracking_Defense.parquet`
+- Box season stats: `data/historical/complete_player_season_stats.parquet`
+- Player profiles: `data/processed/player_profiles_advanced.parquet`
+- Tracking movement/rebounding: `tracking_SpeedDistance.parquet`, `tracking_Rebounding.parquet`
+- Hustle stats: `hustle_stats.parquet`
+- Bios: `data/historical/players.parquet`
 
 ---
 
-## 3. Classification Method (v3.0 — Score-Based + Masks + Repulsion)
+## 3. Feature & Axis Construction
 
-### Step 1: Low-Activity Filter (Sliding Gate)
-The engagement threshold slides based on results quality:
+### Base percentiles (season-wide)
+The classifier ranks all qualified players per season for metrics like:
+`switch_score`, `elite_matchup_pct`, `STL_PER100_DEF_POSS`, `BLK_PCT`, `DEF_RIM_FG_PCT`,
+`RIM_FGA_RATE`, `pct_guards`, `pct_forwards`, `pct_centers`, `AVG_SPEED_DEF`, `height_inches`,
+`DEFLECTIONS`, `CONTESTED_SHOTS`, `CONTESTED_SHOTS_3PT`, `DEF_LOOSE_BALLS_RECOVERED`, `DEF_BOXOUTS`,
+`engagement_score`, `hustle_score`.
 
-| d_results_pctl | max engagement_pctl gate |
-|---|---|
-| < 0.08 | Always Low-Activity |
-| < 0.10 | 0.95 |
-| < 0.15 | 0.50 |
-| < 0.25 | 0.30 |
-| < 0.40 | 0.18 (original) |
-| ≥ 0.40 | Never from this gate |
+### Behavioral role indices (assignment-only)
+v3.2 computes percentile-ranked behavior axes:
+- `ball_pressure_index_pctl`
+- `screen_navigation_index_pctl`
+- `offball_navigation_index_pctl`
+- `drop_coverage_index_pctl`
+- `switch_index_pctl`
+- `rim_protection_index_pctl`
+- `help_activity_index_pctl`
+- `liability_index_pctl`
+- `matchup_diversity_pctl`
 
-Players caught are classified as **Low-Activity Defender** with secondary "Liability" (d_results ≤ 0.20) or "Hidden".
-
-### Step 2: Role Affinity Scores (0–1)
-Seven weighted percentile sums:
-
-| Score | Formula | Key Drivers |
-|-------|---------|-------------|
-| **poa_score** | `elite_matchup_pctl*0.25 + difficulty_pctl*0.20 + onball_pctl*0.20 + guard_pctl*0.15 + deflections_pctl*0.10 + d_results_pctl*0.10` | On-ball exclusivity, elite matchups |
-| **wing_score** | `forward_pctl*0.25 + difficulty_pctl*0.20 + d_results_pctl*0.25 + contested_shots_pctl*0.10 + (1-guard_pctl)*0.10 + (1-center_pctl)*0.10` | Forward defense + results |
-| **chaser_score** | `stl_pctl*0.25 + deflections_pctl*0.20 + speed_pctl*0.10 + (1-difficulty_pctl)*0.20 + loose_balls_pctl*0.10 + d_results_pctl*0.15` | Steals + deflections + speed |
-| **versatile_score** | `versatility_pctl*0.30 + pos_balance_pctl*0.20 + difficulty_pctl*0.15 + d_results_pctl*0.20 + contested_shots_pctl*0.15` | Switch-everything + results |
-| **rim_score** | `blk_pctl*0.30 + (1-rim_fg_pctl)*0.25 + rim_fga_pctl*0.15 + center_pctl*0.15 + contested_shots_pctl*0.10 + height_pctl*0.05` | Blocks + rim suppression |
-| **drop_big_score** | `(1-versatility_pctl)*0.25 + center_pctl*0.25 + reb_pctl*0.20 + rim_fga_pctl*0.15 + boxouts_pctl*0.10 + (1-guard_pctl)*0.05` | Interior + low versatility |
-| **mobile_big_score** | `versatility_pctl*0.20 + center_pctl*0.20 + reb_pctl*0.15 + d_results_pctl*0.15 + height_pctl*0.10 + forward_pctl*0.10 + contested_shots_pctl*0.10` | Versatile big + results |
-
-### Step 3: Results Damping
-All scores are multiplied by a damping factor based on defensive results:
-```
-results_factor = max(0.35, 0.40 + 0.60 * d_results_pctl)
-```
-This suppresses all scores for bad defenders, creating better separation.
-
-### Step 4: Positional Feasibility Masks
-Soft multipliers (never hard gates) applied based on player's **own bio position** and **matchup assignment shares**:
-
-| Condition | Score Adjustments |
-|---|---|
-| Guard (own_pos) | rim_score ×0.10, drop_big ×0.05, mobile_big ×0.15 |
-| Short guard (< 6'5") | Additional rim ×0.05, drop ×0.02, mobile ×0.05 |
-| Center (own_pos) | poa_score ×0.15, chaser ×0.30 |
-| Center + low guard share (< 0.20) | poa_score ×0.10 |
-| Wing-big (own_pos) | poa_score ×0.40, chaser ×0.60 |
-| Low guard share (< 0.30) | poa_score ×0.50 |
-| Low center share (< 0.15) | rim ×0.30, drop ×0.20, mobile ×0.25 |
-| Tall player (≥ 6'8") | poa_score ×0.50, chaser ×0.70 |
-| Guard + not tall | wing_score ×0.50 |
-
-### Step 5: Role Repulsion
-High affinity for one role suppresses incompatible roles:
-
-| Trigger | Suppressed Scores |
-|---|---|
-| rim_score > 0.60 | poa ×(1-excess*0.5), chaser ×(1-excess*0.5) |
-| poa_score > 0.55 | rim ×(1-excess*0.5), drop ×(1-excess*0.5), mobile ×(1-excess*0.5) |
-| chaser_score > 0.55 | wing ×(1-excess*0.4) |
-| drop_big_score > 0.55 | versatile ×(1-excess*0.5), mobile ×(1-excess*0.5) |
-| versatile_score > 0.60 | drop ×(1-excess*0.3), wing ×(1-excess*0.3) |
-
-### Step 6: Assignment
-- **Primary archetype** = argmax(masked + repulsed scores)
-- **Confidence** = 0.40 + (top − second) / top × 0.55
-- **Secondary tag** = context-dependent modifier
-- **Post-classification override**: if effectiveness < 0.15 → Low-Activity (Liability)
+These indices are derived from assignment profile, tracking/hustle events, and movement workload only.
 
 ---
 
-## 4. Archetype Definitions
+## 4. Classification Flow (Role-Only, Confidence-Scored)
 
-Primary defensive archetypes (8 total):
+## Layer 1: Size Band Gating
+- Deterministic routing:
+  - If `pct_centers >= 0.50` or `height_inches >= 81` => `Big`
+  - Else if `pct_guards >= 0.60` => `Guard`
+  - Else => `Wing`
 
-1. **POA Defender** — Guards primary ball handlers exclusively; high elite matchup share, high on-ball exclusivity, guards guards
-2. **Wing Stopper** — Defends forwards/wings; strong results, high contested shots
-3. **Off-Ball Chaser** — High steals/deflections, fast, lower matchup difficulty (roaming/off-ball pressurer)
-4. **Versatile Defender** — Switches across all positions effectively; balanced position shares, high switch score (NEW in v3.0)
-5. **Rim Protector** — Elite blocks + rim FG suppression; interior anchor
-6. **Dropping Big** — Interior-only, low versatility, stays in paint
-7. **Mobile Big** — Versatile big who switches across positions; must be an actual big (height/position required)
-8. **Low-Activity Defender** — Engagement/results filter: poor results + low engagement, or extremely poor results regardless
+## Layer 2: Size-Band Role Confidence Scoring
 
-### Secondary Tags (modifiers)
-- `Switchable` — High versatility, guards multiple positions
-- `Lockdown` — Elite defensive results
-- `Ball Hawk` — Elite steal/deflection rate
-- `Hustler` — High hustle score
-- `Shot Blocker` — Elite block rate
-- `Primary` — Default; does the role without notable modifier
-- `Active Hands` — Good steal/deflection rate (Off-Ball Chaser default)
-- `Interior` — Paint-focused
-- `Help` — Default for bigs
-- `Hidden` — Low-Activity but not terrible results
-- `Liability` — Low-Activity with poor results
+Instead of "first gate passed wins", v3.2 computes eligible role confidence scores and assigns:
 
----
+`role = argmax(role_scores)`
 
-## 5. Defensive Effectiveness & Fit (NEW in v3.0)
+Representative examples:
+- Guard:
+  - `poa_score = 0.35*ball_pressure + 0.25*screen_navigation + 0.20*difficulty + 0.10*matchup_diversity + 0.10*engagement`
+    - Anchor: `ball_pressure >= 0.60`
+  - `offball_score = 0.35*offball_navigation + 0.25*deflections + 0.20*contest_3pt + 0.10*help_activity + 0.10*engagement`
+  - `rotational_score = 1 - std([ball_pressure, offball_navigation, switch_index])`
+    - Anchors: `0.30 <= ball_pressure <= 0.75` and `0.30 <= offball_navigation <= 0.75`
+  - `low_activity_score = 1 - engagement`
+    - Anchor: `engagement <= 0.30`
+- Wing:
+  - `wing_score = 0.35*difficulty + 0.25*ball_pressure + 0.20*contest_2pt + 0.10*matchup_diversity + 0.10*engagement`
+    - Anchor: `difficulty >= 0.60`
+  - `versatile_score = 0.30*switch_index + 0.25*matchup_diversity + 0.20*help_activity + 0.15*min(ball_pressure, rim_protection) + 0.10*engagement`
+    - Anchors: `switch_index >= 0.65` and `max_position_share <= 0.60`
+  - `offball_score` and `rotational_score` definitions mirror guard competition behavior.
+- Big:
+  - `rim_score = 0.45*rim_protection + 0.20*contest_2pt + 0.15*help_activity + 0.10*drop_coverage + 0.10*engagement`
+    - Anchor: `rim_protection >= 0.65`
+  - `drop_score = 0.40*drop_coverage + 0.25*rim_protection + 0.15*help_activity + 0.10*difficulty + 0.10*engagement`
+    - Anchors: `drop_coverage >= 0.65` and `switch_index <= 0.60`
+  - `mobile_score = 0.40*switch_index + 0.20*mobility_metric + 0.15*matchup_diversity + 0.15*help_activity + 0.10*rim_protection`
+    - Anchors: `switch_index >= 0.65` and `drop_coverage <= 0.75`
+  - `versatile_big_score = 0.30*switch_index + 0.25*matchup_diversity + 0.20*help_activity + 0.15*rim_protection + 0.10*ball_pressure`
+    - Anchors: `matchup_diversity >= 0.70` and `max_position_share <= 0.55`
+  - `rotational_big_score = 1 - std([rim_protection, switch_index, help_activity])`
+    - Anchors: `0.40 <= rim_protection <= 0.75` and `0.40 <= switch_index <= 0.75`
 
-### Defensive Effectiveness (0–1)
-Archetype-specific weighted metric combining results, hustle, and role-relevant stats:
+Role assignment uses score competition among anchor-eligible roles only.
 
-| Archetype | Formula |
-|---|---|
-| POA Defender | 0.40·d_results + 0.20·stl_pctl + 0.20·deflections + 0.20·contested_shots |
-| Wing Stopper | 0.50·d_results + 0.20·contested_shots + 0.15·deflections + 0.15·hustle |
-| Off-Ball Chaser | 0.25·d_results + 0.35·stl_pctl + 0.25·deflections + 0.15·hustle |
-| Versatile | 0.40·d_results + 0.20·versatility + 0.20·contested_shots + 0.20·deflections |
-| Rim Protector | 0.30·d_results + 0.35·blk_pctl + 0.20·(1-rim_fg_pctl) + 0.15·contested_shots |
-| Dropping Big | 0.35·d_results + 0.25·blk_pctl + 0.20·reb_pctl + 0.20·contested_shots |
-| Mobile Big | 0.35·d_results + 0.25·versatility + 0.20·contested_shots + 0.20·hustle |
+## Layer 3: Margin Stability Rule
+- Let `top_score` and `second_score` be the top two eligible role scores in-band.
+- If `top_score - second_score < 0.05`, assign rotational role (`Rotational Defender` or `Rotational Big`) when available.
+- This avoids brittle cliff effects and suppresses order bias from branch-style routing.
 
-### Defensive Fit (tier)
-| Tier | Effectiveness Threshold |
-|---|---|
-| Elite | ≥ 0.75 |
-| Good | ≥ 0.55 |
-| Average | ≥ 0.35 |
-| Poor | < 0.35 |
+## Layer 4: Low-Activity Override
+- If `engagement < 0.25` and `primary_score < 0.65` => force `Low-Activity Defender`.
 
----
-
-## 6. Output Schema
-
-Key output fields in `data/processed/defensive_archetypes_v2.parquet`:
-
-| Column | Description |
-|---|---|
-| `defensive_archetype` | Primary defensive archetype (8 types) |
-| `defensive_secondary` | Secondary modifier tag |
-| `defensive_confidence` | 0–0.95 confidence score |
-| `defensive_effectiveness` | 0–1 archetype-specific results quality |
-| `defensive_fit` | Elite / Good / Average / Poor |
-| `assignment_difficulty` | High / Medium / Low |
-| `switch_score` | Versatility metric |
-| `versatility_pctl` | Switch score percentile |
-| `avg_opponent_ppg` | Matchup difficulty proxy |
-| `elite_matchup_pct` | Share vs elite scorers |
-| `STL_PER100_DEF_POSS` | Steals per 100 defensive possessions |
-| `BLK_PCT` | Per-game blocks / per-game rim FGA (0–1) |
-| `DEF_RIM_FG_PCT` | Opponent FG% at rim when defending |
-| `RIM_FGA_RATE` | Rim FGA rate (per game) |
-| `DEFLECTIONS` | Per-game deflections |
-| `CONTESTED_SHOTS` | Per-game contested shots |
-| `engagement_score` | Workload + movement composite |
-| `hustle_score` | Rebounding + hustle composite |
-| `D_FG_DIFF` | Opponent FG% impact (PCT_PLUSMINUS_Overall) |
-| `d_results_pctl` | Defensive results percentile |
-| `poa_score` ... `mobile_big_score` | 7 role affinity scores (0–1) |
+## Layer 5: Confidence
+- `confidence = 0.5 + 0.5 * (primary_score - second_score)`
+- Interpreted on `[0.5, 1.0]` as role separation strength.
 
 ---
 
-## 7. Repro & Commands
+## 5. Archetypes (v3.2)
 
-```bash
-# Run the defensive archetype pipeline
-.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+1. `POA Defender`
+2. `Wing Stopper`
+3. `Off-Ball Chaser`
+4. `Versatile Defender`
+5. `Rim Protector`
+6. `Dropping Big`
+7. `Mobile Big`
+8. `Rotational Defender`
+9. `Rotational Big`
+10. `Low-Activity Defender`
 
-# Fetch hustle stats (prerequisite)
-.venv/bin/python src/data_fetch/fetch_defensive_metrics.py
-```
+Secondary tags are behavior modifiers (e.g., `Screen Navigator`, `Ball Hawk`, `Switchable`, `Helper`, `Liability`).
 
-Outputs:
+---
+
+## 6. Impact Overlay (Not Used for Assignment)
+
+`defensive_effectiveness` and `defensive_fit` remain in outputs for downstream value modeling.
+
+- They can still use result-quality signals (`d_results_pctl`, rim suppression, etc.).
+- They **must not** feed back into role assignment in this stage.
+
+---
+
+## 7. Outputs
+
+Primary files:
 - `data/processed/defensive_archetypes_v2.parquet`
 - `data/processed/defensive_archetypes_v2.csv`
 
+Impact report files (baseline vs v3.2 run):
+- `data/processed/defensive_archetypes_v2_impact_report.csv`
+- `data/processed/defensive_archetypes_v2_impact_report.txt`
+
+Key new/updated fields include:
+- `size_band`
+- `ball_pressure_index_pctl`
+- `screen_navigation_index_pctl`
+- `offball_navigation_index_pctl`
+- `drop_coverage_index_pctl`
+- `switch_index_pctl`
+- `rim_protection_index_pctl`
+- `help_activity_index_pctl`
+- `liability_index_pctl`
+- `matchup_diversity_pctl`
+
 ---
 
-## 8. Known Limitations & Future Work
+## 8. Repro
 
-- **Trae Young / Cam Thomas edge cases**: Players with moderate engagement but poor results may not be caught by Low-Activity gate. The `defensive_fit=Poor` label communicates this.
-- **Luka Dončić**: D_FG_DIFF classifies him as average (d_results ~0.55), not terrible. May need EPM/RAPM-calibrated defensive metric.
-- Add RAPM/DRAPM residuals to calibrate effectiveness beyond D_FG_DIFF alone.
-- Add synergy defensive POSS_PCT for PR Ball Handler defense as POA signal.
-- Add rim deterrence proxies (on/off rim attempt rates).
-- Normalize within positional clusters (guards / wings / bigs) for tighter comparisons.
-- Consider scheme-specific adjustments (drop coverage vs switch-everything).
+```bash
+.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
+```
 
-Last updated: 2026-02-11
+Last updated: 2026-02-13 (v3.2)
