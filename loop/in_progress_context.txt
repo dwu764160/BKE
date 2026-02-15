@@ -348,3 +348,25 @@ SOURCES_READ:
 
 NEXT_STEPS (explicit):
 - Optional: add compact consistency audit in viewer generation to flag players where `primary_position_estimate` disagrees with legacy bio position.
+
+CONTEXT:
+- Task: Salary integration for player data viewer. Add per-season salary to player modal subtitle in app/player_data_viewer.py, using data/historical/player_salaries_{season}.parquet files.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: app/player_data_viewer.py, src/data_fetch/fetch_player_salaries.py, data/historical/player_salaries_2022-23.parquet, etc.
+- Status: ✅ Complete. Salary now appears in modal subtitle for correct player-season.
+
+FAILURE_REASON:
+- N/A (implementation completed successfully).
+
+ATTEMPTED_METHODS:
+- Added salary loader and player_id normalization to viewer script.
+- Patched modal subtitle logic to append salary if present.
+- Validated output in app/player_data.html and confirmed correct salary for Joel Embiid 2023-24.
+
+SOURCES_READ:
+- Local: app/player_data_viewer.py
+- Local: data/historical/player_salaries_2022-23.parquet, data/historical/player_salaries_2023-24.parquet
+- Local: readme.md
+
+NEXT_STEPS (explicit):
+- None. Await further user requests or validation feedback.

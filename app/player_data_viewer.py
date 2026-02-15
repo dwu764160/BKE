@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import re
 
 PROCESSED_DIR = "data/processed"
 HISTORICAL_DIR = "data/historical"
@@ -101,6 +102,32 @@ def load_player_season_stats():
         df["SEASON"] = df["SEASON"].astype(str)
     return df
 
+def load_player_salaries():
+    files = []
+    try:
+        files = sorted([
+            os.path.join(HISTORICAL_DIR, f)
+            for f in os.listdir(HISTORICAL_DIR)
+            if re.match(r"player_salaries_\d{4}-\d{2}\.parquet$", f)
+        ])
+    except Exception:
+        files = []
+
+    if files:
+        frames = []
+        for path in files:
+            df = _load_parquet(path)
+            if df.empty:
+                continue
+            if "SEASON" not in df.columns:
+                season = os.path.basename(path).replace("player_salaries_", "").replace(".parquet", "")
+                df["SEASON"] = season
+            frames.append(df)
+        if frames:
+            return pd.concat(frames, ignore_index=True)
+
+    return _load_parquet(f"{HISTORICAL_DIR}/player_salaries.parquet")
+
 def load_team_map():
     path = f"{HISTORICAL_DIR}/teams.parquet"
     if not os.path.exists(path):
@@ -151,6 +178,17 @@ def clean_value(val):
     if isinstance(val, (pd.Timestamp,)):
         return val.isoformat()
     return val
+
+def normalize_player_id(val):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return str(int(float(val)))
+    except (ValueError, TypeError):
+        s = str(val).strip()
+        if s.endswith('.0'):
+            s = s[:-2]
+        return s or None
 
 def row_to_dict(row, exclude=None):
     exclude = set(exclude or [])
@@ -324,7 +362,7 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -349,6 +387,21 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
     linear_map   = build_record_map(linear_df,   ["player_id", "SEASON"], ["player_name", "season"])
     season_stats_map = build_record_map(season_stats_df, ["player_id", "SEASON"], ["PLAYER_NAME", "TEAM_ABBREVIATION", "season"])
     pos_est_map = build_record_map(pos_est_df, ["player_id", "SEASON"], [])
+
+    salary_map = {}
+    if salaries_df is not None and not salaries_df.empty:
+        temp = salaries_df.copy()
+        if "player_id" not in temp.columns and "PERSON_ID" in temp.columns:
+            temp["player_id"] = temp["PERSON_ID"]
+        if "SEASON" not in temp.columns and "season" in temp.columns:
+            temp["SEASON"] = temp["season"].astype(str)
+        if "player_id" in temp.columns:
+            temp["player_id"] = temp["player_id"].apply(normalize_player_id)
+        if "SEASON" in temp.columns:
+            temp["SEASON"] = temp["SEASON"].astype(str)
+        if all(c in temp.columns for c in ["player_id", "SEASON", "salary"]):
+            for _, r in temp[["player_id", "SEASON", "salary"]].dropna(subset=["player_id", "SEASON"]).iterrows():
+                salary_map[(str(r["player_id"]), str(r["SEASON"]))] = clean_value(r.get("salary"))
 
     bios_map = {}
     if bios_df is not None and not bios_df.empty:
@@ -416,6 +469,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
 
         detail = {
             'profile': profile,
+            'salary': salary_map.get((pid, season)),
             'off_reasons': get_offensive_reasons(row),
             'def_reasons': get_defensive_reasons(row),
             'playtypes': get_playtype_rankings(row),
@@ -638,6 +692,12 @@ function fv(v){
   if(typeof v==='number'){if(Number.isInteger(v))return v.toString();var a=Math.abs(v);if(a>=100)return v.toFixed(1);if(a>=10)return v.toFixed(2);return v.toFixed(3);}
   return String(v);
 }
+function fMoney(v){
+    if(v===null||v===undefined||v==='')return '';
+    var n=Number(v);
+    if(!isFinite(n))return String(v);
+    return '$'+Math.round(n).toLocaleString('en-US');
+}
 
 /* ---- progress ---- */
 function updProg(cur,tot){
@@ -765,12 +825,14 @@ function openModal(key){
   /* lazy-load detail record */
   var d=getDetail(key);
   var pr=d.profile||{};
+    var salary=d.salary;
   var team=p.team||pr.team_abbrev||'';
   document.getElementById('mTitle').textContent=p.name+' ('+p.season+')';
   var sub=team;
   if(pr.position)sub+=' \u00b7 '+pr.position;
   if(pr.age)sub+=' \u00b7 Age '+pr.age;
   if(pr.height)sub+=' \u00b7 '+pr.height;
+    if(salary!==null&&salary!==undefined&&salary!=='')sub+=' \u00b7 '+fMoney(salary);
   document.getElementById('mSub').textContent=sub;
 
   var hl=[];
@@ -920,16 +982,18 @@ def main():
     xrapm_v2_df = load_xrapm_v2()
     linear_df   = load_linear_metrics()
     season_stats_df = load_player_season_stats()
+    salaries_df = load_player_salaries()
 
     print(f"  Offensive archetypes: {len(off_df)}")
     print(f"  Defensive archetypes: {len(def_df)}")
     print(f"  Position estimates: {len(pos_est_df)}")
     print(f"  Linear metrics: {len(linear_df)}")
     print(f"  Season stats: {len(season_stats_df)}")
+    print(f"  Salaries: {len(salaries_df)}")
 
     html = generate_html(
         off_df, def_df, profiles_df, bios_df, pos_est_df,
-        rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, team_map,
+        rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map,
     )
 
     os.makedirs("app", exist_ok=True)

@@ -439,3 +439,4 @@ v4.3 changes (applied 2026-02-07):
 		python3 src/data_compute/compute_defensive_archetypes_v2.py
 		python3 app/player_data_viewer.py
 		```
+- **NEW:** Salary fetcher (`src/data_fetch/fetch_player_salaries.py`) scrapes ESPN, outputs per-season parquet files (`player_salaries_2022-23.parquet`, etc). Viewer now loads these and displays salary in the player modal subtitle for the correct season.

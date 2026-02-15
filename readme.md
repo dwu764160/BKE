@@ -20,58 +20,52 @@ Pipeline (order matters)
 
 ## Fetch / Ingest
 ```bash
-python3 src/data_fetch/fetch_pbp/bootstrap_nba_session.py
-python3 src/data_fetch/fetch_pbp/capture_nba_headers.py
-
-# 2. Fetch historical and player/team metadata
-python3 src/data_fetch/fetch_historical_data.py
-python3 src/data_fetch/fetch_players.py
-python3 src/data_fetch/fetch_teams.py
-python3 src/data_fetch/fetch_profiles.py
-# Optionally fetch play-by-play (choose one):
-python3 src/data_fetch/fetch_pbp/CDN_pbp_fetch.py
-#    - or DOM fallback (Playwright required)
-python3 src/data_fetch/fetch_pbp/fetch_play_by_play.py
-python3 src/data_fetch/fetch_official_stats.py
-python3 src/data_fetch/fetch_tracking_data.py
-python3 src/data_fetch/fetch_box_scores_complete.py
-python3 src/data_fetch/fetch_matchup_data.py
-python3 src/data_fetch/fetch_shot_zones.py
+python3 src/data_fetch/fetch_pbp/bootstrap_nba_session.py        # Init NBA session (cookies, headers)
+python3 src/data_fetch/fetch_pbp/capture_nba_headers.py          # Save NBA API headers
+python3 src/data_fetch/fetch_historical_data.py                  # Fetch historical game/team data
+python3 src/data_fetch/fetch_players.py                          # Fetch player metadata
+python3 src/data_fetch/fetch_teams.py                            # Fetch team metadata
+python3 src/data_fetch/fetch_profiles.py                         # Fetch player profiles
+python3 src/data_fetch/fetch_player_salaries.py                  # Fetch player salary data (per season, ESPN)
+python3 src/data_fetch/fetch_pbp/CDN_pbp_fetch.py                # Fetch play-by-play (CDN)
+python3 src/data_fetch/fetch_pbp/fetch_play_by_play.py           # Fetch play-by-play (DOM fallback)
+python3 src/data_fetch/fetch_official_stats.py                   # Fetch official NBA stats
+python3 src/data_fetch/fetch_tracking_data.py                    # Fetch NBA tracking data
+python3 src/data_fetch/fetch_box_scores_complete.py              # Fetch full box scores
+python3 src/data_fetch/fetch_matchup_data.py                     # Fetch matchup data
+python3 src/data_fetch/fetch_shot_zones.py                       # Fetch shot zone data
 ```
 
 ## Derive / Normalize / Features
 ```bash
-python3 src/data_fetch/derive_team_game_logs.py
-python3 src/data_fetch/summarize_team_logs.py
-python3 src/utils/export_db_to_parquet.py
-python3 src/data_normalize/run_normalization.py
-python3 src/features/derive_lineups.py
-python3 src/features/derive_possessions.py
-python3 src/features/compute_rest_home_back2back.py
+python3 src/data_fetch/derive_team_game_logs.py           # Derive team game logs
+python3 src/data_fetch/summarize_team_logs.py             # Summarize team logs
+python3 src/utils/export_db_to_parquet.py                 # Export DB tables to parquet
+python3 src/data_normalize/run_normalization.py           # Normalize raw data
+python3 src/features/derive_lineups.py                    # Derive lineups
+python3 src/features/derive_possessions.py                # Derive possessions
+python3 src/features/compute_rest_home_back2back.py       # Compute rest/home/back-to-back
 ```
 
 ## Compute / Metrics
 ```bash
-python3 src/data_compute/compute_clean_possessions.py
-python3 src/data_compute/compute_rapm.py
-# xRAPM: Use compute_xrapm_improved.py (supersedes compute_xrapm.py)
-python3 src/data_compute/compute_xrapm_improved.py
-python3 src/data_compute/compute_local_metrics.py
-python3 src/data_compute/compute_linear_metrics.py
-python3 src/data_compute/compute_advanced_metrics.py
-python3 src/data_compute/compute_player_profiles.py
-python3 src/data_compute/compute_player_archetypes.py
-# Position estimate from lineup height-rank (PG/SG/SF/PF/C shares)
-python3 src/data_compute/compute_position_estimate.py
-# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.5: Rim Protectors extremely rare, Wing Stoppers much more common; hard primary-position eligibility gates + deterministic role competition; no Rotational Big, 0.05 margin when Rotational Defender is eligible)
-python3 src/data_compute/compute_defensive_archetypes_v2.py
+python3 src/data_compute/compute_clean_possessions.py         # Clean/validate possessions
+python3 src/data_compute/compute_rapm.py                     # Compute RAPM
+python3 src/data_compute/compute_xrapm_improved.py           # Compute xRAPM (improved)
+python3 src/data_compute/compute_local_metrics.py            # Compute local metrics
+python3 src/data_compute/compute_linear_metrics.py           # Compute linear metrics (WS, BPM, VORP)
+python3 src/data_compute/compute_advanced_metrics.py         # Compute advanced metrics
+python3 src/data_compute/compute_player_profiles.py          # Compute player profiles
+python3 src/data_compute/compute_player_archetypes.py        # Compute offensive archetypes
+python3 src/data_compute/compute_position_estimate.py        # Compute position estimate (PG/SG/SF/PF/C shares)
+python3 src/data_compute/compute_defensive_archetypes_v2.py  # Compute defensive archetypes (v2)
 ```
 
 ## Visualization / Export
 ```bash
-python3 app/player_archetype_viewer.py
-python3 app/player_data_viewer.py
-python3 src/utils/export_db_to_parquet.py
+python3 app/player_archetype_viewer.py    # Generate archetype viewer
+python3 app/player_data_viewer.py         # Generate player data viewer (with salary)
+python3 src/utils/export_db_to_parquet.py # Export DB tables to parquet
 ```
 
 # Validation & tests
@@ -89,7 +83,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 ```
 
 # Data layout (locations used by scripts)
-- `data/historical/` — raw + normalized PBP, possessions, caches
+- `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary)
 - `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
 - `data/tracking/` — tracking-derived JSONs
 
@@ -106,3 +100,9 @@ Create a single file (e.g., archetype_coefficients.json) containing coefficients
 ## Consolidated Player Profile File
 
 After player evaluation is complete, merge all player data (bios, advanced stats, archetypes, RAPM, position, etc.) into a single consolidated file per season (e.g., player_profiles_2024-25.parquet). This file would serve as the authoritative, denormalized source for all downstream tools and viewers, enabling fast, reliable, and simple access to the complete player record for any season.
+
+# Known Bugs / Issues
+
+## Player Names such as Jokic and Doncic breaking name-based matching
+
+## Standardized nicknames such as Herb Jones vs. Herbert Jones, Carlton Carrington vs. Bub Carrington, etc.

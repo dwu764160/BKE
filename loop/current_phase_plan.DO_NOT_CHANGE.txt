@@ -83,11 +83,19 @@ End of file — DO NOT CHANGE
            Shows all players with offensive/defensive archetypes and reasoning.
            Supports search/filter by name, archetype, season.
 
-[ ] Stream D: Player Profile System Enhancement
+[x] Stream D: Player Profile System Enhancement
     Command: TBD
     Notes: Current system: data/player_team_profiles.db (SQLite) with 686 players.
            Fields: player_id, full_name, team_id, position, age, height, weight, wingspan (0% filled), experience.
            PLAN: Add archetypes, career stats, salary data. Export to enhanced profile format.
+
+[x] Stream D: Fetch Player Salary Data (ESPN)
+    Command: python src/data_fetch/fetch_player_salaries.py
+    Notes: Scrapes ESPN, outputs per-season parquet files (player_id, player_name, team, team_id, season, salary).
+
+[x] Stream E: Player Data Viewer (Salary Integration)
+    Command: python app/player_data_viewer.py
+    Notes: Loads salary parquet files, displays salary in player modal subtitle for correct season.
 
 [ ] Stream D: Archetype Evaluation & Model Integration
     Command: python src/modeling/evaluate_players.py
