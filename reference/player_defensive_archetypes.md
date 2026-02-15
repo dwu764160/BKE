@@ -1,10 +1,10 @@
-# Player Defensive Archetypes — v3.3 Logic Documentation
+# Player Defensive Archetypes — v3.5 Logic Documentation
 
 ## Overview
 
 This document is the authoritative reference for the defensive archetype classifier implemented in [src/data_compute/compute_defensive_archetypes_v2.py](src/data_compute/compute_defensive_archetypes_v2.py).
 
-The v3.3 system explicitly separates:
+The v3.4 system explicitly separates:
 - **Archetype (role):** what a player is asked to do on defense
 - **Impact (quality):** how well the player performs that role
 
@@ -12,16 +12,13 @@ Archetype assignment is **behavior-only**. Impact metrics (`defensive_effectiven
 
 ---
 
-## 1. Core v3.3 Changes
 
-- Removed impact from archetype assignment flow.
-- Replaced hard-threshold routing with a **3-layer confidence-scored decision system**:
-  1. Size-band gating (Guard / Wing / Big)
-  2. Behavioral role confidence scores (continuous, percentile-based)
-  3. Margin stability rule (small top-2 gaps route to rotational role)
-- Added explicit rotational fallback archetype for perimeter bands only:
-  - `Rotational Defender`
-- Removed `Rotational Big` from assignment; big-band players now classify as `Rim Protector`, `Dropping Big`, or `Mobile Big` (with `Low-Activity Defender` override still available).
+## 1. Core v3.5 Changes
+
+- All v3.4 logic and eligibility gates retained.
+- Rim Protectors are now extremely rare (score coefficient 0.80, anchor min 0.78; all borderline cases go to Dropping/Mobile Bigs).
+- Wing Stoppers are more common (difficulty threshold lowered to 0.50, score boost 1.08; primarily pulls from Rotational Defender, not other set archetypes).
+- All tuning is parameterized in `compute_defensive_archetypes_v2.py` for further adjustment.
 
 ---
 
@@ -67,13 +64,19 @@ These indices are derived from assignment profile, tracking/hustle events, and m
 
 ## 4. Classification Flow (Role-Only, Confidence-Scored)
 
-## Layer 1: Size Band Gating
+## Layer 1: Size Band (Context) + Primary Position (Hard Gate)
 - Deterministic routing:
   - If `pct_centers >= 0.50` or `height_inches >= 81` => `Big`
   - Else if `pct_guards >= 0.60` => `Guard`
   - Else => `Wing`
 
-## Layer 2: Size-Band Role Confidence Scoring
+Hard eligibility by `primary_position_estimate`/bio fallback:
+- Big roles (`Dropping Big`, `Mobile Big`, `Rim Protector`): `Center`, `Forward-Center`
+- Forward specialist roles (`Wing Stopper`, `Versatile Defender`): `Forward`, `Guard-Forward`, `Forward-Center`
+- Perimeter roles (`POA Defender`, `Off-Ball Chaser`, `Rotational Defender`): `Guard`, `Guard-Forward`, `Forward`
+- `Low-Activity Defender`: all positions
+
+## Layer 2: Role Confidence Scoring + Position Coefficients
 
 Instead of "first gate passed wins", v3.3 computes eligible role confidence scores and assigns:
 
@@ -90,26 +93,29 @@ Representative examples:
     - Anchor: `engagement <= 0.30`
 - Wing:
   - `wing_score = 0.35*difficulty + 0.25*ball_pressure + 0.20*contest_2pt + 0.10*matchup_diversity + 0.10*engagement`
-    - Anchor: `difficulty >= 0.60`
+    - Anchor (v3.5 tuned): `difficulty >= 0.50` (Wing Stoppers more common)
   - `versatile_score = 0.30*switch_index + 0.25*matchup_diversity + 0.20*help_activity + 0.15*min(ball_pressure, rim_protection) + 0.10*engagement`
-    - Anchors: `switch_index >= 0.65` and `max_position_share <= 0.60`
+    - Anchors (v3.4 tuned): `switch_index >= 0.62` and `max_position_share <= 0.66`
   - `offball_score` and `rotational_score` definitions mirror guard competition behavior.
 - Big:
   - `rim_score = 0.45*rim_protection + 0.20*contest_2pt + 0.15*help_activity + 0.10*drop_coverage + 0.10*engagement`
-    - Anchor: `rim_protection >= 0.65`
+    - Anchor (v3.5 tuned): `rim_protection >= 0.78` (Rim Protectors extremely rare)
   - `drop_score = 0.40*drop_coverage + 0.25*rim_protection + 0.15*help_activity + 0.10*difficulty + 0.10*engagement`
     - Anchors: `drop_coverage >= 0.65` and `switch_index <= 0.60`
   - `mobile_score = 0.40*switch_index + 0.20*mobility_metric + 0.15*matchup_diversity + 0.15*help_activity + 0.10*rim_protection`
     - Anchors: `switch_index >= 0.65` and `drop_coverage <= 0.75`
-  - Big-band assignment excludes `Rotational Big` in v3.3.
-  - If anchor-gated big roles are empty, fallback competition uses all three big roles: `Rim Protector`, `Dropping Big`, `Mobile Big`.
+  - Big-band assignment excludes `Rotational Big` in v3.4.
+  - Forward-Center coefficient preference applies during score competition:
+    - Forward roles boosted
+    - Big roles slightly penalized
+  - If anchor-gated eligible roles are empty for the position group, fallback competition runs over the position-allowed non-low-activity roles.
 
 Role assignment uses score competition among anchor-eligible roles only.
 
 ## Layer 3: Margin Stability Rule
 - Let `top_score` and `second_score` be the top two eligible role scores in-band.
 - If `top_score - second_score < 0.05`, assign `Rotational Defender` for guard/wing bands.
-- Big band does not use rotational fallback in v3.3.
+- Rotational fallback applies only when `Rotational Defender` is position-eligible.
 - This avoids brittle cliff effects and suppresses order bias from branch-style routing.
 
 ## Layer 4: Low-Activity Override
@@ -121,7 +127,7 @@ Role assignment uses score competition among anchor-eligible roles only.
 
 ---
 
-## 5. Archetypes (v3.3)
+## 5. Archetypes (v3.4)
 
 1. `POA Defender`
 2. `Wing Stopper`
@@ -152,7 +158,7 @@ Primary files:
 - `data/processed/defensive_archetypes_v2.parquet`
 - `data/processed/defensive_archetypes_v2.csv`
 
-Impact report files (baseline vs v3.3 run):
+Impact report files (baseline comparison utility):
 - `data/processed/defensive_archetypes_v2_impact_report.csv`
 - `data/processed/defensive_archetypes_v2_impact_report.txt`
 
@@ -176,4 +182,4 @@ Key new/updated fields include:
 .venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
-Last updated: 2026-02-14 (v3.3)
+Last updated: 2026-02-15 (v3.5)

@@ -63,7 +63,7 @@ python3 src/data_compute/compute_player_profiles.py
 python3 src/data_compute/compute_player_archetypes.py
 # Position estimate from lineup height-rank (PG/SG/SF/PF/C shares)
 python3 src/data_compute/compute_position_estimate.py
-# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.3 role competition: deterministic size-band, no Rotational Big, 0.05 margin on guard/wing)
+# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.4 hard primary-position eligibility gates + deterministic role competition; no Rotational Big, 0.05 margin when Rotational Defender is eligible)
 python3 src/data_compute/compute_defensive_archetypes_v2.py
 ```
 

@@ -1,6 +1,12 @@
 """
 src/data_compute/compute_defensive_archetypes_v2.py
-Role-based defensive archetype classification (v3.3).
+Role-based defensive archetype classification (v3.4).
+
+v3.4 Key Changes from v3.3:
+    - Added hard primary-position eligibility gates for each defensive archetype
+    - Center is restricted to big roles; Guard is restricted to perimeter roles
+    - Forward-Center can access forward + big roles with forward-role preference coefficients
+    - Tuned distribution by coefficients: Rim Protector slightly rarer, Versatile Defender more common
 
 v3.3 Key Changes from v3.2:
     - Removed Rotational Big archetype from assignment path
@@ -15,7 +21,7 @@ v3.2 Key Changes from v3.1:
     - Rotational Defender / Rotational Big now positive identity roles (not pure leftovers)
     - Defensive effectiveness/fit retained as post-classification overlay only
 
-Defensive Archetype Definitions (v3.3 — Confidence-Scored Decision Flow):
+Defensive Archetype Definitions (v3.4 — Confidence-Scored Decision Flow):
 =============================================================
 Primary Roles:
     1. POA Defender       — High ball pressure + screen navigation guard specialist
@@ -431,7 +437,7 @@ def compute_features(
 
 
 # =============================================================================
-# CLASSIFICATION (v3.2 — Confidence-Scored Decision Framework)
+# CLASSIFICATION (v3.4 — Confidence-Scored Decision Framework)
 # =============================================================================
 
 SCORE_COLS = [
@@ -440,6 +446,17 @@ SCORE_COLS = [
 ]
 
 MARGIN_RULE_GAP = 0.05
+
+# v3.4 tuning coefficients (distribution shaping only)
+RIM_PROTECTOR_SCORE_COEF = 0.45  # v3.5: Make Rim Protectors extremely rare
+VERSATILE_DEFENDER_SCORE_COEF = 1.12
+FORWARD_CENTER_FORWARD_ROLE_BOOST = 1.08
+FORWARD_CENTER_BIG_ROLE_PENALTY = 0.94
+
+# v3.4 anchor tuning
+RIM_PROTECTOR_ANCHOR_MIN = 0.95  # v3.5: Only the very top rim protectors qualify
+VERSATILE_SWITCH_ANCHOR_MIN = 0.62
+VERSATILE_MAX_POSITION_SHARE = 0.66
 
 
 def _own_position_group(pos_str):
@@ -494,6 +511,98 @@ def _classify_size_band(row):
         return "Guard"
 
     return "Wing"
+
+
+def _resolve_primary_position_bucket(row) -> str:
+    """Resolve canonical primary position bucket for hard eligibility gating."""
+    primary_est = str(row.get("primary_position_estimate", "")).strip()
+    primary_bio = str(row.get("primary_position", "")).strip()
+    source = primary_est if primary_est and primary_est != "Unknown" else primary_bio
+
+    if source in ("Center",):
+        return "Center"
+    if source in ("Forward-Center", "Center-Forward"):
+        return "Forward-Center"
+    if source in ("Forward",):
+        return "Forward"
+    if source in ("Guard-Forward", "Forward-Guard"):
+        return "Guard-Forward"
+    if source in ("Guard",):
+        return "Guard"
+
+    return "Unknown"
+
+
+def _allowed_roles_for_position(primary_bucket: str, size_band: str) -> set[str]:
+    """Hard role eligibility gates by primary position bucket."""
+    if primary_bucket == "Center":
+        return {
+            "Rim Protector",
+            "Dropping Big",
+            "Mobile Big",
+            "Low-Activity Defender",
+        }
+    if primary_bucket == "Forward-Center":
+        return {
+            "Rim Protector",
+            "Dropping Big",
+            "Mobile Big",
+            "Wing Stopper",
+            "Versatile Defender",
+            "Low-Activity Defender",
+        }
+    if primary_bucket in ("Forward", "Guard-Forward"):
+        return {
+            "POA Defender",
+            "Off-Ball Chaser",
+            "Rotational Defender",
+            "Wing Stopper",
+            "Versatile Defender",
+            "Low-Activity Defender",
+        }
+    if primary_bucket == "Guard":
+        return {
+            "POA Defender",
+            "Off-Ball Chaser",
+            "Rotational Defender",
+            "Low-Activity Defender",
+        }
+
+    # Unknown fallback mirrors current size band behavior while preserving hard role families.
+    if size_band == "Big":
+        return {"Rim Protector", "Dropping Big", "Mobile Big", "Low-Activity Defender"}
+    if size_band == "Guard":
+        return {"POA Defender", "Off-Ball Chaser", "Rotational Defender", "Low-Activity Defender"}
+    return {
+        "POA Defender",
+        "Off-Ball Chaser",
+        "Rotational Defender",
+        "Wing Stopper",
+        "Versatile Defender",
+        "Low-Activity Defender",
+    }
+
+
+def _apply_position_and_distribution_coefficients(primary_bucket: str, scores: dict[str, float]) -> dict[str, float]:
+    """Apply v3.5 distribution and Forward-Center preference coefficients."""
+    adjusted = dict(scores)
+
+    if "Rim Protector" in adjusted:
+        adjusted["Rim Protector"] *= RIM_PROTECTOR_SCORE_COEF
+    if "Versatile Defender" in adjusted:
+        adjusted["Versatile Defender"] *= VERSATILE_DEFENDER_SCORE_COEF
+    if "Wing Stopper" in adjusted:
+        adjusted["Wing Stopper"] *= 1.12  # v3.5: Further boost to Wing Stopper
+
+    if primary_bucket == "Forward-Center":
+        for role in ("Wing Stopper", "Versatile Defender"):
+            if role in adjusted:
+                adjusted[role] *= FORWARD_CENTER_FORWARD_ROLE_BOOST
+        for role in ("Rim Protector", "Dropping Big", "Mobile Big"):
+            if role in adjusted:
+                adjusted[role] *= FORWARD_CENTER_BIG_ROLE_PENALTY
+
+    return adjusted
 
 
 def _pick_with_margin(scores: dict[str, float], rotational_role: str | None):
@@ -622,7 +731,7 @@ def compute_defensive_fit(row, archetype):
 
 
 def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
-    """Role-only defensive classification (v3.3)."""
+    """Role-only defensive classification (v3.4)."""
     df = features.copy()
     qualified = df[(df["MIN"] >= MIN_MINUTES) & (df["GP"] >= MIN_GP)].copy()
     unqualified = df[(df["MIN"] < MIN_MINUTES) | (df["GP"] < MIN_GP)].copy()
@@ -902,113 +1011,112 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
 
         low_activity_score = 1 - engagement
 
+        primary_bucket = _resolve_primary_position_bucket(row)
+        allowed_roles = _allowed_roles_for_position(primary_bucket, size_band)
+        rotational_role = "Rotational Defender" if "Rotational Defender" in allowed_roles else None
+
+        poa_score = (
+            0.35 * ball_pressure
+            + 0.25 * screen_navigation
+            + 0.20 * difficulty
+            + 0.10 * matchup_diversity
+            + 0.10 * engagement
+        )
+        wing_score = (
+            0.35 * difficulty
+            + 0.25 * ball_pressure
+            + 0.20 * contest_2pt
+            + 0.10 * matchup_diversity
+            + 0.10 * engagement
+        )
+        versatile_score = (
+            0.30 * switch_index
+            + 0.25 * matchup_diversity
+            + 0.20 * help_activity
+            + 0.15 * min(ball_pressure, rim_protection)
+            + 0.10 * engagement
+        )
+        offball_score = (
+            0.35 * offball_navigation
+            + 0.25 * deflections
+            + 0.20 * contest_3pt
+            + 0.10 * help_activity
+            + 0.10 * engagement
+        )
+        rotational_score = 1 - np.std([ball_pressure, offball_navigation, switch_index])
+        rim_score = (
+            0.45 * rim_protection
+            + 0.20 * contest_2pt
+            + 0.15 * help_activity
+            + 0.10 * drop_coverage
+            + 0.10 * engagement
+        )
+        drop_score = (
+            0.40 * drop_coverage
+            + 0.25 * rim_protection
+            + 0.15 * help_activity
+            + 0.10 * difficulty
+            + 0.10 * engagement
+        )
+        mobile_score = (
+            0.40 * switch_index
+            + 0.20 * mobility_metric
+            + 0.15 * matchup_diversity
+            + 0.15 * help_activity
+            + 0.10 * rim_protection
+        )
+
+        all_scores = {
+            "POA Defender": poa_score,
+            "Wing Stopper": wing_score,
+            "Versatile Defender": versatile_score,
+            "Off-Ball Chaser": offball_score,
+            "Rotational Defender": rotational_score,
+            "Rim Protector": rim_score,
+            "Dropping Big": drop_score,
+            "Mobile Big": mobile_score,
+            "Low-Activity Defender": low_activity_score,
+        }
+        all_scores = _apply_position_and_distribution_coefficients(primary_bucket, all_scores)
+
         eligible_scores = {}
-
-        if size_band == "Guard":
-            poa_score = (
-                0.35 * ball_pressure
-                + 0.25 * screen_navigation
-                + 0.20 * difficulty
-                + 0.10 * matchup_diversity
-                + 0.10 * engagement
-            )
-            offball_score = (
-                0.35 * offball_navigation
-                + 0.25 * deflections
-                + 0.20 * contest_3pt
-                + 0.10 * help_activity
-                + 0.10 * engagement
-            )
-            rotational_score = 1 - np.std([ball_pressure, offball_navigation, switch_index])
-
-            if ball_pressure >= 0.60:
-                eligible_scores["POA Defender"] = poa_score
-            eligible_scores["Off-Ball Chaser"] = offball_score
-            if 0.30 <= ball_pressure <= 0.75 and 0.30 <= offball_navigation <= 0.75:
-                eligible_scores["Rotational Defender"] = rotational_score
-            if engagement <= 0.30:
-                eligible_scores["Low-Activity Defender"] = low_activity_score
-
-            rotational_role = "Rotational Defender"
-
-        elif size_band == "Wing":
-            wing_score = (
-                0.35 * difficulty
-                + 0.25 * ball_pressure
-                + 0.20 * contest_2pt
-                + 0.10 * matchup_diversity
-                + 0.10 * engagement
-            )
-            versatile_score = (
-                0.30 * switch_index
-                + 0.25 * matchup_diversity
-                + 0.20 * help_activity
-                + 0.15 * min(ball_pressure, rim_protection)
-                + 0.10 * engagement
-            )
-            offball_score = (
-                0.35 * offball_navigation
-                + 0.25 * deflections
-                + 0.20 * contest_3pt
-                + 0.10 * help_activity
-                + 0.10 * engagement
-            )
-            rotational_score = 1 - np.std([ball_pressure, offball_navigation, switch_index])
-
-            if difficulty >= 0.60:
-                eligible_scores["Wing Stopper"] = wing_score
-            if switch_index >= 0.65 and max_position_share <= 0.60:
-                eligible_scores["Versatile Defender"] = versatile_score
-            eligible_scores["Off-Ball Chaser"] = offball_score
-            if 0.30 <= ball_pressure <= 0.75 and 0.30 <= offball_navigation <= 0.75:
-                eligible_scores["Rotational Defender"] = rotational_score
-            if engagement <= 0.30:
-                eligible_scores["Low-Activity Defender"] = low_activity_score
-
-            rotational_role = "Rotational Defender"
-
-        else:  # Big
-            rim_score = (
-                0.45 * rim_protection
-                + 0.20 * contest_2pt
-                + 0.15 * help_activity
-                + 0.10 * drop_coverage
-                + 0.10 * engagement
-            )
-            drop_score = (
-                0.40 * drop_coverage
-                + 0.25 * rim_protection
-                + 0.15 * help_activity
-                + 0.10 * difficulty
-                + 0.10 * engagement
-            )
-            mobile_score = (
-                0.40 * switch_index
-                + 0.20 * mobility_metric
-                + 0.15 * matchup_diversity
-                + 0.15 * help_activity
-                + 0.10 * rim_protection
-            )
-
-            # v3.3: Bigs compete only among true big roles.
-            # Keep anchor-gated primary entries, then fall back to full 3-role competition.
-            if rim_protection >= 0.65:
-                eligible_scores["Rim Protector"] = rim_score
-            if drop_coverage >= 0.65 and switch_index <= 0.60:
-                eligible_scores["Dropping Big"] = drop_score
-            if switch_index >= 0.65 and drop_coverage <= 0.75:
-                eligible_scores["Mobile Big"] = mobile_score
-            if not eligible_scores:
-                eligible_scores["Rim Protector"] = rim_score
-                eligible_scores["Dropping Big"] = drop_score
-                eligible_scores["Mobile Big"] = mobile_score
-            if engagement <= 0.30:
-                eligible_scores["Low-Activity Defender"] = low_activity_score
-
-            rotational_role = None
+        if "POA Defender" in allowed_roles and ball_pressure >= 0.60:
+            eligible_scores["POA Defender"] = all_scores["POA Defender"]        
+            # v3.5: Lower Wing Stopper difficulty threshold to 0.43 to increase prevalence, mainly pulling from Rotational Defender
+        if "Wing Stopper" in allowed_roles and difficulty >= 0.43:
+            eligible_scores["Wing Stopper"] = all_scores["Wing Stopper"]
+        if (
+            "Versatile Defender" in allowed_roles
+            and switch_index >= VERSATILE_SWITCH_ANCHOR_MIN
+            and max_position_share <= VERSATILE_MAX_POSITION_SHARE
+        ):
+            eligible_scores["Versatile Defender"] = all_scores["Versatile Defender"]
+        if "Off-Ball Chaser" in allowed_roles:
+            eligible_scores["Off-Ball Chaser"] = all_scores["Off-Ball Chaser"]
+        if (
+            "Rotational Defender" in allowed_roles
+            and 0.30 <= ball_pressure <= 0.75
+            and 0.30 <= offball_navigation <= 0.75
+        ):
+            eligible_scores["Rotational Defender"] = all_scores["Rotational Defender"]
+        if "Rim Protector" in allowed_roles and rim_protection >= RIM_PROTECTOR_ANCHOR_MIN:
+            eligible_scores["Rim Protector"] = all_scores["Rim Protector"]
+        if "Dropping Big" in allowed_roles and drop_coverage >= 0.65 and switch_index <= 0.60:
+            eligible_scores["Dropping Big"] = all_scores["Dropping Big"]
+        if "Mobile Big" in allowed_roles and switch_index >= 0.65 and drop_coverage <= 0.75:
+            eligible_scores["Mobile Big"] = all_scores["Mobile Big"]
+        if "Low-Activity Defender" in allowed_roles and engagement <= 0.30:
+            eligible_scores["Low-Activity Defender"] = all_scores["Low-Activity Defender"]
 
         if not eligible_scores:
-            eligible_scores[rotational_role] = 0.50
+            fallback_roles = [
+                role for role in allowed_roles
+                if role != "Low-Activity Defender" and role in all_scores
+            ]
+            if not fallback_roles and "Low-Activity Defender" in allowed_roles:
+                fallback_roles = ["Low-Activity Defender"]
+            for role in fallback_roles:
+                eligible_scores[role] = all_scores[role]
 
         archetype, top_score, second_score, margin = _pick_with_margin(
             eligible_scores, rotational_role
@@ -1156,7 +1264,7 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     print("=" * 70)
-    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.3")
+    print("DEFENSIVE ARCHETYPE CLASSIFICATION v3.4")
     print("  Confidence-Scored Decision Framework + Margin Rule")
     print("=" * 70)
 

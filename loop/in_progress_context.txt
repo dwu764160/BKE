@@ -24,7 +24,31 @@ Formatting rules for automations:
 
 Example (template):
 CONTEXT:
-- Task: run `src/data_compute/audit_win_shares.py`
+- Task: Defensive archetypes v3.5 tuning — Rim Protectors even rarer, Wing Stoppers more common (tuning only, logic/eligibility unchanged).
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `src/data_compute/compute_position_estimate.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+- Status: ✅ Completed. v3.5 tuning applied and documented.
+
+FAILURE_REASON:
+- N/A (implementation completed successfully).
+
+ATTEMPTED_METHODS:
+- Added canonical primary-position bucket resolver from `primary_position_estimate` with bio fallback.
+- Added strict role eligibility map by position bucket.
+- Added Forward-Center role-bias coefficients (forward-role boost + big-role penalty).
+- Applied distribution-only tuning coefficients: reduced Rim Protector weight, increased Versatile Defender weight.
+- Tightened Rim anchor (`rim_protection >= 0.70`) and slightly loosened Versatile anchors (`switch >= 0.62`, `max_position_share <= 0.66`).
+- Re-ran classifier and executed a post-run compliance audit by merging with `player_position_estimates.parquet`.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `src/data_compute/compute_position_estimate.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+
+NEXT_STEPS (explicit):
+- If more v3.5 tuning is requested, adjust only coefficients/anchors to target the desired Wing Stopper vs Off-Ball split while preserving hard positional gates.
+- Task: run `src/data_compute/compute_defensive_archetypes_v2.py` and validate output distribution and eligibility audit.
 - Env: Linux, venv at `.venv/`, Python 3.10
 - Key files: data/processed/player_profiles_advanced.parquet
 
