@@ -13,11 +13,12 @@ Archetype assignment is **behavior-only**. Impact metrics (`defensive_effectiven
 ---
 
 
+
 ## 1. Core v3.5 Changes
 
 - All v3.4 logic and eligibility gates retained.
-- Rim Protectors are now extremely rare (score coefficient 0.80, anchor min 0.78; all borderline cases go to Dropping/Mobile Bigs).
-- Wing Stoppers are more common (difficulty threshold lowered to 0.50, score boost 1.08; primarily pulls from Rotational Defender, not other set archetypes).
+- Rim Protectors are now extremely rare (score coefficient 0.70, anchor min 0.84; nearly all borderline cases go to Dropping/Mobile Bigs).
+- Wing Stoppers are much more common (difficulty threshold lowered to 0.40, score boost 1.12; increase comes from Rotational Defender, not other set archetypes).
 - All tuning is parameterized in `compute_defensive_archetypes_v2.py` for further adjustment.
 
 ---
@@ -93,13 +94,13 @@ Representative examples:
     - Anchor: `engagement <= 0.30`
 - Wing:
   - `wing_score = 0.35*difficulty + 0.25*ball_pressure + 0.20*contest_2pt + 0.10*matchup_diversity + 0.10*engagement`
-    - Anchor (v3.5 tuned): `difficulty >= 0.50` (Wing Stoppers more common)
+    - Anchor (v3.5 tuned): `difficulty >= 0.40` (Wing Stoppers much more common)
   - `versatile_score = 0.30*switch_index + 0.25*matchup_diversity + 0.20*help_activity + 0.15*min(ball_pressure, rim_protection) + 0.10*engagement`
     - Anchors (v3.4 tuned): `switch_index >= 0.62` and `max_position_share <= 0.66`
   - `offball_score` and `rotational_score` definitions mirror guard competition behavior.
 - Big:
   - `rim_score = 0.45*rim_protection + 0.20*contest_2pt + 0.15*help_activity + 0.10*drop_coverage + 0.10*engagement`
-    - Anchor (v3.5 tuned): `rim_protection >= 0.78` (Rim Protectors extremely rare)
+    - Anchor (v3.5 tuned): `rim_protection >= 0.84` (Rim Protectors extremely rare)
   - `drop_score = 0.40*drop_coverage + 0.25*rim_protection + 0.15*help_activity + 0.10*difficulty + 0.10*engagement`
     - Anchors: `drop_coverage >= 0.65` and `switch_index <= 0.60`
   - `mobile_score = 0.40*switch_index + 0.20*mobility_metric + 0.15*matchup_diversity + 0.15*help_activity + 0.10*rim_protection`
@@ -127,7 +128,7 @@ Role assignment uses score competition among anchor-eligible roles only.
 
 ---
 
-## 5. Archetypes (v3.4)
+## 5. Archetypes (v3.5)
 
 1. `POA Defender`
 2. `Wing Stopper`
@@ -182,4 +183,4 @@ Key new/updated fields include:
 .venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
-Last updated: 2026-02-15 (v3.5)
+Last updated: 2026-02-15 (v3.5, anchors/coefficients updated)

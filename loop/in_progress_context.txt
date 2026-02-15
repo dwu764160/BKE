@@ -24,7 +24,7 @@ Formatting rules for automations:
 
 Example (template):
 CONTEXT:
-- Task: Defensive archetypes v3.5 tuning — Rim Protectors even rarer, Wing Stoppers more common (tuning only, logic/eligibility unchanged).
+- Task: Defensive archetypes v3.5 tuning — Rim Protectors extremely rare (anchor min 0.84, score coef 0.70), Wing Stoppers much more common (difficulty threshold 0.40, score boost 1.12). Tuning only, logic/eligibility unchanged.
 - Env: Linux, venv at `.venv/`, Python 3.10
 - Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `src/data_compute/compute_position_estimate.py`, `reference/player_defensive_archetypes.md`, `readme.md`
 - Status: ✅ Completed. v3.5 tuning applied and documented.

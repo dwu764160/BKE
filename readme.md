@@ -63,7 +63,7 @@ python3 src/data_compute/compute_player_profiles.py
 python3 src/data_compute/compute_player_archetypes.py
 # Position estimate from lineup height-rank (PG/SG/SF/PF/C shares)
 python3 src/data_compute/compute_position_estimate.py
-# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.4 hard primary-position eligibility gates + deterministic role competition; no Rotational Big, 0.05 margin when Rotational Defender is eligible)
+# Defensive archetypes: Use compute_defensive_archetypes_v2.py (v3.5: Rim Protectors extremely rare, Wing Stoppers much more common; hard primary-position eligibility gates + deterministic role competition; no Rotational Big, 0.05 margin when Rotational Defender is eligible)
 python3 src/data_compute/compute_defensive_archetypes_v2.py
 ```
 
@@ -96,3 +96,13 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 # Notes
 - Inspect `src/*` scripts for CLI flags and optional args (season filters, caching).
 - Tweak `SEASON_DECAY_WEIGHTS` and `alphas` in `src/data_compute/compute_rapm.py` to change pooling/regularization.
+
+# Future Upgrade Ideas
+
+## Central Archetype Tuning Knob File
+
+Create a single file (e.g., archetype_coefficients.json) containing coefficients for each defensive and offensive archetype. Changing a coefficient in this file would directly control the prevalence/distribution of each archetype in the pipeline. Both compute_defensive_archetypes_v2.py and compute_player_archetypes.py would read from this file and apply the coefficients during role assignment. This enables rapid, unified, and transparent tuning of archetype distributions.
+
+## Consolidated Player Profile File
+
+After player evaluation is complete, merge all player data (bios, advanced stats, archetypes, RAPM, position, etc.) into a single consolidated file per season (e.g., player_profiles_2024-25.parquet). This file would serve as the authoritative, denormalized source for all downstream tools and viewers, enabling fast, reliable, and simple access to the complete player record for any season.

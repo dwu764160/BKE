@@ -151,7 +151,6 @@ def load_tracking_defense(season: str) -> pd.DataFrame:
     """Load tracking_Defense.parquet -- NOTE: all stats here are PER GAME."""
     path = TRACKING_DIR / season / "tracking_Defense.parquet"
     if path.exists():
-        df = pd.read_parquet(path)
         df["SEASON"] = season
         return df
     return pd.DataFrame()
@@ -187,6 +186,8 @@ def load_speed_distance() -> pd.DataFrame:
         path = TRACKING_DIR / season / "tracking_SpeedDistance.parquet"
         if path.exists():
             df = pd.read_parquet(path)
+
+        """
             df["SEASON"] = season
             all_data.append(df)
     if all_data:

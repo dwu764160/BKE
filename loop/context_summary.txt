@@ -1,4 +1,4 @@
-- 2026-02-15 — Defensive archetypes v3.5: Rim Protectors even rarer (all borderline go to Dropping/Mobile Bigs), Wing Stoppers more common (threshold lowered, score boost, mainly from Rotational Defender). Tuning only, logic/eligibility unchanged. All logic/thresholds parameterized. No eligibility violations. Ready for further tuning.
+- 2026-02-15 — Defensive archetypes v3.5: Rim Protectors extremely rare (anchor min 0.84, score coef 0.70; nearly all borderline go to Dropping/Mobile Bigs), Wing Stoppers much more common (difficulty threshold 0.40, score boost 1.12; increase mainly from Rotational Defender). Tuning only, logic/eligibility unchanged. All logic/thresholds parameterized. No eligibility violations. Ready for further tuning.
 
 Project Context Summary — Offensive Archetypes v4 (auto-updated)
 =================================================================
