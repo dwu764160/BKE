@@ -24,10 +24,10 @@ python3 src/features/compute_rest_home_back2back.py
 echo "[COMPUTE] compute_clean_possessions.py"
 python3 src/data_compute/compute_clean_possessions.py
 echo "[COMPUTE] compute_rapm.py"
-python3 src/data_compute/compute_rapm.py
+python3 src/modeling/compute_rapm.py
 # xRAPM: Use compute_xrapm_improved.py (supersedes compute_xrapm.py)
 echo "[COMPUTE] compute_xrapm_improved.py"
-python3 src/data_compute/compute_xrapm_improved.py
+python3 src/modeling/compute_xrapm_improved.py
 echo "[COMPUTE] compute_local_metrics.py"
 python3 src/data_compute/compute_local_metrics.py
 echo "[COMPUTE] compute_linear_metrics.py"

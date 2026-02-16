@@ -669,7 +669,7 @@ def diagnose_xrapm_discrepancy(df, report):
       To better match xRAPM:
       
       1. REDUCE REGULARIZATION (Quick fix)
-         - In compute_rapm.py, try alphas = [50, 100, 250, 500, 1000]
+            - In src/modeling/compute_rapm.py, try alphas = [50, 100, 250, 500, 1000]
          - Lower alpha = less shrinkage = higher values for stars
          
       2. ADD BOX-SCORE PRIOR (Best fix)
@@ -719,7 +719,7 @@ def validate_xrapm_vs_benchmark(report):
     
     xrapm_df = load_xrapm_data()
     if xrapm_df is None:
-        print("   ⚠️ No xRAPM data found. Run compute_xrapm.py first.")
+        print("   ⚠️ No xRAPM data found. Run src/modeling/compute_xrapm.py first.")
         return report
     
     season = "2023-24"

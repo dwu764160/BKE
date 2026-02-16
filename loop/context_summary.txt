@@ -1,3 +1,21 @@
+- 2026-02-16 — Post-move RAPM audit and validation
+	- Ran `python3 tests/validate_rapm.py` after modeling-path migration; suite completed successfully with stable pooled RAPM distribution and season-to-season stability checks passing.
+	- Path audit confirms active pipeline/docs now point to `src/modeling/` for RAPM/xRAPM scripts; remaining legacy references are limited to historical DO_NOT_CHANGE planning text.
+	- Follow-up analytical finding: split-type rows (`pooled_split`, `single_season_split`) carry ORAPM/DRAPM fields but no RAPM scalar, which can surface as zero-variance if validators consume the RAPM column blindly.
+
+- 2026-02-15 — Modeling layer restructure + advanced modeling plan kickoff
+	- RAPM/xRAPM scripts moved from `src/data_compute/` to `src/modeling/`:
+		- `compute_rapm.py`
+		- `compute_xrapm.py`
+		- `compute_xrapm_improved.py`
+	- Pipeline docs/scripts updated to new paths (`readme.md`, `scripts/compute_data.sh`, `scripts/reproduce_pipeline.sh`, `reference/data_reproduction.md`, `.github/copilot-instructions.md`).
+	- New modeling strategy document added: `reference/modelling_stats.md`.
+	- Core decision:
+		- RAPM/xRAPM remain computed in-house.
+		- DARKO handled as fetched canonical external input (manual CSV ingest path, no stable public API).
+		- New custom metric `BKE` defined as fused predictive impact model (RAPM + DARKO + linear/context signals), with role/value separation preserved.
+	- Rationale: separates linear computed stats from model-based impact estimates and establishes explicit modeling stage boundaries.
+
 - 2026-02-15 — Defensive archetypes v3.5: Rim Protectors extremely rare (anchor min 0.84, score coef 0.70; nearly all borderline go to Dropping/Mobile Bigs), Wing Stoppers much more common (difficulty threshold 0.40, score boost 1.12; increase mainly from Rotational Defender). Tuning only, logic/eligibility unchanged. All logic/thresholds parameterized. No eligibility violations. Ready for further tuning.
 
 Project Context Summary — Offensive Archetypes v4 (auto-updated)

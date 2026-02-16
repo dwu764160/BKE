@@ -1,5 +1,5 @@
 """
-src/data_compute/compute_xrapm.py
+src/modeling/compute_xrapm.py
 Computes xRAPM (Extended RAPM) with Box-Score Bayesian Prior.
 
 This implements an ESPN RPM-like approach:

@@ -50,8 +50,6 @@ python3 src/features/compute_rest_home_back2back.py       # Compute rest/home/ba
 ## Compute / Metrics
 ```bash
 python3 src/data_compute/compute_clean_possessions.py         # Clean/validate possessions
-python3 src/data_compute/compute_rapm.py                     # Compute RAPM
-python3 src/data_compute/compute_xrapm_improved.py           # Compute xRAPM (improved)
 python3 src/data_compute/compute_local_metrics.py            # Compute local metrics
 python3 src/data_compute/compute_linear_metrics.py           # Compute linear metrics (WS, BPM, VORP)
 python3 src/data_compute/compute_advanced_metrics.py         # Compute advanced metrics
@@ -59,6 +57,13 @@ python3 src/data_compute/compute_player_profiles.py          # Compute player pr
 python3 src/data_compute/compute_player_archetypes.py        # Compute offensive archetypes
 python3 src/data_compute/compute_position_estimate.py        # Compute position estimate (PG/SG/SF/PF/C shares)
 python3 src/data_compute/compute_defensive_archetypes_v2.py  # Compute defensive archetypes (v2)
+```
+
+## Modeling / Impact Metrics
+```bash
+python3 src/modeling/compute_rapm.py                         # Compute RAPM / ORAPM / DRAPM
+python3 src/modeling/compute_xrapm.py                        # Compute xRAPM (BPM prior)
+python3 src/modeling/compute_xrapm_improved.py               # Compute xRAPM (improved collinearity handling)
 ```
 
 ## Visualization / Export
@@ -89,7 +94,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Notes
 - Inspect `src/*` scripts for CLI flags and optional args (season filters, caching).
-- Tweak `SEASON_DECAY_WEIGHTS` and `alphas` in `src/data_compute/compute_rapm.py` to change pooling/regularization.
+- Tweak `SEASON_DECAY_WEIGHTS` and `alphas` in `src/modeling/compute_rapm.py` to change pooling/regularization.
 
 # Future Upgrade Ideas
 

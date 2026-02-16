@@ -1,5 +1,5 @@
 """
-src/data_compute/compute_rapm.py
+src/modeling/compute_rapm.py
 Computes Regularized Adjusted Plus-Minus (RAPM) using Ridge Regression.
 
 UPDATED (2026-01-19): Enhanced RAPM implementation with:

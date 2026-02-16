@@ -350,6 +350,35 @@ NEXT_STEPS (explicit):
 - Optional: add compact consistency audit in viewer generation to flag players where `primary_position_estimate` disagrees with legacy bio position.
 
 CONTEXT:
+- Task: Advanced modeling expansion (RAPM + DARKO + BKE plan), reference cleanup review, and RAPM path reorganization.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/modeling/compute_rapm.py`, `src/modeling/compute_xrapm.py`, `src/modeling/compute_xrapm_improved.py`, `reference/modelling_stats.md`, `readme.md`
+- Status: ✅ Core restructuring completed; RAPM/xRAPM moved to modeling stage and docs/scripts updated.
+
+FAILURE_REASON:
+- None. No runtime blockers encountered for file moves/path updates.
+
+ATTEMPTED_METHODS:
+- Moved RAPM/xRAPM scripts from `src/data_compute/` to `src/modeling/`.
+- Updated pipeline/readme/reproduction references to new script paths.
+- Added comprehensive modeling strategy doc covering RAPM vs DARKO sourcing and BKE custom metric architecture.
+- Updated loop context summary with rationale and outputs.
+
+SOURCES_READ:
+- Web: `https://apanalytics.shinyapps.io/DARKO/`
+- Web: `https://xrapm.com/about_page.html`
+- Web: `https://dunksandthrees.com/about/epm`
+- Web: `https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html`
+- Web: `https://www.basketball-reference.com/about/bpm2.html`
+- Web: `https://github.com/jerryengelmann/RAPM`
+- Web: `https://github.com/donjo/nbasalarymodel`
+
+NEXT_STEPS (explicit):
+- Run targeted validation (`python -m py_compile` for moved modeling scripts) and path-grep sanity check.
+- Produce comprehensive RAPM modeling critique (correctness + accuracy) and list prioritized fixes.
+- Review `reference/` documents for deletion-candidate recommendations and present in chat for user review.
+
+CONTEXT:
 - Task: Salary integration for player data viewer. Add per-season salary to player modal subtitle in app/player_data_viewer.py, using data/historical/player_salaries_{season}.parquet files.
 - Env: Linux, venv at `.venv/`, Python 3.10
 - Key files: app/player_data_viewer.py, src/data_fetch/fetch_player_salaries.py, data/historical/player_salaries_2022-23.parquet, etc.
@@ -370,3 +399,32 @@ SOURCES_READ:
 
 NEXT_STEPS (explicit):
 - None. Await further user requests or validation feedback.
+
+CONTEXT:
+- Task: finalize advanced-modeling deliverables after RAPM/xRAPM migration, including reference-folder deletion review and RAPM correctness/accuracy critique.
+- Env: Linux, Python 3.10
+- Key files: `src/modeling/compute_rapm.py`, `reference/modelling_stats.md`, `reference/advanced_metrics_fetch_plan.md`, `reference/plan.md`, `reference/roadmap.md`
+- Status: ✅ Migration complete, validation suite run after move.
+
+FAILURE_REASON:
+- N/A (no execution failure). Remaining items are analytical recommendations and synthesis.
+
+ATTEMPTED_METHODS:
+- Ran `python3 tests/validate_rapm.py` to verify post-move integrity.
+- Audited repo references for old `src/data_compute/compute_*rapm*.py` paths.
+- Reviewed `reference/` docs for overlap, stale content, and deletion candidates.
+
+SOURCES_READ:
+- Local: `src/modeling/compute_rapm.py`
+- Local: `reference/modelling_stats.md`
+- Local: `reference/plan.md`
+- Local: `reference/roadmap.md`
+- Local: `reference/initial_eval_plan.md`
+- Local: `reference/computed_vs_fetched_proposal.md`
+- Local: `reference/BPM_trends.txt`
+- Local: `reference/column name.txt`
+- Local: `loop/context_summary.txt`
+
+NEXT_STEPS (explicit):
+- Provide chat-level deletion-review recommendations for `reference/`.
+- Deliver comprehensive RAPM modeling critique with prioritized fixes.

@@ -44,9 +44,9 @@
 | C2 | `src/data_compute/compute_advanced_metrics.py` | `data/processed/metrics_teams.parquet`, `metrics_lineups.parquet` | Team ORTG/DRTG/NET, lineup stats |
 | C3 | `src/data_compute/compute_linear_metrics.py` | `data/processed/metrics_linear.parquet` | Win Shares (OWS/DWS/WS), BPM, VORP |
 | C4 | `src/data_compute/compute_local_metrics.py` | `data/advanced_local_metrics.parquet` | Box-score-derived advanced metrics |
-| C5 | `src/data_compute/compute_rapm.py` | `data/processed/player_rapm.parquet` + `.csv` | RAPM / ORAPM / DRAPM (ridge regression) |
-| C6 | `src/data_compute/compute_xrapm.py` | `data/processed/player_xrapm.parquet` + `.csv` | xRAPM with BPM Bayesian prior |
-| C7 | `src/data_compute/compute_xrapm_improved.py` | `data/processed/player_xrapm_v2.parquet` + `.csv` + per-season CSVs | xRAPM with collinearity fix |
+| C5 | `src/modeling/compute_rapm.py` | `data/processed/player_rapm.parquet` + `.csv` | RAPM / ORAPM / DRAPM (ridge regression) |
+| C6 | `src/modeling/compute_xrapm.py` | `data/processed/player_xrapm.parquet` + `.csv` | xRAPM with BPM Bayesian prior |
+| C7 | `src/modeling/compute_xrapm_improved.py` | `data/processed/player_xrapm_v2.parquet` + `.csv` + per-season CSVs | xRAPM with collinearity fix |
 | C8 | `src/data_compute/compute_player_archetypes.py` | `data/processed/player_archetypes.parquet` + `.csv`, `archetype_embeddings.parquet` + `.csv` | Offensive archetypes v4.3 + embeddings |
 | C9 | `src/data_compute/compute_defensive_archetypes_v2.py` | `data/processed/defensive_archetypes_v2.parquet` + `.csv` | Defensive archetypes (5 types) |
 
@@ -370,9 +370,9 @@ run_step C1  src/data_compute/compute_player_profiles.py
 run_step C2  src/data_compute/compute_advanced_metrics.py
 run_step C3  src/data_compute/compute_linear_metrics.py
 run_step C4  src/data_compute/compute_local_metrics.py
-run_step C5  src/data_compute/compute_rapm.py
-run_step C6  src/data_compute/compute_xrapm.py
-run_step C7  src/data_compute/compute_xrapm_improved.py
+run_step C5  src/modeling/compute_rapm.py
+run_step C6  src/modeling/compute_xrapm.py
+run_step C7  src/modeling/compute_xrapm_improved.py
 run_step C8  src/data_compute/compute_player_archetypes.py
 run_step C9  src/data_compute/compute_defensive_archetypes_v2.py
 

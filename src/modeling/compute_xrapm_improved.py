@@ -1,5 +1,5 @@
 """
-src/data_compute/compute_xrapm_improved.py
+src/modeling/compute_xrapm_improved.py
 Improved xRAPM with collinearity correction for Wings.
 
 Key Improvements over compute_xrapm.py:
