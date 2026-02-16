@@ -454,3 +454,31 @@ SOURCES_READ:
 NEXT_STEPS (explicit):
 - Optional: run `python3 src/modeling/model_rapm.py` to regenerate RAPM outputs with the new logic.
 - Optional: place DARKO CSV exports in `data/historical/darko/raw/` (or run `fetch_darko_manual.py --input <dir>`) then run normalize/ingest steps.
+---
+
+MOST RECENT ENTRY (2026-07-16):
+
+1) CONTEXT:
+- BKE v1.5 implementation completed successfully.
+- All 7 modules in src/modeling/ created, debugged, and validated.
+- Full pipeline runs in ~2.5s producing 232-column output for 1971 player-seasons (950 qualified).
+
+2) STATUS: COMPLETE
+- No failures. All bugs identified and fixed during development.
+
+3) COMPLETED_WORK:
+- model_config.py — Centralized configuration
+- percentile_engine.py — Three-level percentile standardization
+- layer1_portable_talent.py — Portable Talent Score
+- layer2_role_utilization.py — RUE via playtype surplus + cosine similarity
+- layer3_archetype_elevation.py — Elevation above archetype baseline
+- layer4_scheme_amplification.py — Scheme stability with proxy features
+- decomposition_engine.py — Final assembly + CLI
+- reference/BKE_metric_modelling_summary.md updated to v1.5
+
+4) NEXT_STEPS:
+- Implement backtesting on role-change players (v1.6 plan item)
+- Consider adding full possession-data mode for Layer 4 (slower but more accurate)
+- Tune component weights based on validation against external metrics
+- Add uncertainty estimation
+
