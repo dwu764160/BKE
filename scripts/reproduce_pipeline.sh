@@ -183,9 +183,8 @@ if [[ $START_LAYER -le 2 ]]; then
     run_patched C2 src/data_compute/compute_advanced_metrics.py
     run_patched C3 src/data_compute/compute_linear_metrics.py
     run_patched C4 src/data_compute/compute_local_metrics.py
-    run_patched C5 src/modeling/compute_rapm.py
-    run_patched C6 src/modeling/compute_xrapm.py
-    run_patched C7 src/modeling/compute_xrapm_improved.py
+    run_patched C5 src/modeling/model_rapm.py
+    run_patched C6 src/modeling/ingest_darko.py
     # C8 (archetypes) and C9 (defensive archetypes) excluded per user request
     # run_patched C8 src/data_compute/compute_player_archetypes.py
     # run_patched C9 src/data_compute/compute_defensive_archetypes_v2.py

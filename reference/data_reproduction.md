@@ -44,9 +44,8 @@
 | C2 | `src/data_compute/compute_advanced_metrics.py` | `data/processed/metrics_teams.parquet`, `metrics_lineups.parquet` | Team ORTG/DRTG/NET, lineup stats |
 | C3 | `src/data_compute/compute_linear_metrics.py` | `data/processed/metrics_linear.parquet` | Win Shares (OWS/DWS/WS), BPM, VORP |
 | C4 | `src/data_compute/compute_local_metrics.py` | `data/advanced_local_metrics.parquet` | Box-score-derived advanced metrics |
-| C5 | `src/modeling/compute_rapm.py` | `data/processed/player_rapm.parquet` + `.csv` | RAPM / ORAPM / DRAPM (ridge regression) |
-| C6 | `src/modeling/compute_xrapm.py` | `data/processed/player_xrapm.parquet` + `.csv` | xRAPM with BPM Bayesian prior |
-| C7 | `src/modeling/compute_xrapm_improved.py` | `data/processed/player_xrapm_v2.parquet` + `.csv` + per-season CSVs | xRAPM with collinearity fix |
+| C5 | `src/modeling/model_rapm.py` | `data/processed/player_rapm.parquet` + `.csv` | RAPM / ORAPM / DRAPM (ridge regression) |
+| C6 | `src/modeling/ingest_darko.py` | `data/processed/modeling_inputs_all.parquet` + `modeling_inputs_{season}.parquet` | DARKO + RAPM modeling input merge |
 | C8 | `src/data_compute/compute_player_archetypes.py` | `data/processed/player_archetypes.parquet` + `.csv`, `archetype_embeddings.parquet` + `.csv` | Offensive archetypes v4.3 + embeddings |
 | C9 | `src/data_compute/compute_defensive_archetypes_v2.py` | `data/processed/defensive_archetypes_v2.parquet` + `.csv` | Defensive archetypes (5 types) |
 
@@ -370,9 +369,8 @@ run_step C1  src/data_compute/compute_player_profiles.py
 run_step C2  src/data_compute/compute_advanced_metrics.py
 run_step C3  src/data_compute/compute_linear_metrics.py
 run_step C4  src/data_compute/compute_local_metrics.py
-run_step C5  src/modeling/compute_rapm.py
-run_step C6  src/modeling/compute_xrapm.py
-run_step C7  src/modeling/compute_xrapm_improved.py
+run_step C5  src/modeling/model_rapm.py
+run_step C6  src/modeling/ingest_darko.py
 run_step C8  src/data_compute/compute_player_archetypes.py
 run_step C9  src/data_compute/compute_defensive_archetypes_v2.py
 
@@ -620,9 +618,7 @@ Before or during the re-run, review each script for these common issues:
 | **qAST calculation** | `compute_linear_metrics.py` lines 200-250 | B-Ref WS accuracy depends on this |
 | **Team average proxies** | `compute_linear_metrics.py` uses league/30 | Traded players get wrong team context |
 | **BPM coefficients** | `compute_linear_metrics.py` | Must match B-Ref 2.0 spec exactly |
-| **RAPM regularization** | `compute_rapm.py` — alpha selection range | Over/under-regularization |
-| **xRAPM prior strength** | `compute_xrapm.py` — BPM coefficient weights | Too strong prior = just BPM; too weak = noisy RAPM |
-| **Collinear pair detection** | `compute_xrapm_improved.py` — 60% threshold | Threshold too loose = everyone flagged |
+| **RAPM regularization** | `model_rapm.py` — alpha selection range | Over/under-regularization |
 | **Archetype hierarchy order** | `compute_player_archetypes.py` — Steps 1-14 | Wrong order = wrong classifications |
 | **Defensive archetype thresholds** | `compute_defensive_archetypes_v2.py` | Distribution may shift with updated data |
 

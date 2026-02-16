@@ -24,9 +24,7 @@ This layer is the modeling foundation of player evaluation and sits on top of th
 - In-house compute lets us control priors, season pooling, regularization, and diagnostics.
 
 **Implementation home:**
-- `src/modeling/compute_rapm.py`
-- `src/modeling/compute_xrapm.py`
-- `src/modeling/compute_xrapm_improved.py`
+- `src/modeling/model_rapm.py`
 
 ### DARKO — **Fetch canonical values + optional local proxy**
 
@@ -51,24 +49,23 @@ This layer is the modeling foundation of player evaluation and sits on top of th
 
 ## BKE definition
 
-BKE is a predictive, uncertainty-aware impact model that fuses:
+BKE is a modern, EPM-inspired, predictive, uncertainty-aware impact model that fuses:
 
+- A strong prior built from archetype, box score, and tracking stats (role, usage, efficiency, context)
 - RAPM/xRAPM signal (lineup impact)
-- DARKO signal (external predictive prior)
+- DARKO signal (external predictive projection)
 - Linear metrics (BPM/WS/VORP and local box-score rates)
 - Context controls (minutes, role stability, team context)
 
-It must preserve project philosophy:
-
-- Archetype = role assignment (behavior only)
-- BKE = impact/value estimate (performance quality)
-
-Archetype features are used as context priors/stratification, not as direct value labels.
+Key principles:
+- BKE is not just a blend of RAPM and DARKO; it is a model that can disagree with its inputs and is robust to overfitting.
+- Archetype and context features are used to build the prior and calibrate value, not to define value directly.
+- Strict separation: role assignment logic (archetype) is independent of value estimation (BKE).
 
 ## BKE output family
 
-- `BKE_O`: offensive impact per 100
-- `BKE_D`: defensive impact per 100
+- `BKE_O`: offensive impact per 100 (role/context-calibrated)
+- `BKE_D`: defensive impact per 100 (role/context-calibrated)
 - `BKE`: net impact per 100 (`BKE_O + BKE_D`)
 - `BKE_uncertainty`: posterior uncertainty / confidence interval width
 - `BKE_tier`: percentile-based tiering for evaluation UX
@@ -80,27 +77,31 @@ Archetype features are used as context priors/stratification, not as direct valu
 ## Stage A — Signal standardization
 
 - Align all signals to season-normalized z-scores (or robust z-scores).
+- Build a strong prior for each player using archetype, box, and tracking stats (role, usage, efficiency, context), independent of RAPM/DARKO.
 - Reliability weighting by possessions/minutes/sample size.
 - Separate offense and defense channels.
 
-## Stage B — Ensemble core
+## Stage B — Ensemble core (EPM-style fusion)
 
 Use a two-level model:
 
-1. Base learners (regularized linear + gradient boosting)
-   - Inputs: RAPM/xRAPM, DARKO, BPM components, WS components, on/off context, tracking aggregates.
-2. Meta-learner (stacking or Bayesian shrinkage blend)
-   - Produces `BKE_O`, `BKE_D` with uncertainty.
+1. **Prior model:**
+  - Predict player impact using archetype, box, and tracking stats (role, usage, efficiency, context), independent of RAPM/DARKO.
+  - This prior is the model’s best estimate before seeing on/off or projection data.
+2. **Fusion model:**
+  - Use a Bayesian regression or ensemble (e.g., stacking, gradient boosting) to combine the prior, RAPM, and DARKO.
+  - The model can “disagree” with any input if the data supports it, avoiding overfitting or circularity.
+  - Produces `BKE_O`, `BKE_D` with uncertainty.
 
 Target examples:
 - Forward-looking: next-season point differential contribution per 100 (preferred)
 - Backward-looking sanity target: stabilized multi-year RAPM proxy
 
-## Stage C — Archetype-aware calibration
+## Stage C — Archetype/context-aware calibration
 
-- Calibrate residual bias by archetype cohort (same role family, minutes tier, season).
-- This is post-model calibration only; archetype does not define value directly.
-- Prevent role-value leakage by excluding archetype labels from initial supervised target construction.
+- Calibrate residual bias by archetype cohort (same role family, minutes tier, season) and context features.
+- This is post-model calibration only; archetype does not define value directly, but is used to stratify and validate value estimates.
+- Prevent role-value leakage by excluding archetype labels from initial supervised target construction, but use them for prior building and post-hoc calibration.
 
 ---
 
@@ -118,12 +119,9 @@ They are not replaced; they are absorbed into BKE ensemble inputs and audit repo
 
 ## Archetype integration
 
-Archetypes remain the role ontology and UX explanation layer:
-
-- role identity (what role is played)
-- role confidence / role effectiveness
-
-BKE provides the impact layer (how much value in that role).
+- Archetypes remain the role ontology and UX explanation layer (role identity, confidence, effectiveness).
+- Archetype and context features are used to build the prior for BKE and to calibrate/validate value estimates by cohort.
+- BKE provides the impact layer (how much value in that role), independent of the role assignment itself.
 
 ## Evaluation system foundation
 
@@ -200,3 +198,9 @@ Validation artifacts:
 - [ ] BKE v1 outputs (`player_bke_v1.parquet/.csv`)
 - [ ] Validation report (`modeling_validation_report.json`)
 - [ ] Viewer integration for RAPM/DARKO/BKE triplet
+
+---
+
+## 9) Companion Reading
+
+- `reference/modeling_info.md` — plain-language walkthrough of model layers, stats concepts, and basketball interpretation.

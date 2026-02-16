@@ -13,6 +13,8 @@ echo "[COMPUTE] export_db_to_parquet.py"
 python3 src/utils/export_db_to_parquet.py
 echo "[COMPUTE] run_normalization.py"
 python3 src/data_normalize/run_normalization.py
+echo "[COMPUTE] normalize_darko.py"
+python3 src/data_normalize/normalize_darko.py || echo "[COMPUTE] normalize_darko.py skipped (no DARKO raw files)"
 echo "[COMPUTE] derive_lineups.py"
 python3 src/features/derive_lineups.py
 echo "[COMPUTE] derive_possessions.py"
@@ -23,11 +25,10 @@ python3 src/features/compute_rest_home_back2back.py
 # Compute / Metrics
 echo "[COMPUTE] compute_clean_possessions.py"
 python3 src/data_compute/compute_clean_possessions.py
-echo "[COMPUTE] compute_rapm.py"
-python3 src/modeling/compute_rapm.py
-# xRAPM: Use compute_xrapm_improved.py (supersedes compute_xrapm.py)
-echo "[COMPUTE] compute_xrapm_improved.py"
-python3 src/modeling/compute_xrapm_improved.py
+echo "[COMPUTE] model_rapm.py"
+python3 src/modeling/model_rapm.py
+echo "[COMPUTE] ingest_darko.py"
+python3 src/modeling/ingest_darko.py || echo "[COMPUTE] ingest_darko.py skipped (DARKO not available)"
 echo "[COMPUTE] compute_local_metrics.py"
 python3 src/data_compute/compute_local_metrics.py
 echo "[COMPUTE] compute_linear_metrics.py"

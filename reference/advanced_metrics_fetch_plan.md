@@ -23,7 +23,7 @@ This document integrates the project's original evaluation plan with a prioritiz
 4. Lineup / on-off and team ratings (days 4–10)
    - Parse play-by-play substitutions to construct possessions and active lineups; compute on/off per 100 possessions and team ORtg/DRtg/Pace. (`src/features/build_lineups_onoff.py`, `src/features/compute_team_ratings.py`).
 5. Advanced modeling (weeks 2–4)
-   - RAPM-style ridge regression on possessions × lineup matrix to estimate player offensive/defensive impacts. (`src/modeling/compute_rapm.py`).
+   - RAPM-style ridge regression on possessions × lineup matrix to estimate player offensive/defensive impacts. (`src/modeling/model_rapm.py`).
 6. External enrichment (parallel)
    - Scrape Basketball-Reference for BPM/VORP/Win Shares and merge into player-season table (`src/data_fetch/fetch_bref_advanced.py`).
 

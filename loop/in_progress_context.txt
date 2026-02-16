@@ -428,3 +428,29 @@ SOURCES_READ:
 NEXT_STEPS (explicit):
 - Provide chat-level deletion-review recommendations for `reference/`.
 - Deliver comprehensive RAPM modeling critique with prioritized fixes.
+
+CONTEXT:
+- Task: implement RAPM fixes, rename RAPM script to `model_rapm.py`, remove old modeling scripts, and add DARKO fetch/normalize/ingest scripts.
+- Env: Linux, Python 3.10
+- Key files: `src/modeling/model_rapm.py`, `src/data_fetch/fetch_darko_manual.py`, `src/data_normalize/normalize_darko.py`, `src/modeling/ingest_darko.py`, `reference/modeling_info.md`
+- Status: ✅ Implemented.
+
+FAILURE_REASON:
+- N/A (no blocking runtime error). Full RAPM recomputation not executed in this step due runtime cost; validation run referenced existing outputs.
+
+ATTEMPTED_METHODS:
+- Rewrote RAPM modeling into `model_rapm.py` with opponent-controlled split design and pooled-prior target-season refinement.
+- Added DARKO manual intake, normalization, and modeling-ingest scripts.
+- Deleted deprecated modeling scripts (`compute_rapm.py`, `compute_xrapm.py`, `compute_xrapm_improved.py`).
+- Updated pipeline docs/scripts/tests to new paths and outputs.
+
+SOURCES_READ:
+- Web: `https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html`
+- Web: `https://apanalytics.shinyapps.io/DARKO/`
+- Web: `https://www.basketball-reference.com/about/bpm2.html`
+- Web: `https://xrapm.com/about_page.html`
+- Local: `reference/modelling_stats.md`
+
+NEXT_STEPS (explicit):
+- Optional: run `python3 src/modeling/model_rapm.py` to regenerate RAPM outputs with the new logic.
+- Optional: place DARKO CSV exports in `data/historical/darko/raw/` (or run `fetch_darko_manual.py --input <dir>`) then run normalize/ingest steps.

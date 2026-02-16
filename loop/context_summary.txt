@@ -1,3 +1,23 @@
+- 2026-02-16 — RAPM refactor + DARKO pipeline scaffolding
+	- Added new RAPM script: `src/modeling/model_rapm.py` and removed legacy modeling scripts:
+		- `src/modeling/compute_rapm.py`
+		- `src/modeling/compute_xrapm.py`
+		- `src/modeling/compute_xrapm_improved.py`
+	- RAPM fixes implemented:
+		- ORAPM/DRAPM now estimated with opponent controls via joint split matrix (offense + defense coefficients in one model).
+		- Removed zero-fill schema issue by explicitly carrying `RAPM` on split rows as `ORAPM + DRAPM`.
+		- Default possession weighting switched to uniform (`POSSESSION_WEIGHT_MODE = "uniform"`), with optional duration weighting retained.
+		- Alpha grids adjusted to less aggressive ranges.
+		- Multi-season output now uses pooled-prior then target-season refinement to reduce season-blur from one pooled coefficient vector.
+		- In-sample `R²` output relabeled as diagnostic only.
+	- DARKO pipeline added:
+		- `src/data_fetch/fetch_darko_manual.py` (manual CSV staging)
+		- `src/data_normalize/normalize_darko.py` (canonical DARKO normalization)
+		- `src/modeling/ingest_darko.py` (builds `modeling_inputs_all` and `modeling_inputs_{season}` outputs)
+	- Documentation updates:
+		- New plain-language model explainer: `reference/modeling_info.md`
+		- Pipeline/docs/scripts updated to `model_rapm.py` + DARKO normalize/ingest flow (`readme.md`, `scripts/compute_data.sh`, `scripts/reproduce_pipeline.sh`, tests + references).
+
 - 2026-02-16 — Post-move RAPM audit and validation
 	- Ran `python3 tests/validate_rapm.py` after modeling-path migration; suite completed successfully with stable pooled RAPM distribution and season-to-season stability checks passing.
 	- Path audit confirms active pipeline/docs now point to `src/modeling/` for RAPM/xRAPM scripts; remaining legacy references are limited to historical DO_NOT_CHANGE planning text.

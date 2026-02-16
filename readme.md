@@ -34,6 +34,7 @@ python3 src/data_fetch/fetch_tracking_data.py                    # Fetch NBA tra
 python3 src/data_fetch/fetch_box_scores_complete.py              # Fetch full box scores
 python3 src/data_fetch/fetch_matchup_data.py                     # Fetch matchup data
 python3 src/data_fetch/fetch_shot_zones.py                       # Fetch shot zone data
+python3 src/data_fetch/fetch_darko_manual.py --input <path_or_dir> # Stage manual DARKO CSV exports
 ```
 
 ## Derive / Normalize / Features
@@ -42,6 +43,7 @@ python3 src/data_fetch/derive_team_game_logs.py           # Derive team game log
 python3 src/data_fetch/summarize_team_logs.py             # Summarize team logs
 python3 src/utils/export_db_to_parquet.py                 # Export DB tables to parquet
 python3 src/data_normalize/run_normalization.py           # Normalize raw data
+python3 src/data_normalize/normalize_darko.py             # Normalize DARKO exports to canonical schema
 python3 src/features/derive_lineups.py                    # Derive lineups
 python3 src/features/derive_possessions.py                # Derive possessions
 python3 src/features/compute_rest_home_back2back.py       # Compute rest/home/back-to-back
@@ -61,9 +63,8 @@ python3 src/data_compute/compute_defensive_archetypes_v2.py  # Compute defensive
 
 ## Modeling / Impact Metrics
 ```bash
-python3 src/modeling/compute_rapm.py                         # Compute RAPM / ORAPM / DRAPM
-python3 src/modeling/compute_xrapm.py                        # Compute xRAPM (BPM prior)
-python3 src/modeling/compute_xrapm_improved.py               # Compute xRAPM (improved collinearity handling)
+python3 src/modeling/model_rapm.py                           # Compute RAPM / ORAPM / DRAPM
+python3 src/modeling/ingest_darko.py                         # Build modeling_inputs_{season} tables
 ```
 
 ## Visualization / Export
@@ -89,12 +90,12 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary)
-- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
+- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, validation report
 - `data/tracking/` — tracking-derived JSONs
 
 # Notes
 - Inspect `src/*` scripts for CLI flags and optional args (season filters, caching).
-- Tweak `SEASON_DECAY_WEIGHTS` and `alphas` in `src/modeling/compute_rapm.py` to change pooling/regularization.
+- Tweak `SEASON_DECAY_WEIGHTS` and alpha grids in `src/modeling/model_rapm.py` to change pooling/regularization.
 
 # Future Upgrade Ideas
 

@@ -23,7 +23,7 @@ def check_mismatch():
     # 1. Load RAPM Output
     rapm_path = os.path.join(OUTPUT_DIR, "player_rapm.parquet")
     if not os.path.exists(rapm_path):
-        print(f"❌ {rapm_path} not found. Run src/modeling/compute_rapm.py first.")
+        print(f"❌ {rapm_path} not found. Run src/modeling/model_rapm.py first.")
         return
     
     rapm_df = pd.read_parquet(rapm_path)

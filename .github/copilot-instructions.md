@@ -16,7 +16,7 @@
   - Metrics/archetypes: [src/data_compute](src/data_compute)
   - Modeling (impact models): [src/modeling](src/modeling)
   - Exports/utilities: [src/utils](src/utils)
-- Example stage boundary: raw PBP in [data/historical] → normalized rows via [src/data_normalize/run_normalization.py] → possessions via [src/features/derive_possessions.py] → RAPM via [src/modeling/compute_rapm.py].
+- Example stage boundary: raw PBP in [data/historical] → normalized rows via [src/data_normalize/run_normalization.py] → possessions via [src/features/derive_possessions.py] → RAPM via [src/modeling/model_rapm.py].
 - **Every time you finish a file in the pipeline, you must update [readme.md](readme.md) to reflect the correct pipeline order and any new/changed outputs.**
 
 ## Loop Folder: Context, Planning, and Progress
