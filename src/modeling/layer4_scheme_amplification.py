@@ -1,7 +1,7 @@
 """
 src/modeling/layer4_scheme_amplification.py
 =============================================================================
-BKE v1.5 — LAYER 4: Scheme Amplification
+BKE v2.0 — LAYER 4: Scheme Amplification
 
 Estimates context sensitivity:
   "How much of this player's impact depends on their specific environment?"
@@ -14,8 +14,12 @@ Components:
 High variance → role-dependent (system amplified)
 Low variance  → portable (stable across contexts)
 
+v2.0: Added z-score output for decomposition pipeline.
+      Scheme stability feeds into the new variance-based portability index.
+
 Output:
   - scheme_stability_index: 0-100, high = portable, low = system-dependent
+  - scheme_stability_z: z-score for v2.0 aggregation
   - lineup_interaction_coef: raw variance measure
   - on_off_variance: raw on/off measure
   - teammate_dependency: lineup quality dependency
@@ -41,6 +45,7 @@ from src.modeling.model_config import (
 )
 from src.modeling.percentile_engine import (
     add_league_percentiles,
+    add_league_z_scores,
     add_grouped_percentiles,
     vectorized_percentile_rank,
 )
@@ -288,6 +293,11 @@ def compute_scheme_stability(df: pd.DataFrame) -> pd.DataFrame:
 
     # Scheme amplification = inverse of stability (how much context matters)
     result["scheme_amplification"] = 100.0 - result["scheme_stability_index"]
+
+    # v2.0: Store z-score for the z-score aggregation pipeline
+    result = add_league_z_scores(result, ["scheme_stability_raw"])
+    result["scheme_stability_z"] = result.get("scheme_stability_raw_z",
+                                               pd.Series(0.0, index=result.index))
 
     # Add grouped percentiles
     result = add_league_percentiles(result, ["scheme_stability_raw"])

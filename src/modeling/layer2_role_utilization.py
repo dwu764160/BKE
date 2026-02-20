@@ -1,7 +1,7 @@
 """
 src/modeling/layer2_role_utilization.py
 =============================================================================
-BKE v1.5 — LAYER 2: Role Utilization Efficiency
+BKE v2.0 — LAYER 2: Role Utilization Efficiency
 
 Estimates:
   "How much of their talent is actually being expressed in their current role?"
@@ -12,6 +12,9 @@ Sub-layers:
   2B. Role Utilization Efficiency (RUE) — Alignment between observed playtype
       distribution and archetype-optimal distribution
 
+v2.0: z-score aggregation for surplus metrics. RUE computation unchanged
+(cosine similarity is already interval-scaled).
+
 Inputs:
   - Layer 1 output (player-season table with archetypes + playtypes)
   - player_archetypes.parquet (playtype frequency + PPP)
@@ -19,7 +22,7 @@ Inputs:
 Output:
   Columns added to the player-season DataFrame:
     - Per-playtype surplus percentiles
-    - playtype_surplus_total
+    - playtype_surplus_total / z-score
     - role_utilization_efficiency (RUE)
     - RUE league/archetype percentiles
 =============================================================================
@@ -41,6 +44,7 @@ from src.modeling.model_config import (
 )
 from src.modeling.percentile_engine import (
     add_league_percentiles,
+    add_league_z_scores,
     add_grouped_percentiles,
     vectorized_percentile_rank,
 )
@@ -210,6 +214,9 @@ def compute_playtype_surplus(df: pd.DataFrame) -> pd.DataFrame:
     # Add percentiles for surpluses
     surplus_pctl_metrics = surplus_cols + ["playtype_surplus_total"]
     result = add_league_percentiles(result, surplus_pctl_metrics)
+
+    # v2.0: Also add z-scores for surplus metrics (for z-score aggregation pipeline)
+    result = add_league_z_scores(result, surplus_pctl_metrics)
 
     return result
 
@@ -384,6 +391,9 @@ def compute_role_utilization_efficiency(df: pd.DataFrame) -> pd.DataFrame:
     result["role_utilization_efficiency"] = result.groupby("season")["role_utilization_raw"].transform(
         vectorized_percentile_rank
     )
+
+    # v2.0: Also compute RUE z-score for z-score aggregation pipeline
+    result = add_league_z_scores(result, ["role_utilization_raw"])
 
     # Add archetype-grouped percentile
     if "primary_archetype" in result.columns:

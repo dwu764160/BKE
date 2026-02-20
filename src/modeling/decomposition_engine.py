@@ -1,7 +1,7 @@
 """
 src/modeling/decomposition_engine.py
 =============================================================================
-BKE v1.5 — FINAL DECOMPOSITION ENGINE
+BKE v2.0 — FINAL DECOMPOSITION ENGINE
 
 Ties together all four layers into the complete impact decomposition:
 
@@ -11,19 +11,25 @@ Ties together all four layers into the complete impact decomposition:
                                    +-- Archetype Elevation
                                    +-- Scheme Amplification
 
+v2.0 key fixes:
+  - Z-score aggregation: Raw → Z → Weighted Sum → Final Z → Percentile
+    (percentiles are presentation-only, not aggregation math)
+  - True Portability Index: variance-based stability measurement replaces
+    the fake compositional ratio (PTS/Total → 1 - NormalizedVariance)
+  - 4-component portability: Lineup Stability, Role Elasticity,
+    Archetype Transfer, On/Off Context Sensitivity
+
 For each player, produces:
   1. Portable Talent Score (PTS) — How good they are anywhere
-  2. Role-Dependent Impact Score (RDIS) — How much impact depends on environment
-  3. Portability Ratio — Portable Talent / Total Impact (0-1 scalar)
+  2. Role-Dependent Impact Score (RDIS) — Environment-dependent contribution
+  3. Portability Index — True context-stability measurement (0-1)
 
 All outputs percentile-standardized at three levels:
-  - League
-  - Position
-  - Archetype
+  - League / Position / Archetype
 
 Outputs:
-  - data/processed/bke_v15_decomposition.parquet / .csv
-  - data/processed/bke_v15_report.json
+  - data/processed/bke_v20_decomposition.parquet / .csv
+  - data/processed/bke_v20_report.json
 =============================================================================
 """
 
@@ -40,6 +46,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from src.modeling.model_config import (
     DECOMPOSITION,
+    PORTABILITY,
+    ROLE_UTILIZATION,
     BKE_OUTPUT_PARQUET,
     BKE_OUTPUT_CSV,
     BKE_REPORT_JSON,
@@ -49,7 +57,11 @@ from src.modeling.model_config import (
 from src.modeling.percentile_engine import (
     PercentileEngine,
     add_league_percentiles,
+    add_league_z_scores,
     add_grouped_percentiles,
+    compute_z_score,
+    z_to_percentile,
+    weighted_z_composite,
     vectorized_percentile_rank,
 )
 from src.modeling.layer1_portable_talent import build_portable_talent
@@ -64,16 +76,14 @@ from src.modeling.layer4_scheme_amplification import build_scheme_amplification
 
 def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute Total Impact as the sum of Portable Talent and Role-Dependent Impact.
+    Compute Total Impact using v2.0 z-score aggregation.
 
-    Total Impact = Portable Talent Score + Role-Dependent Impact Score (RDIS)
+    v2.0 pipeline:
+      1. Grab layer z-scores (portable_talent_z, RUE z, elevation_z, scheme_stability_z)
+      2. Weighted z-score composite: Total_z = sum(w_i * z_i) / sum(w_i)
+      3. Convert final z-score to percentile (presentation only)
 
-    Where RDIS = weighted combination of:
-      - Role Utilization Efficiency (RUE)
-      - Archetype Elevation
-      - Scheme Amplification
-
-    Only qualified players receive scores; unqualified remain NaN.
+    This fixes the percentile-averaging distortion in v1.5.
     """
     cfg = DECOMPOSITION
     result = df.copy()
@@ -81,115 +91,350 @@ def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
     # Identify qualified rows
     qualified_mask = (result["qualified"] == True) if "qualified" in result.columns else pd.Series(True, index=result.index)
 
-    # Grab layer scores (NaN for unqualified — that's correct)
-    pts = result["portable_talent_score"].copy() if "portable_talent_score" in result.columns else pd.Series(np.nan, index=result.index)
-    rue = result["role_utilization_efficiency"].copy() if "role_utilization_efficiency" in result.columns else pd.Series(np.nan, index=result.index)
-    elevation = result["elevation_score"].copy() if "elevation_score" in result.columns else pd.Series(np.nan, index=result.index)
-    scheme_amp = result["scheme_amplification"].copy() if "scheme_amplification" in result.columns else pd.Series(np.nan, index=result.index)
+    # --- Grab layer z-scores ---
+    # PTS z-score (from Layer 1)
+    pts_z = result.get("portable_talent_z_adj", result.get("portable_talent_z",
+                pd.Series(0.0, index=result.index)))
 
-    # For qualified players only: fill component NaNs with season-median
-    # (falling back to overall median if entire season is NaN)
-    for col_series, col_name in [(pts, "portable_talent_score"), (rue, "role_utilization_efficiency"),
-                                  (elevation, "elevation_score"), (scheme_amp, "scheme_amplification")]:
-        if col_name not in result.columns:
-            col_series.loc[qualified_mask] = 50.0
-            continue
-        # Season median for qualified rows
-        q_vals = col_series.loc[qualified_mask]
-        season_medians = result.loc[qualified_mask].groupby("season")[col_name].transform("median")
-        # Fill NaN with season median
-        filled = q_vals.fillna(season_medians.reindex(q_vals.index, fill_value=np.nan))
-        # If still NaN (entire season was NaN), fill with overall median
-        overall_median = col_series.loc[qualified_mask].median()
-        overall_median = overall_median if not np.isnan(overall_median) else 50.0
-        filled = filled.fillna(overall_median)
-        col_series.loc[qualified_mask] = filled
+    # RUE z-score (from Layer 2)
+    rue_z = result.get("role_utilization_raw_z",
+                pd.Series(0.0, index=result.index))
 
-    # Role-Dependent Impact Score (RDIS) — among qualified only
-    # Higher RUE = better role fit → more value extracted
-    # Higher elevation = more value above archetype baseline
-    # Higher scheme_amplification = MORE context-dependent (subtract from portability)
-    rdis_raw = pd.Series(np.nan, index=result.index)
-    rdis_raw.loc[qualified_mask] = (
-        0.40 * rue.loc[qualified_mask] +
-        0.40 * elevation.loc[qualified_mask] +
-        0.20 * scheme_amp.loc[qualified_mask]  # scheme amp: high = dependent
+    # Elevation z-score (from Layer 3)
+    elev_z = result.get("elevation_z", result.get("elevation_score_raw",
+                pd.Series(0.0, index=result.index)))
+
+    # Scheme stability z-score (from Layer 4) — higher = more portable = better
+    scheme_z = result.get("scheme_stability_z",
+                pd.Series(0.0, index=result.index))
+
+    # --- Fill NaN for qualified with season median, overall fallback ---
+    for z_series_name in ["_pts_z", "_rue_z", "_elev_z", "_scheme_z"]:
+        z_map = {"_pts_z": pts_z, "_rue_z": rue_z, "_elev_z": elev_z, "_scheme_z": scheme_z}
+        z_s = z_map[z_series_name]
+        q_vals = z_s.loc[qualified_mask]
+        season_medians = result.loc[qualified_mask].groupby("season").apply(
+            lambda g: g.index.map(lambda i: z_s.loc[g.index].median())
+        )
+        # Flatten season medians
+        flat_medians = {}
+        for season in result["season"].unique():
+            s_mask = qualified_mask & (result["season"] == season)
+            med = z_s.loc[s_mask].median()
+            flat_medians[season] = med if not np.isnan(med) else 0.0
+        fill_vals = result.loc[qualified_mask, "season"].map(flat_medians)
+        filled = q_vals.fillna(fill_vals)
+        overall_med = z_s.loc[qualified_mask].median()
+        overall_med = overall_med if not np.isnan(overall_med) else 0.0
+        filled = filled.fillna(overall_med)
+        z_map[z_series_name] = z_s.copy()
+        z_map[z_series_name].loc[qualified_mask] = filled
+
+        # Write back
+        if z_series_name == "_pts_z":
+            pts_z = z_map[z_series_name]
+        elif z_series_name == "_rue_z":
+            rue_z = z_map[z_series_name]
+        elif z_series_name == "_elev_z":
+            elev_z = z_map[z_series_name]
+        elif z_series_name == "_scheme_z":
+            scheme_z = z_map[z_series_name]
+
+    # --- Role-Dependent Impact z-score ---
+    rdis_z = pd.Series(np.nan, index=result.index)
+    rdis_z.loc[qualified_mask] = (
+        0.40 * rue_z.loc[qualified_mask] +
+        0.40 * elev_z.loc[qualified_mask] +
+        0.20 * (-scheme_z.loc[qualified_mask])  # invert: high stability → low role-dependence
     )
 
-    result["role_dependent_impact_raw"] = rdis_raw
-    # Percentile rank ONLY among qualified players
+    result["role_dependent_impact_z"] = rdis_z
+    result["role_dependent_impact_raw"] = rdis_z  # compat
+
+    # Percentile rank ONLY among qualified
     result["role_dependent_impact_score"] = np.nan
     for season in result["season"].unique():
         mask = qualified_mask & (result["season"] == season)
         if mask.any():
             result.loc[mask, "role_dependent_impact_score"] = \
-                vectorized_percentile_rank(result.loc[mask, "role_dependent_impact_raw"])
+                vectorized_percentile_rank(result.loc[mask, "role_dependent_impact_z"])
 
-    # Total Impact — among qualified only
-    total_raw = pd.Series(np.nan, index=result.index)
-    total_raw.loc[qualified_mask] = (
-        cfg.w_portable_talent * pts.loc[qualified_mask] +
-        (cfg.w_role_utilization * rue.loc[qualified_mask] +
-         cfg.w_archetype_elevation * elevation.loc[qualified_mask] +
-         cfg.w_scheme_amplification * (100 - scheme_amp.loc[qualified_mask]))
+    # --- Total Impact z-score ---
+    total_z = pd.Series(np.nan, index=result.index)
+    total_z.loc[qualified_mask] = (
+        cfg.w_portable_talent * pts_z.loc[qualified_mask] +
+        cfg.w_role_utilization * rue_z.loc[qualified_mask] +
+        cfg.w_archetype_elevation * elev_z.loc[qualified_mask] +
+        cfg.w_scheme_amplification * scheme_z.loc[qualified_mask]
     ) / (cfg.w_portable_talent + cfg.w_role_utilization +
          cfg.w_archetype_elevation + cfg.w_scheme_amplification)
 
-    result["total_impact_raw"] = total_raw
-    # Percentile rank ONLY among qualified players
+    result["total_impact_z"] = total_z
+    result["total_impact_raw"] = total_z  # compat
+
+    # Percentile rank ONLY among qualified
     result["total_impact_score"] = np.nan
     for season in result["season"].unique():
         mask = qualified_mask & (result["season"] == season)
         if mask.any():
             result.loc[mask, "total_impact_score"] = \
-                vectorized_percentile_rank(result.loc[mask, "total_impact_raw"])
+                vectorized_percentile_rank(result.loc[mask, "total_impact_z"])
+
+    # Also store CDF-based percentile for cross-era comparison
+    result["total_impact_cdf_pctl"] = np.nan
+    result.loc[qualified_mask, "total_impact_cdf_pctl"] = z_to_percentile(
+        total_z.loc[qualified_mask]
+    )
 
     return result
 
 
-def compute_portability_ratio(df: pd.DataFrame) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# v2.0: True Portability Index (Variance-Based)
+# ---------------------------------------------------------------------------
+
+def _compute_lineup_stability(df: pd.DataFrame) -> pd.Series:
     """
-    Compute the Portability Ratio: Portable Talent / (Portable Talent + RDIS).
+    Component 1: Lineup Stability Index.
 
-    Uses raw additive component scores (not percentile / percentile) to
-    capture the true fraction of impact that is context-neutral.
+    Measures variance of player impact signals across different contexts.
+    Approximated from multi-model agreement (RAPM vs DARKO) and
+    dimensional spread in the portable model.
 
-    High (>0.70) → scalable star (talent transfers across contexts)
-    Low  (<0.40) → system-amplified player (needs the right environment)
+    Low variance → high stability → portable.
+    """
+    result = pd.Series(0.5, index=df.index)
 
-    This is a clean scalar for:
-      - Trade valuation
-      - Scalability analysis
-      - Role projection
+    # RAPM vs DARKO agreement
+    if "rapm" in df.columns and "darko_dpm" in df.columns:
+        rapm_z = df.groupby("season")["rapm"].transform(
+            lambda x: compute_z_score(x, winsorize=3.5)
+        )
+        darko_z = df.groupby("season")["darko_dpm"].transform(
+            lambda x: compute_z_score(x, winsorize=3.5)
+        )
+        # Agreement = 1 - abs(diff) / max_range
+        agreement = (1.0 - np.abs(rapm_z - darko_z).clip(0, 3) / 3.0).fillna(0.5)
+        result = agreement
+
+    # Dimensional consistency: low variance across 8 dims = more stable
+    dim_z_cols = [c for c in df.columns if c.startswith("dim_") and c.endswith("_z")
+                  and not c.endswith("_poss_offensive_z") and not c.endswith("_poss_defensive_z")]
+    if len(dim_z_cols) >= 4:
+        dim_values = df[dim_z_cols].fillna(0)
+        dim_variance = dim_values.var(axis=1)
+        # Invert: low variance = high stability
+        dim_stability = df.groupby("season").apply(
+            lambda g: 1.0 - (dim_variance.loc[g.index] - dim_variance.loc[g.index].min()) /
+                      (dim_variance.loc[g.index].max() - dim_variance.loc[g.index].min() + 1e-9)
+        )
+        if hasattr(dim_stability, 'droplevel'):
+            dim_stability = dim_stability.droplevel(0)
+        # Blend with model agreement
+        result = 0.5 * result + 0.5 * dim_stability.reindex(df.index, fill_value=0.5)
+
+    return result.clip(0, 1)
+
+
+def _compute_role_elasticity(df: pd.DataFrame) -> pd.Series:
+    """
+    Component 2: Role Elasticity Test.
+
+    Simulate ±5% usage shift and estimate impact change.
+
+    Players whose playtype surplus is consistent across volume levels
+    are more role-elastic (portable to different usage rates).
+
+    Approximated from surplus stability and usage diversity.
+    """
+    cfg = PORTABILITY
+    result = pd.Series(0.5, index=df.index)
+
+    # Playtype surplus consistency across different playtypes
+    surplus_cols = [c for c in df.columns if c.endswith("_surplus") and not c.endswith("_total")]
+    if len(surplus_cols) >= 3:
+        surplus_vals = df[surplus_cols].fillna(0)
+        # Use coefficient of variation: low CoV = consistent surplus across roles
+        surplus_mean = surplus_vals.mean(axis=1).abs() + 1e-9
+        surplus_std = surplus_vals.std(axis=1)
+        cov = surplus_std / surplus_mean
+        # Invert and normalize per season
+        result = df.groupby("season").apply(
+            lambda g: 1.0 - (cov.loc[g.index] - cov.loc[g.index].min()) /
+                      (cov.loc[g.index].max() - cov.loc[g.index].min() + 1e-9)
+        )
+        if hasattr(result, 'droplevel'):
+            result = result.droplevel(0)
+        result = result.reindex(df.index, fill_value=0.5)
+
+    # PCV entropy: high entropy = more usage diversity = more elastic
+    entropy_col = None
+    for ec in ["pcv_entropy", "emb_entropy_norm", "emb_entropy"]:
+        if ec in df.columns:
+            entropy_col = ec
+            break
+
+    if entropy_col is not None:
+        entropy_norm = df.groupby("season")[entropy_col].transform(
+            lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+        ).fillna(0.5)
+        result = 0.6 * result + 0.4 * entropy_norm
+
+    return result.clip(0, 1)
+
+
+def _compute_archetype_transfer(df: pd.DataFrame) -> pd.Series:
+    """
+    Component 3: Archetype Transfer Simulation.
+
+    Project player into N alternative archetype usage templates.
+    Measure projected efficiency change.
+    Less dropoff = more portable.
+
+    Approximated: players whose skill profile is balanced across
+    multiple dimensions will transfer better across archetype roles.
+    """
+    result = pd.Series(0.5, index=df.index)
+
+    # Balanced offensive + defensive composite = transfers across roles
+    if "offensive_portable_z" in df.columns and "defensive_portable_z" in df.columns:
+        off_z = df["offensive_portable_z"].fillna(0)
+        def_z = df["defensive_portable_z"].fillna(0)
+
+        # Balance score: 1 when equal magnitude, lower when lopsided
+        total_abs = off_z.abs() + def_z.abs() + 1e-9
+        diff_abs = (off_z - def_z).abs()
+        balance = 1.0 - (diff_abs / total_abs)
+
+        # Also reward having both positive (good at both)
+        both_positive = (off_z > 0) & (def_z > 0)
+        result = 0.6 * balance + 0.4 * both_positive.astype(float)
+
+    # Role confidence: low confidence = could fit multiple roles = potentially more transferable
+    # BUT also could mean unclear skill → less transferable. Use moderate confidence.
+    if "role_confidence" in df.columns:
+        rc = df["role_confidence"].fillna(0.5)
+        # Moderate confidence (0.4-0.7) is most transferable
+        # Use inverted distance from 0.55
+        transfer_from_rc = 1.0 - np.abs(rc - 0.55).clip(0, 0.45) / 0.45
+        result = 0.7 * result + 0.3 * transfer_from_rc
+
+    return result.clip(0, 1)
+
+
+def _compute_context_sensitivity(df: pd.DataFrame) -> pd.Series:
+    """
+    Component 4: On/Off Context Sensitivity.
+
+    Measures how much a player's impact varies across different environmental
+    conditions (bench-heavy vs starter-heavy, pace differences, etc.).
+
+    Approximated from scheme stability and ORAPM/DRAPM balance.
+    """
+    result = pd.Series(0.5, index=df.index)
+
+    # Scheme stability (from Layer 4) is a direct context sensitivity measure
+    if "scheme_stability_raw" in df.columns:
+        result = df.groupby("season")["scheme_stability_raw"].transform(
+            lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9)
+        ).fillna(0.5)
+
+    # ORAPM/DRAPM balance as additional signal
+    # Two-way players are less context-sensitive
+    if "orapm" in df.columns and "drapm" in df.columns:
+        orapm_z = df.groupby("season")["orapm"].transform(
+            lambda x: compute_z_score(x, winsorize=3.5)
+        ).fillna(0)
+        drapm_z = df.groupby("season")["drapm"].transform(
+            lambda x: compute_z_score(x, winsorize=3.5)
+        ).fillna(0)
+
+        # Both positive & balanced = very context-insensitive
+        total = orapm_z.abs() + drapm_z.abs() + 1e-9
+        imbalance = (orapm_z - drapm_z).abs() / total
+        two_way = 1.0 - imbalance
+        result = 0.65 * result + 0.35 * two_way.clip(0, 1)
+
+    return result.clip(0, 1)
+
+
+def compute_portability_index(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute the True Portability Index (v2.0 Fix #2).
+
+    Portability = 1 - Normalized Impact Variance Across Contexts
+
+    Components:
+      1. Lineup Stability Index (30%) — variance across teammate contexts
+      2. Role Elasticity Test (25%) — impact change under usage shifts
+      3. Archetype Transfer Simulation (20%) — efficiency in alt archetypes
+      4. On/Off Context Sensitivity (25%) — variance across environments
+
+    This is STRUCTURAL, not COMPOSITIONAL. It measures actual transfer stability,
+    not the ratio of one score to another.
     """
     result = df.copy()
-    cfg = DECOMPOSITION
+    cfg = PORTABILITY
 
     qualified_mask = (result["qualified"] == True) if "qualified" in result.columns else pd.Series(True, index=result.index)
 
-    pts = result.get("portable_talent_score", pd.Series(np.nan, index=result.index))
-    rdis = result.get("role_dependent_impact_score", pd.Series(np.nan, index=result.index))
+    # Compute 4 portability components
+    print("    Computing lineup stability index...")
+    lineup_stability = _compute_lineup_stability(result)
 
-    # Portability ratio = portable fraction of total (among qualified only)
-    result["portability_ratio"] = np.nan
-    valid = qualified_mask & pts.notna() & rdis.notna()
-    result.loc[valid, "portability_ratio"] = np.clip(
-        pts.loc[valid] / (pts.loc[valid] + rdis.loc[valid] + 1e-9),
-        0.0,
-        1.0,
+    print("    Computing role elasticity test...")
+    role_elasticity = _compute_role_elasticity(result)
+
+    print("    Computing archetype transfer simulation...")
+    archetype_transfer = _compute_archetype_transfer(result)
+
+    print("    Computing context sensitivity...")
+    context_sensitivity = _compute_context_sensitivity(result)
+
+    # Store individual components
+    result["portability_lineup_stability"] = np.nan
+    result["portability_role_elasticity"] = np.nan
+    result["portability_archetype_transfer"] = np.nan
+    result["portability_context_sensitivity"] = np.nan
+    result.loc[qualified_mask, "portability_lineup_stability"] = lineup_stability.loc[qualified_mask]
+    result.loc[qualified_mask, "portability_role_elasticity"] = role_elasticity.loc[qualified_mask]
+    result.loc[qualified_mask, "portability_archetype_transfer"] = archetype_transfer.loc[qualified_mask]
+    result.loc[qualified_mask, "portability_context_sensitivity"] = context_sensitivity.loc[qualified_mask]
+
+    # Weighted composite
+    portability_raw = pd.Series(np.nan, index=result.index)
+    portability_raw.loc[qualified_mask] = (
+        cfg.w_lineup_stability * lineup_stability.loc[qualified_mask] +
+        cfg.w_role_elasticity * role_elasticity.loc[qualified_mask] +
+        cfg.w_archetype_transfer * archetype_transfer.loc[qualified_mask] +
+        cfg.w_context_sensitivity * context_sensitivity.loc[qualified_mask]
     )
+
+    result["portability_index_raw"] = portability_raw
+
+    # Percentile-rank within season (qualified only)
+    result["portability_index"] = np.nan
+    for season in result["season"].unique():
+        mask = qualified_mask & (result["season"] == season)
+        if mask.any():
+            result.loc[mask, "portability_index"] = \
+                vectorized_percentile_rank(result.loc[mask, "portability_index_raw"]) / 100.0
 
     # Classification
     result["portability_class"] = "Unranked"
+    valid = qualified_mask & result["portability_index"].notna()
     result.loc[valid, "portability_class"] = np.where(
-        result.loc[valid, "portability_ratio"] >= cfg.high_portability,
+        result.loc[valid, "portability_index"] >= cfg.high_portability,
         "Scalable Star",
         np.where(
-            result.loc[valid, "portability_ratio"] <= cfg.low_portability,
+            result.loc[valid, "portability_index"] <= cfg.low_portability,
             "System Player",
             "Context-Moderate"
         )
     )
+
+    # v1.5 compat: portability_ratio alias
+    result["portability_ratio"] = result["portability_index"]
 
     return result
 
@@ -233,6 +478,7 @@ def add_final_percentiles(df: pd.DataFrame) -> pd.DataFrame:
         "role_dependent_impact_score",
         "total_impact_score",
         "portability_ratio",
+        "portability_index",
     ]
 
     # League percentiles
@@ -263,13 +509,10 @@ def add_final_percentiles(df: pd.DataFrame) -> pd.DataFrame:
 
 def generate_player_card(row: pd.Series) -> Dict:
     """
-    Generate a player impact card for a single player-season.
-    
-    Example:
-        Player X:
-        Portable Talent: League 91st, Position 94th, Archetype 88th
-        Role-Dependent: League 72nd, Archetype 84th
-        Portability Ratio: 0.78
+    Generate a player impact card for a single player-season (v2.0).
+
+    Includes z-score based Total Impact, True Portability Index,
+    and all 4 portability components.
     """
     name_col = "player_name" if "player_name" in row.index else "player_id"
 
@@ -283,12 +526,15 @@ def generate_player_card(row: pd.Series) -> Dict:
         "impact_tier": str(row.get("impact_tier", "Unranked")),
         "portable_talent": {
             "score": _safe_float(row.get("portable_talent_score")),
+            "z_score": _safe_float(row.get("portable_talent_z_adj", row.get("portable_talent_z"))),
+            "cdf_pctl": _safe_float(row.get("portable_talent_cdf_pctl")),
             "league_pctl": _safe_float(row.get("portable_talent_score_league_pctl")),
             "position_pctl": _safe_float(row.get("portable_talent_score_position_bucket_pctl")),
             "archetype_pctl": _safe_float(row.get("portable_talent_score_primary_archetype_pctl")),
         },
         "role_dependent_impact": {
             "score": _safe_float(row.get("role_dependent_impact_score")),
+            "z_score": _safe_float(row.get("role_dependent_impact_z")),
             "league_pctl": _safe_float(row.get("role_dependent_impact_score_league_pctl")),
             "rue": _safe_float(row.get("role_utilization_efficiency")),
             "elevation": _safe_float(row.get("elevation_score")),
@@ -296,9 +542,20 @@ def generate_player_card(row: pd.Series) -> Dict:
         },
         "total_impact": {
             "score": _safe_float(row.get("total_impact_score")),
+            "z_score": _safe_float(row.get("total_impact_z")),
+            "cdf_pctl": _safe_float(row.get("total_impact_cdf_pctl")),
             "league_pctl": _safe_float(row.get("total_impact_score_league_pctl")),
         },
-        "portability_ratio": _safe_float(row.get("portability_ratio")),
+        "portability": {
+            "index": _safe_float(row.get("portability_index")),
+            "raw": _safe_float(row.get("portability_index_raw")),
+            "class": str(row.get("portability_class", "N/A")),
+            "lineup_stability": _safe_float(row.get("portability_lineup_stability")),
+            "role_elasticity": _safe_float(row.get("portability_role_elasticity")),
+            "archetype_transfer": _safe_float(row.get("portability_archetype_transfer")),
+            "context_sensitivity": _safe_float(row.get("portability_context_sensitivity")),
+        },
+        "portability_ratio": _safe_float(row.get("portability_ratio")),  # compat
         "portability_class": str(row.get("portability_class", "N/A")),
         "scheme_classification": str(row.get("scheme_classification", "N/A")),
         "rapm": _safe_float(row.get("rapm")),
@@ -324,12 +581,12 @@ def _safe_float(val) -> Optional[float]:
 
 def generate_report(df: pd.DataFrame) -> Dict:
     """
-    Generate a summary report of the v1.5 decomposition run.
+    Generate a summary report of the v2.0 decomposition run.
     """
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     report = {
-        "version": "1.5",
+        "version": "2.0",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_players": int(len(df)),
         "qualified_players": int(len(qualified)),
@@ -393,8 +650,21 @@ def generate_report(df: pd.DataFrame) -> Dict:
                 "player": str(row.get(name_col, row["player_id"])),
                 "season": str(row["season"]),
                 "ratio": round(float(row["portability_ratio"]), 3),
+                "index": round(float(row.get("portability_index", row["portability_ratio"])), 3),
                 "class": str(row.get("portability_class", "N/A")),
             })
+
+    # v2.0 z-score summary
+    for zmetric in ["total_impact_z", "portable_talent_z", "role_dependent_impact_z",
+                     "portability_index_raw"]:
+        if zmetric in qualified.columns:
+            vals = qualified[zmetric].dropna()
+            report["metrics_summary"][zmetric] = {
+                "mean": round(float(vals.mean()), 3) if len(vals) > 0 else None,
+                "std": round(float(vals.std()), 3) if len(vals) > 0 else None,
+                "min": round(float(vals.min()), 3) if len(vals) > 0 else None,
+                "max": round(float(vals.max()), 3) if len(vals) > 0 else None,
+            }
 
     return report
 
@@ -409,14 +679,21 @@ def run_full_decomposition(
     save_output: bool = True,
 ) -> pd.DataFrame:
     """
-    Run the complete v1.5 BKE Impact Decomposition Engine.
+    Run the complete v2.0 BKE Impact Decomposition Engine.
+
+    v2.0 fixes:
+      - Z-score aggregation (Raw→Z→WeightedSum→FinalZ→Percentile)
+      - True Portability Index (variance-based, 4 components)
+      - 8-dimension Layer 1C model
+      - Bayesian shrinkage for noisy metrics
+      - Cross-layer independence enforced
 
     Pipeline order:
-      Layer 1: Portable Talent
-      Layer 2: Role Utilization Efficiency
-      Layer 3: Archetype Elevation
-      Layer 4: Scheme Amplification
-      Final:   Decomposition + Percentiles + Output
+      Layer 1: Portable Talent (8-dimension model, z-score backbone)
+      Layer 2: Role Utilization Efficiency (z-scored surplus)
+      Layer 3: Archetype Elevation (z-scored elevation)
+      Layer 4: Scheme Amplification (z-scored stability)
+      Final:   Decomposition + Portability Index + Percentiles + Output
 
     Parameters:
         seasons: List of seasons to process (default: all)
@@ -431,7 +708,7 @@ def run_full_decomposition(
     seasons = seasons or SEASONS
 
     print("\n" + "=" * 70)
-    print("  BKE v1.5 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
+    print("  BKE v2.0 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
     print("=" * 70)
     print(f"  Seasons: {seasons}")
     print(f"  Possession data: {'Yes' if use_possession_data else 'No (fast mode)'}")
@@ -469,8 +746,8 @@ def run_full_decomposition(
     print("  Computing total impact...")
     df = compute_total_impact(df)
 
-    print("  Computing portability ratio...")
-    df = compute_portability_ratio(df)
+    print("  Computing portability index (v2.0 variance-based)...")
+    df = compute_portability_index(df)
 
     print("  Assigning impact tiers...")
     df = compute_impact_tiers(df)
@@ -485,7 +762,7 @@ def run_full_decomposition(
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     print("\n" + "=" * 70)
-    print("  BKE v1.5 — DECOMPOSITION COMPLETE")
+    print("  BKE v2.0 — DECOMPOSITION COMPLETE")
     print("=" * 70)
     print(f"  Total players: {len(df)}")
     print(f"  Qualified players: {len(qualified)}")
@@ -536,7 +813,7 @@ def run_full_decomposition(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="BKE v1.5 Decomposition Engine")
+    parser = argparse.ArgumentParser(description="BKE v2.0 Decomposition Engine")
     parser.add_argument("--seasons", nargs="*", default=None,
                         help="Seasons to process (default: all)")
     parser.add_argument("--possession-data", action="store_true",

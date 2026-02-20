@@ -24,46 +24,37 @@ Formatting rules for automations:
 
 Example (template):
 CONTEXT:
-- Task: Defensive archetypes v3.5 tuning — Rim Protectors extremely rare (anchor min 0.84, score coef 0.70), Wing Stoppers much more common (difficulty threshold 0.40, score boost 1.12). Tuning only, logic/eligibility unchanged.
-- Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `src/data_compute/compute_position_estimate.py`, `reference/player_defensive_archetypes.md`, `readme.md`
-- Status: ✅ Completed. v3.5 tuning applied and documented.
+- Task: BKE v2.0 implementation — all 7 modeling modules updated, pipeline validated, summary updated.
+- Env: Linux (WSL), venv at `.venv/`, Python 3.10
+- Key files: `src/modeling/model_config.py`, `src/modeling/percentile_engine.py`, `src/modeling/layer1_portable_talent.py`, `src/modeling/layer2_role_utilization.py`, `src/modeling/layer3_archetype_elevation.py`, `src/modeling/layer4_scheme_amplification.py`, `src/modeling/decomposition_engine.py`, `reference/BKE_metric_modelling_summary.md`
+- Status: ✅ Completed. v2.0 implementation validated with 950 qualified players, 0 NaN, all 8 dimensions active.
 
 FAILURE_REASON:
-- N/A (implementation completed successfully).
+- N/A (implementation completed successfully after debugging 5 issues).
 
 ATTEMPTED_METHODS:
-- Added canonical primary-position bucket resolver from `primary_position_estimate` with bio fallback.
-- Added strict role eligibility map by position bucket.
-- Added Forward-Center role-bias coefficients (forward-role boost + big-role penalty).
-- Applied distribution-only tuning coefficients: reduced Rim Protector weight, increased Versatile Defender weight.
-- Tightened Rim anchor (`rim_protection >= 0.70`) and slightly loosened Versatile anchors (`switch >= 0.62`, `max_position_share <= 0.66`).
-- Re-ran classifier and executed a post-run compliance audit by merging with `player_position_estimates.parquet`.
+- Updated all 7 src/modeling/ files from v1.5 to v2.0 per BKE_metric_modelling_plan.md
+- Debugged assignment_difficulty categorical column (Low/Medium/High -> 0/0.5/1.0)
+- Expanded load_archetypes() to include driving/tracking/entropy columns
+- Expanded load_defensive_archetypes() to include hustle/engagement/deflection/matchup columns
+- Fixed min_playtype_poss from 25 (season total) to 0.3 (per-game) — surplus was always zero in v1.5
+- Added _avg_z_components() for NaN-safe dimension averaging (fillna(0) for missing components)
+- Used emb_entropy_norm as proxy for pcv_entropy in role elasticity computation
+- Updated BKE_metric_modelling_summary.md to v2.0 with full change log and plan differences
 
 SOURCES_READ:
-- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
-- Local: `src/data_compute/compute_position_estimate.py`
-- Local: `reference/player_defensive_archetypes.md`
-- Local: `readme.md`
+- Local: reference/BKE_metric_modelling_plan.md (v2.0 plan, 532 lines)
+- Local: reference/BKE_metric_modelling_summary.md (v1.5 summary, updated to v2.0)
+- Local: All 7 src/modeling/ files (read + edited)
+- Local: data/processed/player_archetypes.parquet (column inspection)
+- Local: data/processed/defensive_archetypes_v2.parquet (column inspection)
+- Local: data/processed/modeling_inputs_all.parquet (column inspection)
 
 NEXT_STEPS (explicit):
-- If more v3.5 tuning is requested, adjust only coefficients/anchors to target the desired Wing Stopper vs Off-Ball split while preserving hard positional gates.
-- Task: run `src/data_compute/compute_defensive_archetypes_v2.py` and validate output distribution and eligibility audit.
-- Env: Linux, venv at `.venv/`, Python 3.10
-- Key files: data/processed/player_profiles_advanced.parquet
-
-FAILURE_REASON:
-- ValueError: ambiguous DataFrame truth value raised at script exit check.
-
-ATTEMPTED_METHODS:
-- Added explicit None/empty check in `if __name__ == "__main__"` block.
-- Re-ran script under venv; verified output.
-
-SOURCES_READ:
-- Local repo files: src/data_compute/audit_win_shares.py
-
-NEXT_STEPS:
-- If error recurs, inspect `load_data()` return value and file path accessibility.
+- v2.1 planned: Stability-weighted dimension scaling (year-to-year stability, predictive RAPM correlation)
+- v2.1 planned: Multi-year backtesting (team-changers, playoff portability, aging curves)
+- v2.1 planned: Formal Bayesian hierarchical regression (Player > Archetype > Position)
+- v2.1 planned: Additional tracking metrics (box creation, advantage creation, disruption rate)
 
 DO NOT CHANGE this file format or the section headings; other automated agents rely on them.
 

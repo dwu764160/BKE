@@ -1,22 +1,23 @@
 """
 src/modeling/percentile_engine.py
 =============================================================================
-BKE v1.5 — Three-Level Percentile Standardization Engine.
+BKE v2.0 — Three-Level Percentile Standardization + Z-Score Engine.
 
-Computes percentiles at three structural levels:
+Computes percentiles and z-scores at three structural levels:
   1. League-wide     — macro comparison across all qualified players
   2. Positional      — role-fairness within positional cohort (G, GF, F, FC, C)
   3. Archetype       — micro peer comparison within assigned archetype
 
-Percentiles are NOT cosmetic — they are used as:
-  - Regression inputs (normalized predictors)
-  - Cohort shrinkage priors
-  - Cross-era scaling
-  - Output presentation
+v2.0 additions:
+  - Z-score aggregation: Raw → Z → Weighted Sum → Final Z → Final Percentile
+    (percentiles are presentation-only, NOT aggregation math)
+  - Bayesian shrinkage for noisy metrics (defensive playmaking, on/off)
+  - Winsorized z-scores to prevent outlier distortion
 
 Design:
-  - All percentile computations use scipy.stats.percentileofscore (rank method).
-  - Small cohorts are Bayesian-shrunk toward the league percentile.
+  - Percentile computations use pandas rank method (vectorized, fast).
+  - Z-score computations use scipy.stats.zscore with NaN handling.
+  - Small cohorts are Bayesian-shrunk toward the league values.
   - Results cached per season for efficient downstream use.
 =============================================================================
 """
@@ -33,6 +34,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from src.modeling.model_config import (
     PERCENTILE,
+    ZSCORE,
+    BAYESIAN_SHRINKAGE,
     clean_id,
 )
 
@@ -367,3 +370,197 @@ def add_grouped_percentiles(
         result[col_name] = group_pctl
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# v2.0: Z-Score Aggregation Engine
+# ---------------------------------------------------------------------------
+
+def compute_z_score(series: pd.Series, winsorize: float = 3.5) -> pd.Series:
+    """
+    Compute z-score for a Series, with optional winsorization.
+
+    Z-scores preserve interval meaning for aggregation, unlike percentiles.
+
+    Parameters
+    ----------
+    series : Raw metric values.
+    winsorize : Clip z-scores to [-limit, +limit] to prevent outlier distortion.
+
+    Returns
+    -------
+    Series of z-scores (mean=0, std=1), NaN preserved.
+    """
+    if series.dropna().empty or series.std() < 1e-12:
+        return pd.Series(0.0, index=series.index)
+
+    z = (series - series.mean()) / (series.std() + 1e-12)
+    if winsorize > 0:
+        z = z.clip(-winsorize, winsorize)
+    return z
+
+
+def add_league_z_scores(
+    df: pd.DataFrame,
+    metrics: List[str],
+    season_col: str = "season",
+    suffix: str = "_z",
+    winsorize: float = 3.5,
+) -> pd.DataFrame:
+    """
+    Compute league-wide z-scores per season for each metric.
+
+    This is the primary aggregation input for v2.0.
+    """
+    result = df.copy()
+    available = [m for m in metrics if m in df.columns]
+
+    for metric in available:
+        result[f"{metric}{suffix}"] = (
+            result.groupby(season_col)[metric]
+            .transform(lambda x: compute_z_score(x, winsorize))
+        )
+    return result
+
+
+def add_grouped_z_scores(
+    df: pd.DataFrame,
+    metrics: List[str],
+    group_col: str,
+    season_col: str = "season",
+    suffix: str = "_z",
+    min_group_size: int = 10,
+    shrink_to_league: float = 0.30,
+    winsorize: float = 3.5,
+) -> pd.DataFrame:
+    """
+    Compute z-scores within groups, with small-group shrinkage to league z-score.
+
+    Parameters
+    ----------
+    df : DataFrame
+    metrics : columns to z-score
+    group_col : column defining groups (position_bucket, primary_archetype, etc.)
+    suffix : appended to metric name for output column
+    min_group_size : below this, apply Bayesian shrinkage to league z
+    shrink_to_league : shrinkage weight toward league z for small groups
+    """
+    result = df.copy()
+    available = [m for m in metrics if m in df.columns]
+
+    for metric in available:
+        col_name = f"{metric}_{group_col}{suffix}"
+        league_z_col = f"{metric}_z"
+
+        # Compute group z-scores
+        group_z = (
+            result.groupby([season_col, group_col])[metric]
+            .transform(lambda x: compute_z_score(x, winsorize))
+        )
+
+        # Compute group sizes
+        group_sizes = result.groupby([season_col, group_col])[metric].transform("count")
+
+        # If league z exists, shrink small groups
+        if league_z_col in result.columns:
+            is_small = group_sizes < min_group_size
+            league_z = result[league_z_col]
+            group_z = np.where(
+                is_small,
+                shrink_to_league * league_z + (1 - shrink_to_league) * group_z,
+                group_z,
+            )
+
+        result[col_name] = group_z
+
+    return result
+
+
+def z_to_percentile(z_scores: pd.Series) -> pd.Series:
+    """
+    Convert z-scores to percentiles using the normal CDF.
+
+    This is the final presentation step in v2.0:
+      Raw → Z → Weighted Sum → Final Z → Final Percentile (this step)
+    """
+    from scipy.stats import norm
+    return pd.Series(
+        norm.cdf(z_scores.fillna(0)) * 100,
+        index=z_scores.index,
+    )
+
+
+def weighted_z_composite(
+    df: pd.DataFrame,
+    z_columns: List[str],
+    weights: List[float],
+    output_col: str = "composite_z",
+) -> pd.DataFrame:
+    """
+    Compute a weighted sum of z-score columns.
+
+    This replaces percentile averaging in v2.0:
+      composite_z = sum(w_i * z_i) / sum(w_i)
+
+    All z-scores are interval-scaled, so weighted sums are meaningful.
+    """
+    result = df.copy()
+    available_cols = [c for c in z_columns if c in df.columns]
+    available_weights = [w for c, w in zip(z_columns, weights) if c in df.columns]
+
+    if not available_cols:
+        result[output_col] = 0.0
+        return result
+
+    total_weight = sum(available_weights)
+    if total_weight <= 0:
+        result[output_col] = 0.0
+        return result
+
+    composite = pd.Series(0.0, index=df.index)
+    for col, w in zip(available_cols, available_weights):
+        composite += w * df[col].fillna(0)
+
+    result[output_col] = composite / total_weight
+    return result
+
+
+# ---------------------------------------------------------------------------
+# v2.0: Bayesian Shrinkage
+# ---------------------------------------------------------------------------
+
+def apply_bayesian_shrinkage(
+    series: pd.Series,
+    prior: float,
+    shrinkage_strength: float = 0.20,
+    gp: Optional[pd.Series] = None,
+    min_gp_full: int = 50,
+) -> pd.Series:
+    """
+    Apply empirical Bayes shrinkage to a metric series.
+
+    Shrinks toward a prior (league mean or positional mean) based on
+    sample size and configured strength.
+
+    Parameters
+    ----------
+    series : Raw metric values.
+    prior : The prior to shrink toward (e.g., league mean).
+    shrinkage_strength : Base shrinkage strength (0 = no shrinkage, 1 = full).
+    gp : Games played per player (used to scale shrinkage).
+    min_gp_full : Games threshold for full-weight (no extra shrinkage).
+
+    Returns
+    -------
+    Shrunk series.
+    """
+    if gp is not None:
+        # More shrinkage for low-GP players
+        gp_factor = np.clip(gp / min_gp_full, 0.0, 1.0)
+        effective_shrinkage = shrinkage_strength * (1 + (1 - gp_factor))
+        effective_shrinkage = np.clip(effective_shrinkage, 0.0, 0.8)
+    else:
+        effective_shrinkage = shrinkage_strength
+
+    shrunk = (1 - effective_shrinkage) * series + effective_shrinkage * prior
+    return shrunk

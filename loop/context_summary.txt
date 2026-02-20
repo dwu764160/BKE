@@ -1,27 +1,29 @@
-- 2026-07-16 — BKE v1.5 Implementation Complete
-- Created 7 new modules in `src/modeling/`:
-- `model_config.py` — Centralized config for all v1.5 modules
-- `percentile_engine.py` — Three-level percentile standardization (league, position, archetype)
-- `layer1_portable_talent.py` — Context-neutral talent estimation
-- `layer2_role_utilization.py` — Playtype surplus + Role Utilization Efficiency
-- `layer3_archetype_elevation.py` — Archetype baseline + elevation scoring
-- `layer4_scheme_amplification.py` — Context sensitivity (proxy + full modes)
-- `decomposition_engine.py` — Master pipeline + output generation
-- Results: 950 qualified player-seasons across 3 seasons (2022-23, 2023-24, 2024-25), 0 NaN in final output
-- Outputs: bke_v15_decomposition.parquet (232 cols), .csv, bke_v15_report.json
-- Key metrics validated:
-- Portable Talent Score range: 0.3-100.0 (Jokic #1 all seasons)
-- RUE range: 0.3-100.0 (cosine similarity vs archetype-optimal playtype distribution)
-- Elevation range: 0.3-100.0 (z-scored deviation from archetype baseline)
-- Scheme Stability range: 0.3-100.0 (286 portable, 381 moderate, 283 system-dependent)
-- Portability ratio: mean 0.50, range 0.004-0.99
-- Bugs fixed during implementation:
-- load_archetypes() was dropping playtype columns needed by Layer 2
-- Layer 4 fast mode produced constant 50.2 for all players (all defaults); added proxy features
-- merge_archetype_baselines() lost index via pd.merge (broke 2024-25 season); fixed with index preservation
-- Portability ratio formula: PTS/Total produced degenerate ~1.0; changed to PTS/(PTS+RDIS)
-- Total impact ranked among all rows including unqualified (diluted scores); fixed to qualified-only ranking
-- Updated reference/BKE_metric_modelling_summary.md to v1.5 with key differences from plan
+- 2026-07-16 — BKE v2.0 Implementation Complete (upgraded from v1.5)
+- Updated all 7 modules in `src/modeling/` to v2.0:
+- `model_config.py` — Added ZScoreConfig, BayesianShrinkageConfig, PortabilityConfig, 8-dimension PORTABLE_DIMENSIONS dict, v2.0 output paths, 25/20/55 Layer 1 weights
+- `percentile_engine.py` — Added compute_z_score(), add_league_z_scores(), add_grouped_z_scores(), z_to_percentile(), weighted_z_composite(), apply_bayesian_shrinkage()
+- `layer1_portable_talent.py` — Rewrote to 8-dimension model with z-score aggregation: Shooting Gravity, Driving Gravity (revised), Playmaking, Extra Possession (cross-domain), Defensive Playmaking (expanded), Defensive Impact, Turnover Control (standalone), Defensive Versatility. Added _avg_z_components() for NaN-safe averaging. Expanded data loaders to include tracking columns.
+- `layer2_role_utilization.py` — Added z-score outputs for surplus and RUE. Fixed min_playtype_poss from 25 (season total) to 0.3 (per-game) — surplus was always zero in v1.5.
+- `layer3_archetype_elevation.py` — Added elevation_z output
+- `layer4_scheme_amplification.py` — Added scheme_stability_z output
+- `decomposition_engine.py` — Rewrote compute_total_impact() to use z-score aggregation, replaced compute_portability_ratio() with compute_portability_index() (4-component variance-based), updated generate_player_card/report/run_full_decomposition to v2.0
+- Results: 950 qualified player-seasons across 3 seasons, 0 NaN in all dimension/impact/portability columns
+- Outputs: bke_v20_decomposition.parquet (~280+ cols), .csv, bke_v20_report.json
+- Key v2.0 metrics validated:
+  - All 8 dimension z-scores have 0 NaN and meaningful variance (std 0.277-0.892)
+  - Portable talent z: mean ~0.0, std 0.478
+  - Total impact z: mean ~0.0, std 0.455
+  - Portability index raw: mean 0.605, std 0.078
+  - Surplus now active (abs mean 0.325, was 0.0 in v1.5)
+  - Role elasticity has variance (std 0.083, was 0.0 before fix)
+- Bugs fixed during v2.0 implementation:
+  - assignment_difficulty was categorical string ("Low"/"Medium"/"High") — converted to numeric 0/0.5/1.0
+  - Offensive archetypes loader missing driving/tracking/entropy columns — expanded keep list
+  - Defensive archetypes loader missing hustle/engagement/deflection/matchup columns — expanded keep list
+  - min_playtype_poss=25 never matched per-game data (max ~10/game) — changed to 0.3
+  - z-component NaN propagated through dimension averages — added fillna(0) in _avg_z_components()
+  - emb_entropy_norm used as proxy for pcv_entropy (not computed)
+- Updated reference/BKE_metric_modelling_summary.md to v2.0 with all changes from v1.5 and key differences from v2.0 plan
 
 
 - 2026-02-16 — RAPM refactor + DARKO pipeline scaffolding

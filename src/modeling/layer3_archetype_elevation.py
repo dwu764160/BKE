@@ -1,7 +1,7 @@
 """
 src/modeling/layer3_archetype_elevation.py
 =============================================================================
-BKE v1.5 — LAYER 3: Archetype Elevation
+BKE v2.0 — LAYER 3: Archetype Elevation
 
 Estimates:
   "How much better is this player than the average player in their archetype?"
@@ -9,8 +9,11 @@ Estimates:
 Sub-layers:
   3A. Archetype Baseline Impact — Mean RAPM, playtype surplus, and on/off
       impact for each archetype cohort.
-  3B. Elevation Score — Player impact minus archetype baseline, percentile-
-      normalized within archetype.
+  3B. Elevation Score — Player impact minus archetype baseline, z-scored
+      within season (v2.0: already uses z-scores internally).
+
+v2.0: Internal z-score aggregation was already correct in v1.5.
+      Added elevation z-score output for decomposition pipeline.
 
 This answers:
   - Are they archetype-replacement level?
@@ -26,6 +29,7 @@ Output:
     - archetype_baseline_surplus
     - elevation_rapm / _surplus / _efficiency
     - elevation_score (composite)
+    - elevation_z (v2.0: raw z-score for aggregation)
     - elevation_league_pctl / _archetype_pctl
 =============================================================================
 """
@@ -45,6 +49,7 @@ from src.modeling.model_config import (
 )
 from src.modeling.percentile_engine import (
     add_league_percentiles,
+    add_league_z_scores,
     add_grouped_percentiles,
     vectorized_percentile_rank,
 )
@@ -204,6 +209,12 @@ def compute_elevation_scores(df: pd.DataFrame) -> pd.DataFrame:
     result["elevation_score"] = result.groupby("season")["elevation_score_raw"].transform(
         vectorized_percentile_rank
     )
+
+    # v2.0: Store the z-scored composite for z-score aggregation pipeline
+    result["elevation_z"] = result["elevation_score_raw"]  # already a z-score composite
+
+    # v2.0: Also add z-scores for downstream aggregation
+    result = add_league_z_scores(result, ["elevation_score_raw"])
 
     # Add archetype-level percentile
     if "primary_archetype" in result.columns:
