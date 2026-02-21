@@ -1,8 +1,8 @@
-# BKE Metric Modelling Summary (v2.7)
+# BKE Metric Modelling Summary (v2.8)
 
 ## Overview — Portable Talent vs Role-Dependent Impact Decomposition Engine
 
-BKE v2.7 is a statistical maturity pass on top of the v2.6 decomposition engine. The architecture, layer boundaries, and decomposition objective remain unchanged; v2.7 upgrades role-conditioning math, archetype handling, and stability controls.
+BKE v2.8 is a distribution-integrity pass on top of the v2.7 decomposition engine. The architecture, layer boundaries, and decomposition objective remain unchanged; v2.8 upgrades terminal score shaping, variance anchoring, and diagnostics while preserving the v2.7 role-conditioning framework.
 
 For every player-season, it produces:
 
@@ -16,11 +16,17 @@ Where Role-Dependent Impact is further decomposed:
 Role-Dependent Impact = RUE + Archetype Elevation + Scheme Amplification
 ```
 
-**v2.7 aggregation pipeline:** Raw → Z-score → Soft-Archetype Conditional Standardization → Empirical-Bayes Shrinkage → Weighted Sum → Final Z → Percentile (presentation only)
+**v2.8 aggregation pipeline:** Raw → Z-score → Soft-Archetype Conditional Standardization → Empirical-Bayes Shrinkage → Weighted Sum → Anchored Z → Logistic Transform → Percentile (presentation only)
 
 Percentiles remain strictly terminal — never used as inputs to any layer or aggregation step.
 
-**v2.7 key additions over v2.6:**
+**v2.8 key additions over v2.7:**
+- **Terminal transformed ranking (implemented):** Portable talent, role-dependent impact, and total impact use a monotonic logistic transform before percentile ranking.
+- **Seasonwise variance anchoring (implemented):** Role-dependent and total impact z-variance are anchored to floor retention constraints to avoid over-compression.
+- **Distribution integrity diagnostics (implemented):** Added variance/compression/tail-separation diagnostics and OBKE/DBKE balance checks.
+- **Expanded output artifacts (implemented):** Decomposition now exports dedicated dimension/layer/OBKE-DBKE JSON bundles and distribution reports.
+
+**v2.7 key additions over v2.6 (retained):**
 - **Soft archetype membership (implemented):** Hard single-role internals replaced with embedding-driven `arch_prob_*` memberships.
 - **Full conditional neutralization (implemented):** Layer 1 dimension conditioning now supports mean + variance adjustment.
 - **Empirical-Bayes variance-component path (implemented):** Shared shrinkage utility now supports within/between variance hooks.
@@ -54,13 +60,13 @@ Percentiles remain strictly terminal — never used as inputs to any layer or ag
 
 | Module | Purpose |
 |--------|---------|
-| `model_config.py` | Centralized config: paths, weights, thresholds, z-score/shrinkage settings, neutralization, soft-membership, output versioning |
+| `model_config.py` | Centralized config: paths, weights, thresholds, z-score/shrinkage settings, neutralization, soft-membership, distribution-integrity controls, output versioning |
 | `percentile_engine.py` | Three-level percentile + z-score utilities, empirical-Bayes shrinkage, hard/soft neutralization paths |
 | `layer1_portable_talent.py` | Context-neutral talent estimation with embedding ingestion, soft memberships, conditional neutralization, variance restoration |
 | `layer2_role_utilization.py` | Playtype surplus + RUE with configurable optimal-template source and soft-membership weighting |
 | `layer3_archetype_elevation.py` | Baseline-relative elevation with soft-membership weighted archetype expectations |
 | `layer4_scheme_amplification.py` | Context sensitivity estimation + scheme stability z-scores |
-| `decomposition_engine.py` | Final z-score assembly + structural portability index + transfer signal integration + output generation |
+| `decomposition_engine.py` | Final assembly with anchored/transformed terminal scoring + structural portability index + transfer signal integration + output generation |
 
 ---
 
@@ -211,13 +217,26 @@ Full-mode / fast-mode structure is unchanged.
 RDIS_z = 0.40 * RUE_z + 0.40 * Elevation_z + 0.20 * (-Scheme_z)
 ```
 
-**Total Impact z-score:**
+**Total Impact z-score (pre-anchor):**
 
 ```
 Total_z = (w_PTS * PTS_z + w_RUE * RUE_z + w_Elev * Elev_z + w_Scheme * Scheme_z) / sum(w)
 ```
 
-All weights default to 1.0. Percentile-ranked within season (qualified only) for presentation.
+All weights default to 1.0.
+
+**v2.8 variance anchoring and transform path:**
+- `role_dependent_impact_z` and `total_impact_z` are seasonwise re-scaled if their post-processing variance falls below configured retention floors.
+- Terminal ranking uses a monotonic logistic mapping:
+
+```
+transformed_z = 2 * sigmoid(alpha * z) - 1
+```
+
+- Percentiles are then computed from transformed values (qualified-only, within season) for:
+  - `portable_talent_percentile`
+  - `role_dependent_impact_percentile`
+  - `total_impact_percentile`
 
 **Structural Portability Index (retained core, updated transfer term):**
 
@@ -258,12 +277,15 @@ x_post = (1 - a) * x + a * mu_prior
 - **Cosine similarity:** $\cos(a,b) = (a \cdot b) / (\|a\|\|b\|)$
 - **Shannon entropy:** $H = -\sum p_i \ln p_i$
 - **Weighted z composite:** $\sum (w_i z_i) / \sum w_i$
+- **Logistic transform (v2.8 terminal shaping):** $z_t = 2\sigma(\alpha z)-1$
 
 ---
 
 ## Final Comprehensive Output — BKE (v2.7 Addendum)
 
 This addendum defines the final OBKE/DBKE/BKE constructor used for league-wide final ranking output in `BKE_Scores_v27.json`.
+
+Note: v2.8 decomposition changes are upstream and diagnostic-focused; the final constructor artifact remains `construct_bke_scores_v27.py` / `BKE_Scores_v27.json` in the current pipeline.
 
 ### Inputs
 
@@ -353,13 +375,14 @@ Per player entry includes:
 
 ---
 
-## Example Output Card (updated for v2.7 fields)
+## Example Output Card (updated for v2.8 decomposition fields)
 
 ```
 Player (Season):
   Portable Talent:     Score XX.X | z=...
   Role-Dependent:      Score XX.X | z=...
   Total Impact:        Score XX.X | z=...
+  Total Impact (xform): ...
   Portability Index:   0.XX
     Dimensional Breadth: ...
     Universal Skill: ...
@@ -375,27 +398,56 @@ Player (Season):
 
 | File | Format | Description |
 |------|--------|-------------|
-| `bke_v27_decomposition.parquet` | Parquet | Full decomposition table |
-| `bke_v27_decomposition.csv` | CSV | Same as above, human-readable |
-| `bke_v27_report.json` | JSON | Summary report with top-10 lists, z-score/distribution stats |
-| `bke_v27_backtest.json` | JSON | Year-over-year backtesting diagnostics |
+| `bke_v28_decomposition.parquet` | Parquet | Full decomposition table (anchored + transformed terminal columns) |
+| `bke_v28_decomposition.csv` | CSV | Same as above, human-readable |
+| `bke_v28_report.json` | JSON | Summary report with top-10 lists and transformed metric summaries |
+| `bke_v28_variance_report.json` | JSON | Variance retention diagnostics for anchored layers |
+| `bke_v28_compression_report.json` | JSON | Compression/tail diagnostics and dimension correlation matrix |
+| `dimension_scores_v28.json` | JSON | Per-player portable-dimension score bundle |
+| `layer_scores_v28.json` | JSON | Per-player layer score bundle |
+| `obke_dbke_scores_v28.json` | JSON | Per-player OBKE/DBKE/BKE decomposition bundle |
+| `BKE_Scores_v27.json` | JSON | Final constructor output (terminal league-wide ranking artifact) |
 
 ---
 
-## Validation Results (v2.7 run)
+## Validation Results (v2.8 run)
 
 | Metric | Value |
 |--------|-------|
 | Qualified players | 950 |
 | Seasons | 2022-23, 2023-24, 2024-25 |
-| Output artifacts | `bke_v27_decomposition.parquet/.csv`, `bke_v27_report.json`, `bke_v27_backtest.json` |
-| Decomposition runtime | ~63s (full v2.7 run) |
-| Backtest execution | Success (after indentation fix in save block) |
+| Output artifacts | `bke_v28_decomposition.parquet/.csv`, `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json` |
+| Decomposition runtime | ~63s (full v2.8 run) |
+| Backtest execution | Not rerun in this v2.8 pass (constructor remains v27 path) |
 
-Selected backtest diagnostics from latest run:
-- PTS Spearman $\rho \approx 0.590$
-- Portability Index Spearman $\rho \approx 0.685$
-- Total Impact within-1-tier accuracy $\approx 76.8\%$
+Selected decomposition diagnostics from latest run:
+- Qualified players: 950 / 1971 total rows
+- Runtime: ~62.8s
+- Top impact list and portability classifications produced successfully
+
+---
+
+## Changes from v2.7 → v2.8
+
+### 1) Terminal Transform Before Percentile Rank
+**v2.7:** Percentiles were computed directly from terminal z values.
+**v2.8:** Percentiles are computed from monotonic logistic-transformed terminal values.
+
+### 2) Seasonwise Variance Anchoring
+**v2.7:** No explicit variance floor enforcement after layer assembly.
+**v2.8:** `role_dependent_impact_z` and `total_impact_z` are anchored per season to retain configured variance floor.
+
+### 3) Distribution Integrity Diagnostics
+**v2.7:** Report focused on summary/top-player outputs.
+**v2.8:** Adds dedicated variance/compression reports, tail separation, OBKE/DBKE balance, and dimension correlation diagnostics.
+
+### 4) Expanded Artifacts for Downstream Consumption
+**v2.7:** Primary decomposition table/report plus constructor/backtest artifacts.
+**v2.8:** Adds structured JSON exports for dimensions, layers, and OBKE/DBKE decomposition.
+
+### 5) Output Versioning
+**v2.7:** `bke_v27_*`
+**v2.8:** `bke_v28_*` (constructor output remains `BKE_Scores_v27.json`)
 
 ---
 
@@ -494,7 +546,7 @@ Turnover-control expansion, defensive playmaking expansion, and playmaking creat
 
 ---
 
-## Deliverables (v2.7)
+## Deliverables (v2.8)
 
 - 4-layer decomposition with z-score backbone retained
 - Soft-membership archetype conditioning integrated across layers
@@ -503,8 +555,11 @@ Turnover-control expansion, defensive playmaking expansion, and playmaking creat
 - Configurable RUE optimal-template source
 - Soft-membership weighted elevation baselines and expectations
 - Structural portability index with explicit archetype transfer signal
-- Output/version migration to `bke_v27_*` artifacts
-- Updated report, backtesting, readme references, and loop context notes
+- Seasonwise variance anchoring for role-dependent and total impact layers
+- Logistic terminal transforms before percentile ranking
+- Distribution-integrity diagnostics and expanded decomposition artifacts
+- Output/version migration to `bke_v28_*` decomposition artifacts
+- Updated report/readme/loop context notes
 
 ## Known Issues / Missing Features (Deferred)
 

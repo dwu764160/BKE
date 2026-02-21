@@ -1,7 +1,7 @@
 """
 src/modeling/decomposition_engine.py
 =============================================================================
-BKE v2.7 — FINAL DECOMPOSITION ENGINE
+BKE v2.8 — FINAL DECOMPOSITION ENGINE
 
 Ties together all four layers into the complete impact decomposition:
 
@@ -30,8 +30,13 @@ All outputs percentile-standardized at three levels:
   - League / Position / Archetype
 
 Outputs:
-    - data/processed/bke_v27_decomposition.parquet / .csv
-    - data/processed/bke_v27_report.json
+    - data/processed/bke_v28_decomposition.parquet / .csv
+    - data/processed/bke_v28_report.json
+    - data/processed/bke_v28_variance_report.json
+    - data/processed/bke_v28_compression_report.json
+    - data/processed/dimension_scores_v28.json
+    - data/processed/layer_scores_v28.json
+    - data/processed/obke_dbke_scores_v28.json
 =============================================================================
 """
 
@@ -43,16 +48,24 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from scipy.special import expit
+from scipy.stats import kurtosis
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.modeling.model_config import (
     DECOMPOSITION,
+    DISTRIBUTION_INTEGRITY,
     PORTABILITY,
     ROLE_UTILIZATION,
-    BKE_OUTPUT_PARQUET,
-    BKE_OUTPUT_CSV,
-    BKE_REPORT_JSON,
+    BKE_V28_OUTPUT_PARQUET,
+    BKE_V28_OUTPUT_CSV,
+    BKE_V28_REPORT_JSON,
+    BKE_V28_VARIANCE_REPORT_JSON,
+    BKE_V28_COMPRESSION_REPORT_JSON,
+    BKE_V28_DIMENSION_SCORES_JSON,
+    BKE_V28_LAYER_SCORES_JSON,
+    BKE_V28_OBKE_DBKE_SCORES_JSON,
     SEASONS,
     clean_id,
 )
@@ -70,6 +83,64 @@ from src.modeling.layer1_portable_talent import build_portable_talent
 from src.modeling.layer2_role_utilization import build_role_utilization
 from src.modeling.layer3_archetype_elevation import build_archetype_elevation
 from src.modeling.layer4_scheme_amplification import build_scheme_amplification
+
+
+def _logistic_transform(series: pd.Series, alpha: float) -> pd.Series:
+    vals = pd.to_numeric(series, errors="coerce")
+    return pd.Series(expit(alpha * vals) * 100.0, index=series.index)
+
+
+def _apply_variance_anchor_by_season(
+    values: pd.Series,
+    reference: pd.Series,
+    seasons: pd.Series,
+    min_retention: float,
+    max_scale: float,
+) -> pd.Series:
+    anchored = values.copy()
+    for season in seasons.dropna().unique():
+        mask = seasons == season
+        cur = pd.to_numeric(values.loc[mask], errors="coerce")
+        ref = pd.to_numeric(reference.loc[mask], errors="coerce")
+        cur_std = float(cur.std()) if cur.notna().any() else np.nan
+        ref_std = float(ref.std()) if ref.notna().any() else np.nan
+        if np.isnan(cur_std) or np.isnan(ref_std) or ref_std < 1e-8:
+            continue
+        needed = min_retention * ref_std
+        if cur_std < needed and cur_std > 1e-10:
+            scale = min(max_scale, needed / cur_std)
+            anchored.loc[mask] = cur * scale
+    return anchored
+
+
+def _series_distribution_stats(series: pd.Series) -> Dict:
+    vals = pd.to_numeric(series, errors="coerce").dropna()
+    if vals.empty:
+        return {"count": 0, "mean": None, "std": None, "iqr": None, "kurtosis": None}
+    q1 = float(vals.quantile(0.25))
+    q3 = float(vals.quantile(0.75))
+    return {
+        "count": int(len(vals)),
+        "mean": float(vals.mean()),
+        "std": float(vals.std()),
+        "iqr": float(q3 - q1),
+        "kurtosis": float(kurtosis(vals, fisher=True, bias=False)) if len(vals) > 3 else None,
+    }
+
+
+def _tail_separation(series: pd.Series) -> Dict:
+    vals = pd.to_numeric(series, errors="coerce").dropna()
+    if vals.empty:
+        return {"p90_p95": None, "p95_p99": None, "top5_spread": None}
+    p90 = float(vals.quantile(0.90))
+    p95 = float(vals.quantile(0.95))
+    p99 = float(vals.quantile(0.99))
+    top5 = vals.nlargest(min(5, len(vals)))
+    return {
+        "p90_p95": float(p95 - p90),
+        "p95_p99": float(p99 - p95),
+        "top5_spread": float(top5.max() - top5.min()) if len(top5) >= 2 else 0.0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -163,13 +234,29 @@ def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
     result["role_dependent_impact_z"] = rdis_z
     result["role_dependent_impact_raw"] = rdis_z  # compat
 
+    # v2.8 variance anchoring for role-dependent layer.
+    rdis_reference = (rue_z + elev_z + scheme_z.abs()) / 3.0
+    result["role_dependent_impact_z"] = _apply_variance_anchor_by_season(
+        result["role_dependent_impact_z"],
+        rdis_reference,
+        result["season"],
+        DISTRIBUTION_INTEGRITY.min_variance_retention,
+        DISTRIBUTION_INTEGRITY.max_rescale_factor,
+    )
+
     # Percentile rank ONLY among qualified
+    result["role_dependent_impact_transformed"] = np.nan
     result["role_dependent_impact_score"] = np.nan
     for season in result["season"].unique():
         mask = qualified_mask & (result["season"] == season)
         if mask.any():
+            transformed = _logistic_transform(
+                result.loc[mask, "role_dependent_impact_z"],
+                DISTRIBUTION_INTEGRITY.logistic_alpha,
+            )
+            result.loc[mask, "role_dependent_impact_transformed"] = transformed
             result.loc[mask, "role_dependent_impact_score"] = \
-                vectorized_percentile_rank(result.loc[mask, "role_dependent_impact_z"])
+                vectorized_percentile_rank(transformed)
 
     # --- Total Impact z-score ---
     # v2.6: Scheme stability is bonus-only in TI. Being scheme-dependent
@@ -190,13 +277,47 @@ def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
     result["total_impact_z"] = total_z
     result["total_impact_raw"] = total_z  # compat
 
+    # v2.8 variance anchoring for final total impact.
+    total_reference = (
+        cfg.w_portable_talent * pts_z +
+        cfg.w_role_utilization * rue_z +
+        cfg.w_archetype_elevation * elev_z +
+        cfg.w_scheme_amplification * scheme_z.abs()
+    ) / (cfg.w_portable_talent + cfg.w_role_utilization + cfg.w_archetype_elevation + cfg.w_scheme_amplification)
+    result["total_impact_z"] = _apply_variance_anchor_by_season(
+        result["total_impact_z"],
+        total_reference,
+        result["season"],
+        DISTRIBUTION_INTEGRITY.min_variance_retention,
+        DISTRIBUTION_INTEGRITY.max_rescale_factor,
+    )
+
     # Percentile rank ONLY among qualified
+    result["total_impact_transformed"] = np.nan
     result["total_impact_score"] = np.nan
     for season in result["season"].unique():
         mask = qualified_mask & (result["season"] == season)
         if mask.any():
+            transformed = _logistic_transform(
+                result.loc[mask, "total_impact_z"],
+                DISTRIBUTION_INTEGRITY.logistic_alpha,
+            )
+            result.loc[mask, "total_impact_transformed"] = transformed
             result.loc[mask, "total_impact_score"] = \
-                vectorized_percentile_rank(result.loc[mask, "total_impact_z"])
+                vectorized_percentile_rank(transformed)
+
+    # v2.8 transformed portable talent for terminal percentile computation.
+    result["portable_talent_transformed"] = np.nan
+    if "portable_talent_z_adj" in result.columns:
+        for season in result["season"].unique():
+            mask = qualified_mask & (result["season"] == season)
+            if mask.any():
+                transformed = _logistic_transform(
+                    result.loc[mask, "portable_talent_z_adj"],
+                    DISTRIBUTION_INTEGRITY.logistic_alpha,
+                )
+                result.loc[mask, "portable_talent_transformed"] = transformed
+                result.loc[mask, "portable_talent_score"] = vectorized_percentile_rank(transformed)
 
     # Also store CDF-based percentile for cross-era comparison
     result["total_impact_cdf_pctl"] = np.nan
@@ -643,7 +764,7 @@ def generate_report(df: pd.DataFrame) -> Dict:
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     report = {
-        "version": "2.7",
+        "version": "2.8",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_players": int(len(df)),
         "qualified_players": int(len(qualified)),
@@ -657,8 +778,12 @@ def generate_report(df: pd.DataFrame) -> Dict:
     }
 
     # Metrics summary
-    for metric in ["portable_talent_score", "role_dependent_impact_score",
-                    "total_impact_score", "portability_index"]:
+    for metric in [
+        "portable_talent_score", "role_dependent_impact_score",
+        "total_impact_score", "portability_index",
+        "portable_talent_transformed", "role_dependent_impact_transformed",
+        "total_impact_transformed",
+    ]:
         if metric in qualified.columns:
             vals = qualified[metric].dropna()
             report["metrics_summary"][metric] = {
@@ -725,6 +850,117 @@ def generate_report(df: pd.DataFrame) -> Dict:
     return report
 
 
+def generate_distribution_diagnostics(df: pd.DataFrame) -> Dict:
+    qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
+
+    layer_cols = [
+        "dimension_model_z", "portable_talent_z_adj", "role_utilization_raw_z",
+        "elevation_z", "scheme_stability_z", "role_dependent_impact_z", "total_impact_z",
+        "portable_talent_transformed", "role_dependent_impact_transformed", "total_impact_transformed",
+    ]
+    layer_stats = {}
+    tail_stats = {}
+    for col in layer_cols:
+        if col in qualified.columns:
+            layer_stats[col] = _series_distribution_stats(qualified[col])
+            tail_stats[col] = _tail_separation(qualified[col])
+
+    checks = [
+        ("dimension_model_z", "portable_talent_z_adj"),
+        ("portable_talent_z_adj", "total_impact_z"),
+        ("role_utilization_raw_z", "role_dependent_impact_z"),
+    ]
+    compression = []
+    for src, dst in checks:
+        if src in layer_stats and dst in layer_stats:
+            src_std = layer_stats[src].get("std")
+            dst_std = layer_stats[dst].get("std")
+            ratio = None
+            flagged = False
+            if src_std and dst_std is not None and src_std > 0:
+                ratio = float(dst_std / src_std)
+                flagged = ratio < DISTRIBUTION_INTEGRITY.compression_warning_ratio
+            compression.append({
+                "source": src,
+                "target": dst,
+                "std_ratio": ratio,
+                "compression_flag": flagged,
+            })
+
+    obke_dbke = {}
+    if "offensive_portable_z" in qualified.columns and "defensive_portable_z" in qualified.columns:
+        off = pd.to_numeric(qualified["offensive_portable_z"], errors="coerce")
+        deff = pd.to_numeric(qualified["defensive_portable_z"], errors="coerce")
+        corr = off.corr(deff)
+        std_off = float(off.std()) if off.notna().any() else None
+        std_def = float(deff.std()) if deff.notna().any() else None
+        obke_dbke = {
+            "correlation": float(corr) if corr is not None and not np.isnan(corr) else None,
+            "off_std": std_off,
+            "def_std": std_def,
+            "std_ratio_off_over_def": float(std_off / std_def) if std_off and std_def and std_def > 0 else None,
+        }
+
+    dim_cols = [c for c in qualified.columns if c.startswith("dim_") and c.endswith("_z") and "_raw" not in c]
+    dim_corr = {}
+    if dim_cols:
+        corr_mat = qualified[dim_cols].corr().fillna(0.0)
+        for col in corr_mat.columns:
+            dim_corr[col] = {k: float(v) for k, v in corr_mat.loc[col].to_dict().items()}
+
+    return {
+        "version": "2.8",
+        "layer_distribution_stats": layer_stats,
+        "tail_separation": tail_stats,
+        "compression_report": compression,
+        "obke_dbke_balance": obke_dbke,
+        "dimension_correlation_matrix": dim_corr,
+    }
+
+
+def build_v28_score_artifacts(df: pd.DataFrame) -> Dict[str, Dict]:
+    qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
+    name_col = "player_name" if "player_name" in qualified.columns else "player_id"
+
+    dim_cols = [c for c in qualified.columns if c.startswith("dim_") and c.endswith("_z") and "_raw" not in c]
+    layer_cols = [
+        "portable_talent_z_adj", "role_utilization_raw_z", "elevation_z",
+        "scheme_stability_z", "role_dependent_impact_z", "total_impact_z",
+        "portable_talent_transformed", "role_dependent_impact_transformed", "total_impact_transformed",
+    ]
+    obke_cols = ["offensive_portable_z", "defensive_portable_z", "portable_talent_z_adj"]
+
+    dimension_scores = {"version": "2.8", "players": {}}
+    layer_scores = {"version": "2.8", "players": {}}
+    obke_dbke_scores = {"version": "2.8", "players": {}}
+
+    for _, row in qualified.iterrows():
+        key = f"{row.get(name_col, row.get('player_id', 'Unknown'))} ({row.get('season', '')}) #{row.get('player_id', '')}"
+        dimension_scores["players"][key] = {
+            "player_id": str(row.get("player_id", "")),
+            "season": str(row.get("season", "")),
+            **{c: _safe_float(row.get(c)) for c in dim_cols},
+        }
+        layer_scores["players"][key] = {
+            "player_id": str(row.get("player_id", "")),
+            "season": str(row.get("season", "")),
+            **{c: _safe_float(row.get(c)) for c in layer_cols if c in qualified.columns},
+        }
+        obke_dbke_scores["players"][key] = {
+            "player_id": str(row.get("player_id", "")),
+            "season": str(row.get("season", "")),
+            **{c: _safe_float(row.get(c)) for c in obke_cols if c in qualified.columns},
+            "obke_transformed": _safe_float(_logistic_transform(pd.Series([row.get("offensive_portable_z")]), DISTRIBUTION_INTEGRITY.logistic_alpha).iloc[0]) if "offensive_portable_z" in qualified.columns else None,
+            "dbke_transformed": _safe_float(_logistic_transform(pd.Series([row.get("defensive_portable_z")]), DISTRIBUTION_INTEGRITY.logistic_alpha).iloc[0]) if "defensive_portable_z" in qualified.columns else None,
+        }
+
+    return {
+        "dimension_scores": dimension_scores,
+        "layer_scores": layer_scores,
+        "obke_dbke_scores": obke_dbke_scores,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main Pipeline
 # ---------------------------------------------------------------------------
@@ -735,7 +971,7 @@ def run_full_decomposition(
     save_output: bool = True,
 ) -> pd.DataFrame:
     """
-    Run the complete v2.7 BKE Impact Decomposition Engine.
+    Run the complete v2.8 BKE Impact Decomposition Engine.
 
         v2.7 enhancements over v2.6:
             - Soft archetype membership conditioning across role-dependent layers
@@ -764,7 +1000,7 @@ def run_full_decomposition(
     seasons = seasons or SEASONS
 
     print("\n" + "=" * 70)
-    print("  BKE v2.7 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
+    print("  BKE v2.8 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
     print("=" * 70)
     print(f"  Seasons: {seasons}")
     print(f"  Possession data: {'Yes' if use_possession_data else 'No (fast mode)'}")
@@ -799,7 +1035,7 @@ def run_full_decomposition(
     print("FINAL DECOMPOSITION")
     print("=" * 60)
 
-    print("  Computing total impact...")
+    print("  Computing total impact (v2.8 transformed + anchored)...")
     df = compute_total_impact(df)
 
     print("  Computing portability index (v2.7 structural)...")
@@ -818,7 +1054,7 @@ def run_full_decomposition(
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     print("\n" + "=" * 70)
-    print("  BKE v2.7 — DECOMPOSITION COMPLETE")
+    print("  BKE v2.8 — DECOMPOSITION COMPLETE")
     print("=" * 70)
     print(f"  Total players: {len(df)}")
     print(f"  Qualified players: {len(qualified)}")
@@ -849,15 +1085,39 @@ def run_full_decomposition(
     # Save outputs
     if save_output:
         print("\n  Saving outputs...")
-        df.to_parquet(BKE_OUTPUT_PARQUET, index=False)
-        df.to_csv(BKE_OUTPUT_CSV, index=False)
-        print(f"  Saved: {BKE_OUTPUT_PARQUET}")
-        print(f"  Saved: {BKE_OUTPUT_CSV}")
+        df.to_parquet(BKE_V28_OUTPUT_PARQUET, index=False)
+        df.to_csv(BKE_V28_OUTPUT_CSV, index=False)
+        print(f"  Saved: {BKE_V28_OUTPUT_PARQUET}")
+        print(f"  Saved: {BKE_V28_OUTPUT_CSV}")
 
         report = generate_report(df)
-        with open(BKE_REPORT_JSON, "w") as f:
+        with open(BKE_V28_REPORT_JSON, "w") as f:
             json.dump(report, f, indent=2, default=str)
-        print(f"  Saved: {BKE_REPORT_JSON}")
+        print(f"  Saved: {BKE_V28_REPORT_JSON}")
+
+        diagnostics = generate_distribution_diagnostics(df)
+        with open(BKE_V28_VARIANCE_REPORT_JSON, "w") as f:
+            json.dump(diagnostics.get("layer_distribution_stats", {}), f, indent=2, default=str)
+        with open(BKE_V28_COMPRESSION_REPORT_JSON, "w") as f:
+            json.dump({
+                "compression_report": diagnostics.get("compression_report", []),
+                "tail_separation": diagnostics.get("tail_separation", {}),
+                "obke_dbke_balance": diagnostics.get("obke_dbke_balance", {}),
+                "dimension_correlation_matrix": diagnostics.get("dimension_correlation_matrix", {}),
+            }, f, indent=2, default=str)
+        print(f"  Saved: {BKE_V28_VARIANCE_REPORT_JSON}")
+        print(f"  Saved: {BKE_V28_COMPRESSION_REPORT_JSON}")
+
+        artifacts = build_v28_score_artifacts(df)
+        with open(BKE_V28_DIMENSION_SCORES_JSON, "w") as f:
+            json.dump(artifacts["dimension_scores"], f, indent=2, default=str)
+        with open(BKE_V28_LAYER_SCORES_JSON, "w") as f:
+            json.dump(artifacts["layer_scores"], f, indent=2, default=str)
+        with open(BKE_V28_OBKE_DBKE_SCORES_JSON, "w") as f:
+            json.dump(artifacts["obke_dbke_scores"], f, indent=2, default=str)
+        print(f"  Saved: {BKE_V28_DIMENSION_SCORES_JSON}")
+        print(f"  Saved: {BKE_V28_LAYER_SCORES_JSON}")
+        print(f"  Saved: {BKE_V28_OBKE_DBKE_SCORES_JSON}")
 
     return df
 
@@ -869,7 +1129,7 @@ def run_full_decomposition(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="BKE v2.7 Decomposition Engine")
+    parser = argparse.ArgumentParser(description="BKE v2.8 Decomposition Engine")
     parser.add_argument("--seasons", nargs="*", default=None,
                         help="Seasons to process (default: all)")
     parser.add_argument("--possession-data", action="store_true",

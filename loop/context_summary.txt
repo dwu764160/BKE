@@ -1,3 +1,15 @@
+- 2026-02-21 — BKE v2.8 completion + card stat-slot update
+	- Updated `app/player_data_viewer.py` card overview row to display `BKE` percentile in the former `RIM` slot and removed external card-level BKE badge usage.
+	- Implemented v2.8 decomposition integrity updates in `src/modeling/model_config.py` + `src/modeling/decomposition_engine.py`:
+		- Seasonwise variance anchoring for `role_dependent_impact_z` and `total_impact_z`
+		- Logistic terminal transform before percentile ranking for portable/role-dependent/total scores
+		- Added distribution diagnostics and expanded decomposition artifacts
+	- Full decomposition run validated successfully (`~62.8s`, `950` qualified players), saving:
+		- `bke_v28_decomposition.parquet/.csv`, `bke_v28_report.json`
+		- `bke_v28_variance_report.json`, `bke_v28_compression_report.json`
+		- `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`
+	- Updated docs to reflect v2.8 decomposition outputs while retaining v27 final constructor artifact path (`BKE_Scores_v27.json`).
+
 - 2026-02-21 — BKE viewer UX + grouped percentile enrichment
 	- Updated `app/player_data_viewer.py` cards with a compact `BKE #rank · percentile` badge.
 	- Sort controls updated to `Off Fit`, `Off Effectiveness`, plus transformed metric sorts: `tBKE`, `tOBKE`, `tDBKE`.

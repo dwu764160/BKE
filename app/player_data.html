@@ -36,7 +36,6 @@ input{width:300px}select{min-width:180px}
 .pname{font-size:17px;font-weight:600;color:#fff}
 .pmeta{color:#888;font-size:12px;text-align:right}
 .pteam{color:#aaa;font-weight:500}
-.bke-mini{display:inline-block;margin-top:4px;padding:2px 7px;border:1px solid #2e5f7b;border-radius:999px;background:#0f2a3a;color:#7fd8ff;font-size:10px;font-weight:600;line-height:1.2}
 .srow{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .st{text-align:center;min-width:38px}
 .sv{font-size:14px;font-weight:600;color:#00d9ff}
@@ -196,11 +195,11 @@ function fMoney(v){
     if(!isFinite(n))return String(v);
     return '$'+Math.round(n).toLocaleString('en-US');
 }
-function bkeBadge(p){
-    if(p.bke_rank===null||p.bke_rank===undefined||p.bke_pct===null||p.bke_pct===undefined)return '';
-    var pct=Number(p.bke_pct);
-    if(!isFinite(pct))return '';
-    return '<div class="bke-mini">BKE #'+p.bke_rank+' · '+pct.toFixed(1)+'%</div>';
+function fbke(v){
+    if(v===null||v===undefined||v==='')return '<span class="na">&mdash;</span>';
+    var n=Number(v);
+    if(!isFinite(n))return '<span class="na">&mdash;</span>';
+    return n.toFixed(1)+'%';
 }
 
 /* ---- progress ---- */
@@ -217,14 +216,14 @@ function hideLoad(){setTimeout(function(){document.getElementById('loadBar').cla
 /* ---- card ---- */
 function cardHTML(p){
   return '<div class="card" onclick="openModal(\''+p.key+'\')">'
-        +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG'+bkeBadge(p)+'</div></div>'
+        +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG</div></div>'
     +'<div class="srow">'
     +'<div class="st"><div class="sv">'+p.ppg+'</div><div class="sl">PPG</div></div>'
     +'<div class="st"><div class="sv">'+p.apg+'</div><div class="sl">APG</div></div>'
     +'<div class="st"><div class="sv">'+p.rpg+'</div><div class="sl">RPG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.usg,'%')+'</div><div class="sl">USG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.ts,'%')+'</div><div class="sl">TS%</div></div>'
-    +'<div class="st"><div class="sv">'+fs(p.at_rim,'%')+'</div><div class="sl">RIM</div></div>'
+    +'<div class="st"><div class="sv">'+fbke(p.bke_pct)+'</div><div class="sl">BKE</div></div>'
     +'</div>'
     +'<div class="arow">'
     +'<div class="abox"><div class="albl">Offense</div><div class="aname off">'+p.off_archetype+eBadge(p.eff_tier)+'</div><div class="conf">Fit: '+p.off_confidence+'%'+(p.off_secondary?' &middot; '+p.off_secondary:'')+'</div></div>'

@@ -1,3 +1,17 @@
+2026-02-21 — v2.8 decomposition finalized + card BKE slot moved
+- `app/player_data_viewer.py`
+  - Card overview stat row now shows `BKE` in the former `RIM` slot.
+  - External card BKE badge behavior removed.
+- `src/modeling/model_config.py` + `src/modeling/decomposition_engine.py`
+  - v2.8 output paths and distribution-integrity config added.
+  - Seasonwise variance anchoring + logistic transform before terminal percentile rank implemented.
+  - Added diagnostics/artifact outputs (`bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`).
+- Validation
+  - `python3 src/modeling/decomposition_engine.py` completed successfully (`~62.8s`, `950` qualified), and all v2.8 outputs were saved.
+- Documentation alignment
+  - `reference/BKE_metric_modelling_summary.md` updated section-by-section to v2.8 behavior.
+  - `readme.md` modeling section and data-layout outputs updated to v2.8 decomposition artifact names.
+
 2026-02-21 — Compact BKE badge + transformed BKE sort controls + grouped percentile highlights
 - `src/modeling/construct_bke_scores_v27.py` now computes transformed percentile slices by:
   - `position_bucket`

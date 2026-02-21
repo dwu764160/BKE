@@ -1,262 +1,433 @@
-BKE v2.7 Blueprint
+🧠 BKE v2.8 Blueprint
 
-Goal: Statistical Maturity Pass — Correct Structural Weaknesses Without Adding Features
+Theme: Distribution Integrity, Signal Preservation, and Final BKE Consolidation
+Goal: Fix compression, variance collapse, and percentile distortion while avoiding overfitting.
 
-1️⃣ Replace Hard Archetype Assignment with Probabilistic Membership (CRITICAL)
+I. Core Objectives of v2.8
 
-(Fixes Issue #7 — largest distortion source)
+v2.8 is built around four priorities, all fully addressed:
 
-Problem in v2.6
+Priority A — Fix Distribution Compression
+Priority B — Preserve Meaningful Variance Across Players
+Priority C — Prevent Double-Smoothing / Signal Dilution
+Priority D — Produce Final Comprehensive BKE (OBKE + DBKE)
 
-Archetype is hard-labeled:
+Additionally:
 
-primary_archetype
+Avoid re-percentiling intermediate layers (per v2.5 rule)
 
-Everything depends on it:
+Use Option B for percentile math (monotonic transforms preserved)
 
-Neutralization expectations
+Keep raw composites internally continuous
 
-RUE optimal vector
+Produce final standardized BKE outputs
 
-Elevation baselines
+II. The Distribution Problems (Explicitly Addressed)
 
-Portability transfer component
+You identified three major distribution risks (a, b, c). v2.8 directly solves them:
 
-Boundary players get artificial discontinuities.
+🔴 Problem A: Percentile Compression at Upper Tiers
+Issue
 
-✅ v2.7 Solution: Soft Archetype Membership
+When many elite players cluster in high percentiles (e.g., 92–99), additive structures flatten real separation.
 
-Replace:
+This:
 
-player → archetype A
+Diminishes elite separation
 
-With:
+Artificially tightens rankings
 
-player → {A: 0.52, B: 0.48}
-Implementation Plan
+Creates fragile ordering
 
-A. Use archetype_embeddings.parquet
-You already load:
+v2.8 Fix — Nonlinear Stretch Before Final Percentiling (Option B)
 
-ARCHETYPE_EMBEDDINGS_PATH
+We introduce:
 
-Use distance-to-centroid → convert to softmax probabilities.
+Step 1: Build raw continuous composite scores (NO percentiles)
 
-p_i = exp(-distance_i / τ) / Σ exp(-distance_j / τ)
+Dimension composites remain raw weighted sums.
 
-Add to model_config.py:
+Step 2: Apply monotonic variance-preserving transform:
 
-@dataclass
-class ArchetypeMembershipConfig:
-    temperature: float = 0.5
-    min_probability_floor: float = 0.05
-Apply Soft Membership To:
-Component	v2.6	v2.7
-Neutralization	subtract mean of 1 archetype	subtract weighted mean across archetypes
-RUE optimal vector	1 archetype mean	weighted archetype mean
-Elevation	compare to 1 baseline	compare to weighted baseline
-Portability transfer	binary	probabilistic
+Choose one:
 
-This removes boundary instability entirely.
+Logit stretch
 
-2️⃣ Upgrade Neutralization from Mean-Centering → Full Conditional Standardization
+Z-score standardization
 
-(Fixes Issue #1 — scale bias)
+Rankit transformation (Blom adjustment)
 
-Problem
+Mild exponential stretch on upper tail
 
-Current:
+Preferred for v2.8:
+Z-score → logistic rescale
 
-Neutralized_z = Observed_z - E[z | archetype]
+This:
 
-This removes location bias but not scale differences.
+Preserves ordering
 
-✅ v2.7 Solution: Conditional Z Residuals
+Expands upper and lower tails
 
-New formula:
+Prevents 92–99 compression
 
-z_conditional =
-(Observed - μ_archetype) / σ_archetype
+Only AFTER this transformation do we compute final percentiles.
 
-Then optionally re-scale to league std:
+This avoids percentile-on-percentile collapse.
 
-z_final = z_conditional * league_std
+🔴 Problem B: Variance Collapse Through Layer Aggregation
+Issue
 
-Add to NeutralizationConfig:
+Layer stacking causes variance to shrink:
 
-use_full_conditional_standardization: bool = True
-rescale_to_league_variance: bool = True
+Dimension → Layer → OBKE → BKE
 
-This makes Layer 1C:
+Each weighted average narrows spread
 
-“Performance relative to role distribution”
-instead of
-“Performance above role mean”
+Over time:
 
-Huge improvement.
+Players converge artificially
 
-3️⃣ Replace Heuristic Shrinkage with Empirical Bayes Weighting
+Extreme profiles are muted
 
-(Fixes Issue #3 — shrinkage math not variance-aware)
+v2.8 Fix — Variance Monitoring + Spread Anchoring
 
-Problem
+We implement:
 
-Current shrinkage:
+1. Variance Audit at Every Layer
 
-a = shrinkage_strength * max(0, 1 - GP/min_gp)
+For each layer:
 
-This is deterministic and linear.
+Mean
 
-✅ v2.7 Solution: Variance-Based Shrinkage
+Std deviation
 
-Compute:
+IQR
 
-a = σ_within² / (σ_within² + σ_between² / n)
+Kurtosis
 
-Posterior:
+If std dev shrinks > X% from previous layer:
+→ flag compression
 
-x_post = (1 - a) * x + a * μ_prior
+2. Spread Anchoring Rule
 
-Add to config:
+Each layer must retain at least:
 
-@dataclass
-class BayesianShrinkageConfig:
-    use_empirical_bayes: bool = True
-    estimate_variance_components: bool = True
+65–75% of variance of underlying dimension aggregate
 
-This makes shrinkage dimension-specific and data-driven.
+If below threshold:
 
-4️⃣ Fix Defensive Impact Asymmetry
+Apply variance rescaling (multiply by scaling factor)
 
-(Fixes Issue #2 — defense not treated symmetrically)
+Not nonlinear — linear stretch only
 
-Currently:
+This keeps:
 
-Defensive impact uses position-z
+Outliers meaningful
 
-No archetype conditioning
+Specialists visible
 
-No variance conditioning
+Archetypes intact
 
-This gives defensive archetypes structural advantage.
+🔴 Problem C: Double-Smoothing via On-Off + Percentiles
+Issue
 
-✅ v2.7 Solution
+On-off metrics are already context-adjusted.
+Percentiling them again smooths signal further.
 
-For defensive dimensions:
+Result:
 
-Apply soft archetype-weighted conditional standardization
+Role-dependent impact diluted
 
-Use full conditional residuals (same as offense)
+High-leverage impact players undervalued
 
-Remove exemption logic
+v2.8 Fix — Raw On-Off Integration
 
-Remove from skip_neutralization.
+For on-off metrics:
 
-Defense must obey same statistical logic as offense.
+Convert to possession-normalized rates
 
-5️⃣ Fix Dimension Model Variance Compression
+Z-score within position group
 
-(Fixes Issue #4 — composite std too low)
+Use directly in composite
 
-dimension_model_z std = 0.247 → too compressed.
+Do NOT percentile until final output
 
-Likely causes:
+This preserves:
 
-Over-neutralization
+True magnitude
 
-Strong inter-dimension correlation
+Lineup leverage
 
-Shrinkage stacking
+Signal strength
 
-✅ v2.7 Solution
+III. Layer Integrity Review (Diagnostic Focus)
 
-After Layer 1C composite:
+v2.8 performs a full system audit of:
 
-Compute observed variance
+Layer 1c (Dimensions) — Distribution Diagnostics
 
-Re-normalize to target variance (e.g., 0.40–0.45)
+Each of the 8 dimensions:
 
-Add to config:
+Shooting Gravity
 
-target_dimension_model_std: float = 0.42
-enforce_target_variance: bool = True
+Driving Gravity
 
-This keeps interpretability and separation strength intact.
+Playmaking
 
-6️⃣ Reduce RUE Endogeneity
+Extra Possession Creation
 
-(Fixes Issue #5 — RAPM feedback loop)
+Defensive Playmaking
 
-Problem:
-Optimal archetype vector derived from top-half RAPM players.
+Defensive Impact
 
-That makes RAPM influence RUE baseline.
+Turnover Control
 
-✅ v2.7 Solution
+Defensive Versatility
 
-Instead of:
-
-Top-half RAPM
-
-Use:
-
-Top-half PTS_z
-
-or better:
-
-Top-half neutralized dimension composite
-
-This removes circular reinforcement.
-
-Add flag:
-
-rue_optimal_source: str = "portable_talent"  # not RAPM
-7️⃣ Portability Index Clarification + Structural Tightening
-
-(Fixes Issue #6 — proxy vs real portability clarity)
-
-You already improved this in v2.6.
-
-For v2.7:
-
-Ensure portability uses conditional-residual dimensions
-
-Remove any dependency on raw archetype label
-
-Use entropy of soft membership for transfer stability
+For each:
 
 Add:
 
-use_soft_membership_in_transfer: bool = True
-📊 v2.7 Change Summary Table
-Priority	Fix	Structural Impact
-1	Soft archetype membership	Removes boundary distortion
-2	Full conditional neutralization	Removes scale bias
-3	Empirical Bayes shrinkage	Correct reliability weighting
-4	Defensive symmetry	Removes defensive bias
-5	Variance restoration	Restores elite separation
-6	RUE decoupling	Removes RAPM feedback
-7	Portability tightening	Clarifies structural interpretation
-🔧 Required Addition to model_config.py
+Raw score distribution plot
 
-You currently have dimension weights, but you do NOT have:
+Z-score histogram
 
-A centralized master weight tuning vector
+Percentile spacing check
 
-Or a global scaling hook
+Tail separation measurement
 
-Or automated normalization enforcement
+We compute:
 
-I strongly recommend adding:
+90–95 separation
 
-@dataclass
-class DimensionWeightTuningConfig:
-    """
-    Centralized dimension importance scaling.
-    Allows global tuning without editing individual weight keys.
-    """
-    global_multiplier: float = 1.0
-    auto_normalize: bool = True
-    allow_runtime_override: bool = True
+95–99 separation
 
-This ensures future stability-weighted re-scaling can occur in one place.
+Top 5 players raw spread
+
+If spacing too narrow:
+
+Adjust weighting
+
+Apply mild nonlinear stretch
+
+Or increase raw component weighting
+
+IV. Offensive / Defensive Split Stabilization
+OBKE = Weighted sum of 4 offensive dimensions
+DBKE = Weighted sum of 4 defensive dimensions
+
+In v2.8:
+
+We implement:
+
+1. Independent normalization pipelines
+
+OBKE and DBKE remain raw until final step.
+
+2. Offensive-Defensive Balance Audit
+
+Compute:
+
+Correlation between OBKE and DBKE
+
+Variance comparison
+
+Relative scale ratio
+
+If one side consistently dominates magnitude:
+→ Apply scale normalization to equalize variance contribution.
+
+We want:
+
+OBKE and DBKE to have similar distribution widths
+
+Not identical means — just comparable spread
+
+V. Removal of Portability Ratio (Finalized)
+
+Per v2.5 decision:
+
+Portability ratio removed from reports
+
+Portability concept remains embedded in layer weights
+
+No explicit scalar displayed
+
+This avoids:
+
+Misleading interpretation
+
+Artificial simplification of multidimensional impact
+
+VI. Overfitting Guardrails
+
+To avoid overfitting while expanding diagnostics:
+
+1. No manual player-by-player tuning
+
+All changes must:
+
+Apply league-wide
+
+Be formulaic
+
+Be reproducible
+
+2. Archetype separation test
+
+If top 20 players become homogeneous:
+→ investigate over-smoothing.
+
+3. Holdout validation
+
+Split players into:
+
+High minutes
+
+Medium minutes
+
+Ensure distributions hold in both.
+
+VII. Final Comprehensive Output — BKE
+
+v2.8 produces FOUR output files:
+
+1️⃣ dimension_scores.json
+
+Raw + z-score for each of 8 dimensions
+
+2️⃣ layer_scores.json
+
+Layer composites before final transformation
+
+3️⃣ obke_dbke_scores.json
+
+OBKE + DBKE raw and standardized
+
+4️⃣ bke_scores.json (NEW)
+
+For each eligible player:
+
+{
+  player_name:
+    raw_OBKE,
+    raw_DBKE,
+    transformed_OBKE,
+    transformed_DBKE,
+    final_OBKE_percentile,
+    final_DBKE_percentile,
+    raw_BKE,
+    transformed_BKE,
+    final_BKE_percentile,
+    rank
+}
+VIII. Final BKE Construction
+
+Step-by-step:
+
+OBKE_raw = weighted offensive composite
+
+DBKE_raw = weighted defensive composite
+
+BKE_raw = OBKE_raw + DBKE_raw
+
+Apply monotonic transform to BKE_raw
+
+Compute final percentile (league-wide eligible players)
+
+This is the ONLY percentile that matters for ranking.
+
+No re-percentiling earlier layers.
+
+IX. Deliverables for v2.8
+Diagnostic Outputs:
+
+Variance report per layer
+
+Compression report
+
+Tail separation metrics
+
+OBKE/DBKE balance stats
+
+Correlation matrix of dimensions
+
+Production Outputs:
+
+dimension_scores.json
+
+layer_scores.json
+
+obke_dbke_scores.json
+
+bke_scores.json
+
+X. What v2.8 Is NOT Doing
+
+No new dimensions
+
+No weight overhaul
+
+No portability reintroduction
+
+No archetype modeling changes
+
+No predictive validation yet
+
+This is structural integrity and signal preservation only.
+
+XI. Implementation Checklist
+
+Before marking 2.8 complete:
+
+ All dimensions show healthy spread
+
+ Upper tail separation preserved
+
+ OBKE and DBKE variances comparable
+
+ No double percentiling
+
+ On-off integrated raw
+
+ BKE distribution visually normal-like
+
+ No excessive clustering 90–99
+
+ Reports auto-generated
+
+XII. Summary of What v2.8 Changes
+
+Compared to v2.5:
+
+Major Additions
+
+Full distribution diagnostics layer
+
+Variance preservation rules
+
+Tail stretch transformation
+
+OBKE/DBKE balancing audit
+
+Final BKE output file
+
+Major Fixes
+
+Percentile compression
+
+Variance collapse
+
+On-off double smoothing
+
+Upper-tier flattening
+
+Removals
+
+Portability ratio from reports
+
+Architectural Status
+
+Layers remain architecturally intact
+
+Now mathematically stabilized

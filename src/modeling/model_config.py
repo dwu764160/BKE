@@ -52,6 +52,16 @@ BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.csv")
 BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v27_report.json")
 BKE_SCORES_V27_JSON = os.path.join(OUTPUT_DIR, "BKE_Scores_v27.json")
 
+# Output files — v2.8 decomposition + diagnostics
+BKE_V28_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v28_decomposition.parquet")
+BKE_V28_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v28_decomposition.csv")
+BKE_V28_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_report.json")
+BKE_V28_VARIANCE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_variance_report.json")
+BKE_V28_COMPRESSION_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_compression_report.json")
+BKE_V28_DIMENSION_SCORES_JSON = os.path.join(OUTPUT_DIR, "dimension_scores_v28.json")
+BKE_V28_LAYER_SCORES_JSON = os.path.join(OUTPUT_DIR, "layer_scores_v28.json")
+BKE_V28_OBKE_DBKE_SCORES_JSON = os.path.join(OUTPUT_DIR, "obke_dbke_scores_v28.json")
+
 # Hustle stats (raw tracking data for MF-4)
 TRACKING_DIR = "data/tracking"
 
@@ -466,6 +476,18 @@ class DecompositionConfig:
 
 
 DECOMPOSITION = DecompositionConfig()
+
+
+@dataclass
+class DistributionIntegrityConfig:
+    """v2.8 distribution integrity controls."""
+    min_variance_retention: float = 0.70
+    max_rescale_factor: float = 1.80
+    logistic_alpha: float = 1.25
+    compression_warning_ratio: float = 0.70
+
+
+DISTRIBUTION_INTEGRITY = DistributionIntegrityConfig()
 
 
 # ---------------------------------------------------------------------------
