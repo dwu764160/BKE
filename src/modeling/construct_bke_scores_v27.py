@@ -95,6 +95,15 @@ def _percentile_0_100(series: pd.Series) -> pd.Series:
     return vals.rank(pct=True, method="average") * 100.0
 
 
+def _group_percentile_0_100(df: pd.DataFrame, value_col: str, group_col: str) -> pd.Series:
+    if value_col not in df.columns or group_col not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+    values = pd.to_numeric(df[value_col], errors="coerce")
+    groups = df[group_col].astype(str).replace({"": np.nan, "nan": np.nan, "None": np.nan})
+    ranked = values.groupby(groups).rank(method="average", pct=True) * 100.0
+    return ranked
+
+
 def _resolve_rue_z(df: pd.DataFrame) -> pd.Series:
     if "role_utilization_raw_z" in df.columns:
         return pd.to_numeric(df["role_utilization_raw_z"], errors="coerce").fillna(0.0)
@@ -286,6 +295,28 @@ def construct_bke_scores_v27(
     eligible["final_DBKE_percentile"] = _percentile_0_100(eligible["transformed_DBKE"])
     eligible["final_BKE_percentile"] = _percentile_0_100(eligible["transformed_BKE"])
 
+    # Grouped percentiles (transformed metrics) by position band / archetypes.
+    if "position_bucket" not in eligible.columns and "primary_position_estimate" in eligible.columns:
+        eligible["position_bucket"] = eligible["primary_position_estimate"]
+
+    for metric in ["OBKE", "DBKE", "BKE"]:
+        transformed_col = f"transformed_{metric}"
+        eligible[f"position_band_{metric}_percentile"] = _group_percentile_0_100(
+            eligible,
+            transformed_col,
+            "position_bucket",
+        )
+        eligible[f"off_archetype_{metric}_percentile"] = _group_percentile_0_100(
+            eligible,
+            transformed_col,
+            "primary_archetype",
+        )
+        eligible[f"def_archetype_{metric}_percentile"] = _group_percentile_0_100(
+            eligible,
+            transformed_col,
+            "defensive_archetype",
+        )
+
     eligible["rank"] = (
         eligible["final_BKE_percentile"]
         .rank(method="min", ascending=False)
@@ -310,6 +341,18 @@ def construct_bke_scores_v27(
             "raw_BKE": _safe_float(row.get("raw_BKE")),
             "transformed_BKE": _safe_float(row.get("transformed_BKE")),
             "final_BKE_percentile": _safe_float(row.get("final_BKE_percentile")),
+            "position_bucket": str(row.get("position_bucket", "")),
+            "primary_archetype": str(row.get("primary_archetype", "")),
+            "defensive_archetype": str(row.get("defensive_archetype", "")),
+            "position_band_OBKE_percentile": _safe_float(row.get("position_band_OBKE_percentile")),
+            "position_band_DBKE_percentile": _safe_float(row.get("position_band_DBKE_percentile")),
+            "position_band_BKE_percentile": _safe_float(row.get("position_band_BKE_percentile")),
+            "off_archetype_OBKE_percentile": _safe_float(row.get("off_archetype_OBKE_percentile")),
+            "off_archetype_DBKE_percentile": _safe_float(row.get("off_archetype_DBKE_percentile")),
+            "off_archetype_BKE_percentile": _safe_float(row.get("off_archetype_BKE_percentile")),
+            "def_archetype_OBKE_percentile": _safe_float(row.get("def_archetype_OBKE_percentile")),
+            "def_archetype_DBKE_percentile": _safe_float(row.get("def_archetype_DBKE_percentile")),
+            "def_archetype_BKE_percentile": _safe_float(row.get("def_archetype_BKE_percentile")),
             "rank": int(row.get("rank", 0)),
             "player_id": str(row.get("player_id", "")),
             "season": str(row.get("season", "")),

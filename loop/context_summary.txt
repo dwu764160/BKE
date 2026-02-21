@@ -1,3 +1,11 @@
+- 2026-02-21 — BKE viewer UX + grouped percentile enrichment
+	- Updated `app/player_data_viewer.py` cards with a compact `BKE #rank · percentile` badge.
+	- Sort controls updated to `Off Fit`, `Off Effectiveness`, plus transformed metric sorts: `tBKE`, `tOBKE`, `tDBKE`.
+	- Improved modal visual hierarchy (stronger section cards, borders, and contrast for headers/dividers/content blocks).
+	- Extended `BKE Highlights` to show grouped percentile context (position band, offensive archetype, defensive archetype) for BKE/OBKE/DBKE.
+	- Extended `src/modeling/construct_bke_scores_v27.py` to compute grouped transformed percentiles using existing decomposition columns: `position_bucket`, `primary_archetype`, `defensive_archetype`.
+	- Regenerated outputs: `data/processed/BKE_Scores_v27.json`, `app/player_data.html`.
+
 - 2026-02-20 — BKE scores name resolution + viewer BKE sections
 	- Fixed five `Unknown` names in `data/processed/BKE_Scores_v27.json` by adding season-aware/player-id fallback lookup in `src/modeling/construct_bke_scores_v27.py`.
 	- Authoritative name fallbacks sourced from processed/historical parquet files (`player_archetypes`, `archetype_embeddings`, `defensive_archetypes_v2`, `complete_player_season_stats`).

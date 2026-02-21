@@ -1,3 +1,19 @@
+2026-02-21 — Compact BKE badge + transformed BKE sort controls + grouped percentile highlights
+- `src/modeling/construct_bke_scores_v27.py` now computes transformed percentile slices by:
+  - `position_bucket`
+  - `primary_archetype`
+  - `defensive_archetype`
+  for each of `OBKE`, `DBKE`, and `BKE`.
+- `app/player_data_viewer.py` updates:
+  - Compact BKE badge on player cards (`BKE #rank · percentile`)
+  - Sort button label updates: `Off Fit`, `Off Effectiveness`
+  - Added sort buttons: `tBKE`, `tOBKE`, `tDBKE`
+  - BKE Highlights now displays grouped percentile context values
+  - Modal section styling improved with higher-contrast section cards/dividers
+- Artifacts regenerated and validated:
+  - `data/processed/BKE_Scores_v27.json`
+  - `app/player_data.html`
+
 2026-02-20 — Unknown-name repair + BKE viewer enhancements
 - Patched `src/modeling/construct_bke_scores_v27.py` to resolve non-informative player names (`Unknown`) via season-aware and id-only fallback maps sourced from authoritative processed/historical parquet files.
 - Rebuilt `data/processed/BKE_Scores_v27.json`; all 5 previously unknown entries now resolve by player ID.

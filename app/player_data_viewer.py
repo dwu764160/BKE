@@ -452,6 +452,7 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
         pid, season = str(row['player_id']), row['SEASON']
         key = f"{pid}::{season}"
         pos_est = pos_est_map.get((pid, season), {})
+        bke_rec = bke_map.get((pid, season), {}) or {}
 
         card = {
             'key': key,
@@ -473,6 +474,11 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             'eff_tier': row.get('efficiency_tier', ''),
             'at_rim': round(row.get('AT_RIM_FREQ', 0) * 100, 1) if pd.notna(row.get('AT_RIM_FREQ')) else None,
             'position_primary': pos_est.get('primary_position_estimate') or pos_est.get('primary_position') or '',
+            'bke_rank': clean_value(bke_rec.get('rank')),
+            'bke_pct': clean_value(bke_rec.get('final_BKE_percentile')),
+            'transformed_bke': clean_value(bke_rec.get('transformed_BKE')),
+            'transformed_obke': clean_value(bke_rec.get('transformed_OBKE')),
+            'transformed_dbke': clean_value(bke_rec.get('transformed_DBKE')),
         }
         cards.append(card)
         profile = dict(bios_map.get(pid, {}))
@@ -503,31 +509,55 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             'linear': linear_map.get((pid, season), {}),
             'season_stats': season_stats_map.get((pid, season), {}),
             'bke': {
-                'rank': clean_value((bke_map.get((pid, season), {}) or {}).get('rank')),
-                'final_BKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_BKE_percentile')),
-                'final_OBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_OBKE_percentile')),
-                'final_DBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_DBKE_percentile')),
-                'transformed_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_BKE')),
-                'transformed_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_OBKE')),
-                'transformed_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_DBKE')),
+                'rank': clean_value(bke_rec.get('rank')),
+                'final_BKE_percentile': clean_value(bke_rec.get('final_BKE_percentile')),
+                'final_OBKE_percentile': clean_value(bke_rec.get('final_OBKE_percentile')),
+                'final_DBKE_percentile': clean_value(bke_rec.get('final_DBKE_percentile')),
+                'transformed_BKE': clean_value(bke_rec.get('transformed_BKE')),
+                'transformed_OBKE': clean_value(bke_rec.get('transformed_OBKE')),
+                'transformed_DBKE': clean_value(bke_rec.get('transformed_DBKE')),
+                'position_bucket': clean_value(bke_rec.get('position_bucket')),
+                'primary_archetype': clean_value(bke_rec.get('primary_archetype')),
+                'defensive_archetype': clean_value(bke_rec.get('defensive_archetype')),
+                'position_band_BKE_percentile': clean_value(bke_rec.get('position_band_BKE_percentile')),
+                'position_band_OBKE_percentile': clean_value(bke_rec.get('position_band_OBKE_percentile')),
+                'position_band_DBKE_percentile': clean_value(bke_rec.get('position_band_DBKE_percentile')),
+                'off_archetype_BKE_percentile': clean_value(bke_rec.get('off_archetype_BKE_percentile')),
+                'off_archetype_OBKE_percentile': clean_value(bke_rec.get('off_archetype_OBKE_percentile')),
+                'off_archetype_DBKE_percentile': clean_value(bke_rec.get('off_archetype_DBKE_percentile')),
+                'def_archetype_BKE_percentile': clean_value(bke_rec.get('def_archetype_BKE_percentile')),
+                'def_archetype_OBKE_percentile': clean_value(bke_rec.get('def_archetype_OBKE_percentile')),
+                'def_archetype_DBKE_percentile': clean_value(bke_rec.get('def_archetype_DBKE_percentile')),
             },
             'bke_details': {
-                'rank': clean_value((bke_map.get((pid, season), {}) or {}).get('rank')),
-                'raw_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_OBKE')),
-                'raw_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_DBKE')),
-                'raw_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_BKE')),
-                'transformed_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_OBKE')),
-                'transformed_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_DBKE')),
-                'transformed_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_BKE')),
-                'final_OBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_OBKE_percentile')),
-                'final_DBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_DBKE_percentile')),
-                'final_BKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_BKE_percentile')),
-                'layer1_offensive_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer1_offensive_raw')),
-                'layer1_defensive_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer1_defensive_raw')),
-                'layer2_rue_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer2_rue_raw')),
-                'layer3_off_elevation_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer3_off_elevation_raw')),
-                'layer3_def_elevation_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer3_def_elevation_raw')),
-                'layer4_scheme_bonus_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer4_scheme_bonus_raw')),
+                'rank': clean_value(bke_rec.get('rank')),
+                'raw_OBKE': clean_value(bke_rec.get('raw_OBKE')),
+                'raw_DBKE': clean_value(bke_rec.get('raw_DBKE')),
+                'raw_BKE': clean_value(bke_rec.get('raw_BKE')),
+                'transformed_OBKE': clean_value(bke_rec.get('transformed_OBKE')),
+                'transformed_DBKE': clean_value(bke_rec.get('transformed_DBKE')),
+                'transformed_BKE': clean_value(bke_rec.get('transformed_BKE')),
+                'final_OBKE_percentile': clean_value(bke_rec.get('final_OBKE_percentile')),
+                'final_DBKE_percentile': clean_value(bke_rec.get('final_DBKE_percentile')),
+                'final_BKE_percentile': clean_value(bke_rec.get('final_BKE_percentile')),
+                'position_bucket': clean_value(bke_rec.get('position_bucket')),
+                'primary_archetype': clean_value(bke_rec.get('primary_archetype')),
+                'defensive_archetype': clean_value(bke_rec.get('defensive_archetype')),
+                'position_band_BKE_percentile': clean_value(bke_rec.get('position_band_BKE_percentile')),
+                'position_band_OBKE_percentile': clean_value(bke_rec.get('position_band_OBKE_percentile')),
+                'position_band_DBKE_percentile': clean_value(bke_rec.get('position_band_DBKE_percentile')),
+                'off_archetype_BKE_percentile': clean_value(bke_rec.get('off_archetype_BKE_percentile')),
+                'off_archetype_OBKE_percentile': clean_value(bke_rec.get('off_archetype_OBKE_percentile')),
+                'off_archetype_DBKE_percentile': clean_value(bke_rec.get('off_archetype_DBKE_percentile')),
+                'def_archetype_BKE_percentile': clean_value(bke_rec.get('def_archetype_BKE_percentile')),
+                'def_archetype_OBKE_percentile': clean_value(bke_rec.get('def_archetype_OBKE_percentile')),
+                'def_archetype_DBKE_percentile': clean_value(bke_rec.get('def_archetype_DBKE_percentile')),
+                'layer1_offensive_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer1_offensive_raw')),
+                'layer1_defensive_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer1_defensive_raw')),
+                'layer2_rue_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer2_rue_raw')),
+                'layer3_off_elevation_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer3_off_elevation_raw')),
+                'layer3_def_elevation_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer3_def_elevation_raw')),
+                'layer4_scheme_bonus_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer4_scheme_bonus_raw')),
             },
         }
         details[key] = detail
@@ -592,6 +622,7 @@ input{{width:300px}}select{{min-width:180px}}
 .pname{{font-size:17px;font-weight:600;color:#fff}}
 .pmeta{{color:#888;font-size:12px;text-align:right}}
 .pteam{{color:#aaa;font-weight:500}}
+.bke-mini{{display:inline-block;margin-top:4px;padding:2px 7px;border:1px solid #2e5f7b;border-radius:999px;background:#0f2a3a;color:#7fd8ff;font-size:10px;font-weight:600;line-height:1.2}}
 .srow{{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}}
 .st{{text-align:center;min-width:38px}}
 .sv{{font-size:14px;font-weight:600;color:#00d9ff}}
@@ -618,21 +649,22 @@ input{{width:300px}}select{{min-width:180px}}
 .mt{{font-size:32px;font-weight:700;color:#fff}}
 .ms{{color:#7c8bb5;font-size:16px;margin-top:6px}}
 .mx{{background:transparent;border:1px solid #2a3b70;color:#8aa0d6;width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:18px}}
-.msec{{margin-top:16px;padding-top:12px;border-top:1px solid #1f2a4f}}
-.msec h3{{margin:0 0 14px 0;font-size:15px;text-transform:uppercase;letter-spacing:1.5px;color:#6a789f;cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}}
-.msec h4.msec-sub{{margin:18px 0 10px 0;font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:#4ecdc4;font-weight:600;border-bottom:1px solid #1f2a4f;padding-bottom:6px}}
+.msec{{margin-top:16px;padding:14px 16px 12px;border:1px solid #243763;border-radius:12px;background:#101a36;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}}
+.msec h3{{margin:0 0 14px 0;font-size:15px;text-transform:uppercase;letter-spacing:1.5px;color:#8ea7db;cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px;padding-bottom:8px;border-bottom:1px solid #263a66}}
+.msec h4.msec-sub{{margin:18px 0 10px 0;font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:#71dacd;font-weight:600;border-bottom:1px solid #2a416f;padding-bottom:6px}}
+.msec.msec-bke{{border-color:#2b5f78;background:#112637}}
 .collapse-toggle{{transition:transform .2s;display:inline-block;font-size:13px;color:#7c8bb5}}
 .msec.collapsed>:not(h3){{display:none}}
 .msec.collapsed .collapse-toggle{{transform:rotate(-90deg)}}
 .sg{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}}
-.sc{{background:#131f3e;border:1px solid #1f2a4f;border-radius:10px;padding:10px}}
+.sc{{background:#142246;border:1px solid #2b4475;border-radius:10px;padding:10px}}
 .sc .lb{{font-size:13px;color:#6f7ea7;text-transform:uppercase;letter-spacing:1px}}
 .sc .vl{{font-size:20px;font-weight:600;color:#e6f0ff;margin-top:6px}}
 .kvt{{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;font-size:15px;color:#a5b3d6}}
-.kvr{{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed #1f2a4f;padding-bottom:4px}}
+.kvr{{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dashed #2d4575;padding-bottom:4px}}
 .kvk{{color:#7f8db4}}.kvv{{color:#d7e3ff;text-align:right}}
 .reasons{{margin-top:6px}}
-.reason{{font-size:15px;color:#aaa;padding:3px 0 3px 16px;position:relative}}
+.reason{{font-size:15px;color:#bac7e6;padding:3px 0 3px 16px;position:relative}}
 .reason::before{{content:"\\2022";position:absolute;left:0;color:#555}}
 .pt-row{{display:flex;align-items:center;gap:10px;font-size:15px;margin-bottom:6px}}
 .pt-name{{width:140px;color:#aaa;text-align:right;white-space:nowrap}}
@@ -659,8 +691,11 @@ input{{width:300px}}select{{min-width:180px}}
   </select>
   <span style="color:#555">Sort:</span>
   <span class="sort-btn active" data-sort="ppg" onclick="setSort(this)">PPG</span>
-  <span class="sort-btn" data-sort="off_confidence" onclick="setSort(this)">Fit</span>
-  <span class="sort-btn" data-sort="off_effectiveness" onclick="setSort(this)">Effectiveness</span>
+    <span class="sort-btn" data-sort="off_confidence" onclick="setSort(this)">Off Fit</span>
+    <span class="sort-btn" data-sort="off_effectiveness" onclick="setSort(this)">Off Effectiveness</span>
+    <span class="sort-btn" data-sort="transformed_bke" onclick="setSort(this)">tBKE</span>
+    <span class="sort-btn" data-sort="transformed_obke" onclick="setSort(this)">tOBKE</span>
+    <span class="sort-btn" data-sort="transformed_dbke" onclick="setSort(this)">tDBKE</span>
   <span class="sort-btn" data-sort="ts" onclick="setSort(this)">TS%</span>
   <span class="sort-btn" data-sort="usg" onclick="setSort(this)">USG%</span>
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
@@ -747,6 +782,12 @@ function fMoney(v){
     if(!isFinite(n))return String(v);
     return '$'+Math.round(n).toLocaleString('en-US');
 }
+function bkeBadge(p){
+    if(p.bke_rank===null||p.bke_rank===undefined||p.bke_pct===null||p.bke_pct===undefined)return '';
+    var pct=Number(p.bke_pct);
+    if(!isFinite(pct))return '';
+    return '<div class="bke-mini">BKE #'+p.bke_rank+' · '+pct.toFixed(1)+'%</div>';
+}
 
 /* ---- progress ---- */
 function updProg(cur,tot){
@@ -762,7 +803,7 @@ function hideLoad(){setTimeout(function(){document.getElementById('loadBar').cla
 /* ---- card ---- */
 function cardHTML(p){
   return '<div class="card" onclick="openModal(\\''+p.key+'\\')">'
-    +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG</div></div>'
+        +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG'+bkeBadge(p)+'</div></div>'
     +'<div class="srow">'
     +'<div class="st"><div class="sv">'+p.ppg+'</div><div class="sl">PPG</div></div>'
     +'<div class="st"><div class="sv">'+p.apg+'</div><div class="sl">APG</div></div>'
@@ -843,15 +884,28 @@ function renderBKEHighlights(bke){
     if(!bke)return '';
     var cards=[];
     function push(label,val){if(val!==null&&val!==undefined&&val!=='')cards.push({label:label,value:val});}
+    function pct(v){return v!=null?Number(v).toFixed(1)+'%':null;}
     push('BKE Rank',bke.rank);
-    push('BKE Percentile',bke.final_BKE_percentile!=null?Number(bke.final_BKE_percentile).toFixed(1)+'%':null);
-    push('OBKE Percentile',bke.final_OBKE_percentile!=null?Number(bke.final_OBKE_percentile).toFixed(1)+'%':null);
-    push('DBKE Percentile',bke.final_DBKE_percentile!=null?Number(bke.final_DBKE_percentile).toFixed(1)+'%':null);
+    push('BKE Percentile',pct(bke.final_BKE_percentile));
+    push('OBKE Percentile',pct(bke.final_OBKE_percentile));
+    push('DBKE Percentile',pct(bke.final_DBKE_percentile));
+    push('Pos-Band BKE %ile',pct(bke.position_band_BKE_percentile));
+    push('Pos-Band OBKE %ile',pct(bke.position_band_OBKE_percentile));
+    push('Pos-Band DBKE %ile',pct(bke.position_band_DBKE_percentile));
+    push('Off-Arch BKE %ile',pct(bke.off_archetype_BKE_percentile));
+    push('Off-Arch OBKE %ile',pct(bke.off_archetype_OBKE_percentile));
+    push('Off-Arch DBKE %ile',pct(bke.off_archetype_DBKE_percentile));
+    push('Def-Arch BKE %ile',pct(bke.def_archetype_BKE_percentile));
+    push('Def-Arch OBKE %ile',pct(bke.def_archetype_OBKE_percentile));
+    push('Def-Arch DBKE %ile',pct(bke.def_archetype_DBKE_percentile));
     push('Transformed BKE',bke.transformed_BKE);
     push('Transformed OBKE',bke.transformed_OBKE);
     push('Transformed DBKE',bke.transformed_DBKE);
+    push('Position Band',bke.position_bucket);
+    push('Off Archetype',bke.primary_archetype);
+    push('Def Archetype',bke.defensive_archetype);
     if(!cards.length)return '';
-    return '<div class="msec"><h3>BKE Highlights</h3>'+renderSG(cards)+'</div>';
+    return '<div class="msec msec-bke"><h3>BKE Highlights</h3>'+renderSG(cards)+'</div>';
 }
 
 function renderPositionEstimate(pr){
