@@ -1,14 +1,19 @@
 """
 src/modeling/percentile_engine.py
 =============================================================================
-BKE v2.0 — Three-Level Percentile Standardization + Z-Score Engine.
+BKE v2.5 — Three-Level Percentile Standardization + Z-Score Engine.
 
 Computes percentiles and z-scores at three structural levels:
   1. League-wide     — macro comparison across all qualified players
   2. Positional      — role-fairness within positional cohort (G, GF, F, FC, C)
   3. Archetype       — micro peer comparison within assigned archetype
 
-v2.0 additions:
+v2.5 additions (over v2.0):
+  - Archetype-conditional neutralization: subtract archetype expected z
+  - Three-level z-scores (league, position, archetype) for dimensions
+  - Strict terminal-only percentile enforcement
+
+v2.0 retained:
   - Z-score aggregation: Raw → Z → Weighted Sum → Final Z → Final Percentile
     (percentiles are presentation-only, NOT aggregation math)
   - Bayesian shrinkage for noisy metrics (defensive playmaking, on/off)
@@ -36,6 +41,7 @@ from src.modeling.model_config import (
     PERCENTILE,
     ZSCORE,
     BAYESIAN_SHRINKAGE,
+    NEUTRALIZATION,
     clean_id,
 )
 
@@ -564,3 +570,119 @@ def apply_bayesian_shrinkage(
 
     shrunk = (1 - effective_shrinkage) * series + effective_shrinkage * prior
     return shrunk
+
+
+# ---------------------------------------------------------------------------
+# v2.5: Archetype-Conditional Neutralization
+# ---------------------------------------------------------------------------
+
+def neutralize_by_archetype(
+    df: pd.DataFrame,
+    z_col: str,
+    archetype_col: str = "primary_archetype",
+    season_col: str = "season",
+    min_cohort: int = 8,
+    small_cohort_shrinkage: float = 0.50,
+) -> pd.Series:
+    """
+    Archetype-conditional neutralization for a dimension z-score.
+
+    Subtracts the archetype expected z-score so that the neutralized score
+    measures ability ABOVE what's expected for the player's role.
+
+    Neutralized_z = Observed_z - E[z | archetype, season]
+
+    For small archetype cohorts (< min_cohort), shrinks the expected value
+    toward the league mean (0) to avoid noisy estimates.
+
+    Parameters
+    ----------
+    df : DataFrame with z-score column, archetype, and season.
+    z_col : Name of the z-score column to neutralize.
+    archetype_col : Column with archetype assignment.
+    season_col : Season column.
+    min_cohort : Minimum archetype cohort size for reliable expected value.
+    small_cohort_shrinkage : Shrinkage toward league mean for small cohorts.
+
+    Returns
+    -------
+    Series of neutralized z-scores.
+    """
+    if z_col not in df.columns:
+        return pd.Series(0.0, index=df.index)
+
+    result = df[z_col].copy()
+
+    if archetype_col not in df.columns:
+        # No archetype → return raw z (league-relative already)
+        return result
+
+    for season in df[season_col].unique():
+        s_mask = df[season_col] == season
+        for arch in df.loc[s_mask, archetype_col].dropna().unique():
+            a_mask = s_mask & (df[archetype_col] == arch)
+            cohort_z = df.loc[a_mask, z_col]
+            cohort_size = cohort_z.notna().sum()
+
+            if cohort_size < 2:
+                # Too small to estimate — assume expected = 0 (league avg)
+                expected = 0.0
+            elif cohort_size < min_cohort:
+                # Small cohort: shrink toward league mean (0)
+                raw_expected = cohort_z.mean()
+                expected = (1 - small_cohort_shrinkage) * raw_expected
+            else:
+                expected = cohort_z.mean()
+
+            result.loc[a_mask] = df.loc[a_mask, z_col] - expected
+
+    return result
+
+
+def neutralize_dimensions(
+    df: pd.DataFrame,
+    dim_z_cols: List[str],
+    archetype_col: str = "primary_archetype",
+    season_col: str = "season",
+) -> pd.DataFrame:
+    """
+    Apply archetype-conditional neutralization to a list of dimension z-scores.
+
+    Modifies the DataFrame in-place, replacing raw z-scores with neutralized ones.
+    Stores the raw (pre-neutralization) values in {col}_raw columns for diagnostics.
+
+    Parameters
+    ----------
+    df : DataFrame with dimension z-scores.
+    dim_z_cols : List of z-score column names to neutralize.
+    archetype_col : Column with archetype assignment.
+    season_col : Season column.
+
+    Returns
+    -------
+    DataFrame with neutralized z-scores (original columns overwritten).
+    """
+    cfg = NEUTRALIZATION
+    result = df.copy()
+
+    for z_col in dim_z_cols:
+        if z_col not in result.columns:
+            continue
+
+        # Skip dimensions that are already context-neutral
+        if z_col in cfg.skip_neutralization:
+            continue
+
+        # Store raw for diagnostics
+        result[f"{z_col}_raw"] = result[z_col].copy()
+
+        # Neutralize
+        result[z_col] = neutralize_by_archetype(
+            result, z_col,
+            archetype_col=archetype_col,
+            season_col=season_col,
+            min_cohort=cfg.min_cohort_for_neutralization,
+            small_cohort_shrinkage=cfg.small_cohort_shrinkage,
+        )
+
+    return result

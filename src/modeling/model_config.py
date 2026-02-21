@@ -1,18 +1,21 @@
 """
 src/modeling/model_config.py
 =============================================================================
-BKE v2.0 — Centralized Configuration for the Portable Talent vs
+BKE v2.6 — Centralized Configuration for the Portable Talent vs
              Role-Dependent Impact Decomposition Engine.
 
-v2.0 corrections over v1.5:
-  - Z-score aggregation replaces percentile averaging (Fix #1)
-  - Variance-based portability index replaces compositional ratio (Fix #2)
-  - 8 independent portable dimensions (Layer 1C primary engine)
-  - Layer 1 weighting: 25% RAPM, 20% Playtype, 55% Dimension Model
-  - Driving Gravity revised (no FT%, focus on rim pressure)
-  - Turnover Control restored as offensive dimension
-  - Bayesian shrinkage for noisy metrics
-  - Cross-layer independence enforced
+v2.6 corrections over v2.5:
+  - Position-conditional z-scores for biased dimensions (Fix #4)
+  - Self-Creation dimension added (Dim 9) — off-dribble, pull-up, usage-based
+  - Basketball-informed dimension weights replace equal 0.125 weighting
+  - Portability index rewritten: real structural components, not proxies
+  - Big-man bias eliminated: shooting/playmaking/creation weighted higher,
+    rebounding/rim-protection weighted lower to reflect true portability
+
+Prior versions:
+  v2.5: Archetype-conditional neutralization, expanded hustle stats
+  v2.0: Z-score aggregation, variance-based portability, 8 dimensions
+  v1.5: Initial percentile-based pipeline
 
 All thresholds, weights, paths, and structural constants live here.
 No other module should define model-wide constants.
@@ -43,10 +46,13 @@ ARCHETYPE_EMBEDDINGS_PATH = os.path.join(PROCESSED_DIR, "archetype_embeddings.pa
 POSITION_ESTIMATES_PATH = os.path.join(PROCESSED_DIR, "player_position_estimates.parquet")
 POSSESSIONS_GLOB = os.path.join(DATA_DIR, "possessions_clean_*.parquet")
 
-# Output files — v2.0
-BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v20_decomposition.parquet")
-BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v20_decomposition.csv")
-BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v20_report.json")
+# Output files — v2.6
+BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v26_decomposition.parquet")
+BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v26_decomposition.csv")
+BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v26_report.json")
+
+# Hustle stats (raw tracking data for MF-4)
+TRACKING_DIR = "data/tracking"
 
 # ---------------------------------------------------------------------------
 # Seasons
@@ -84,26 +90,41 @@ class PortableTalentConfig:
     """
     Weights for the Portable Talent Score computation.
 
-    v2.0 structure:
+    v2.6 structure:
       Layer 1 = 25% RAPM Backbone + 20% Playtype Efficiency + 55% Dimension Model (1C)
-      Layer 1C = 8 logically independent dimensions, initially equally weighted.
+      Layer 1C = 9 basketball-informed dimensions, weighted by portability.
+
+    v2.6 dimension weighting philosophy:
+      Universally portable skills (shooting, playmaking, self-creation) get
+      higher weights because they transfer across ANY team/system/context.
+      Position-dominated skills (rebounding, rim protection) get lower weights
+      because they are strong predictors of POSITION, not TALENT ABOVE position.
+
+    v2.6 position-conditional z-scores:
+      Dimensions that heavily correlate with position (driving, rebounding,
+      blocks, rim protection, versatility) compute z-scores WITHIN position
+      group, not league-wide. This prevents big-man inflation.
     """
     # --- Layer 1 high-level weights (sum to 1.0) ---
     w_rapm_backbone: float = 0.25       # Layer 1A: RAPM impact
     w_playtype_efficiency: float = 0.20  # Layer 1B: Playtype efficiency composite
-    w_dimension_model: float = 0.55      # Layer 1C: 8-dimension portable model
+    w_dimension_model: float = 0.55      # Layer 1C: 9-dimension portable model
 
-    # --- Layer 1C: 8 dimension weights (equal initially, sum to 1.0) ---
-    # Offensive dimensions
-    w_dim_shooting_gravity: float = 0.125       # Dim 1: Shooting gravity
-    w_dim_driving_gravity: float = 0.125        # Dim 2: Driving / rim pressure
-    w_dim_playmaking: float = 0.125             # Dim 3: Playmaking
-    w_dim_extra_possession: float = 0.125       # Dim 4: Extra possession creation (cross-domain)
-    w_dim_turnover_control: float = 0.125       # Dim 7: Turnover control (offensive)
-    # Defensive dimensions
-    w_dim_defensive_playmaking: float = 0.125   # Dim 5: Defensive playmaking / chaos
-    w_dim_defensive_impact: float = 0.125       # Dim 6: RAPM-informed defensive impact
-    w_dim_defensive_versatility: float = 0.125  # Dim 8: Matchup spectrum / switching
+    # --- Layer 1C: 9 dimension weights (basketball-informed, sum to 1.0) ---
+    # UNIVERSALLY PORTABLE SKILLS (higher weight = 42%)
+    w_dim_shooting_gravity: float = 0.14        # Dim 1: Shooting gravity
+    w_dim_playmaking: float = 0.14              # Dim 3: Playmaking creation+pressure
+    w_dim_self_creation: float = 0.14           # Dim 9: Self-creation (NEW v2.6)
+
+    # VALUABLE BUT POSITIONAL (medium weight = 32%)
+    w_dim_defensive_versatility: float = 0.12   # Dim 8: Matchup switching
+    w_dim_turnover_control: float = 0.10        # Dim 7: Ball security
+    w_dim_defensive_impact: float = 0.10        # Dim 6: RAPM defensive impact
+
+    # POSITION-DEPENDENT (lower weight = 26%)
+    w_dim_driving_gravity: float = 0.10         # Dim 2: Driving / rim pressure
+    w_dim_extra_possession: float = 0.08        # Dim 4: Rebounding
+    w_dim_defensive_playmaking: float = 0.08    # Dim 5: Blocks/deflections/hustle
 
     # Extra Possession Creation split between O/D composites
     extra_poss_offensive_share: float = 0.40
@@ -291,34 +312,101 @@ class BayesianShrinkageConfig:
 BAYESIAN_SHRINKAGE = BayesianShrinkageConfig()
 
 # ---------------------------------------------------------------------------
+# Archetype-Conditional Neutralization config (v2.5 Fix #3)
+# ---------------------------------------------------------------------------
+@dataclass
+class NeutralizationConfig:
+    """
+    Configuration for archetype-conditional neutralization of Layer 1C dimensions.
+
+    v2.6 neutralizes all portable dimensions by subtracting the archetype
+    expected output, so that Layer 1C measures ability ABOVE what's expected
+    for the player's role — not raw observed production.
+
+    Neutralized_z = Observed_z - E[z | archetype]
+
+    v2.6: Position-conditional z-scores REPLACE neutralization for
+    position-dominated dimensions. Neutralization is still applied to
+    league-wide z-score dimensions for archetype adjustment.
+    """
+    # Minimum archetype cohort size for reliable expected value
+    min_cohort_for_neutralization: int = 8
+
+    # If cohort too small, shrink toward league mean (0.0) instead
+    small_cohort_shrinkage: float = 0.50
+
+    # Dimensions to neutralize (league-z dimensions only in v2.6)
+    neutralize_dimensions: list = field(default_factory=lambda: [
+        "dim_shooting_gravity_z",
+        "dim_playmaking_creation_z",
+        "dim_self_creation_z",
+        "dim_turnover_control_z",
+    ])
+
+    # Dimensions using position-conditional z-scores (v2.6) — NOT neutralized
+    # because positional z already removes expected positional output
+    position_z_dimensions: list = field(default_factory=lambda: [
+        "dim_driving_gravity_z",
+        "dim_extra_possession_z",
+        "dim_defensive_playmaking_z",
+        "dim_defensive_impact_z",
+        "dim_defensive_versatility_z",
+    ])
+
+    # Dimensions that are NOT neutralized (already context-neutral by construction)
+    skip_neutralization: list = field(default_factory=lambda: [
+        "dim_defensive_impact_z",       # Uses position-conditional z (v2.6)
+        "dim_defensive_versatility_z",  # Uses position-conditional z (v2.6)
+        "dim_driving_gravity_z",        # Uses position-conditional z (v2.6)
+        "dim_extra_possession_z",       # Uses position-conditional z (v2.6)
+        "dim_defensive_playmaking_z",   # Uses position-conditional z (v2.6)
+    ])
+
+
+NEUTRALIZATION = NeutralizationConfig()
+
+# ---------------------------------------------------------------------------
 # True Portability Index config (v2.0 Fix #2)
 # ---------------------------------------------------------------------------
 @dataclass
 class PortabilityConfig:
     """
-    Configuration for variance-based portability measurement.
+    Configuration for structural portability measurement (v2.6).
 
-    v2.0 replaces the fake compositional ratio (PTS/Total) with
-    true context-stability measurement:
-      Portability Index = 1 - Normalized Impact Variance Across Contexts
+    v2.6 replaces proxy approximations with structural measurements:
+      Portability = How transferable is this player across team contexts?
 
-    Components:
-      1. Lineup Stability Index — variance across teammate contexts
-      2. Role Elasticity Test — impact change under ±usage shift
-      3. Archetype Transfer Simulation — efficiency in alt archetypes
-      4. On/Off Context Sensitivity — variance across environment types
+    Components (v2.6):
+      1. Dimensional Breadth (35%) — Breadth of above-average skills
+      2. Universal Skill Presence (25%) — Universally portable skills
+      3. Two-Way Balance (20%) — Offense + defense balance
+      4. Scheme Independence (20%) — Low dependence on specific system
     """
     # Weights for portability components
-    w_lineup_stability: float = 0.30
-    w_role_elasticity: float = 0.25
-    w_archetype_transfer: float = 0.20
-    w_context_sensitivity: float = 0.25
+    w_dimensional_breadth: float = 0.35
+    w_universal_skill: float = 0.25
+    w_two_way_balance: float = 0.20
+    w_scheme_independence: float = 0.20
 
-    # Role elasticity test: simulate ±X% usage shift
-    usage_shift_pct: float = 0.05  # ±5%
+    # Universal skill dimensions (from PORTABLE_DIMENSIONS)
+    universal_dims: list = field(default_factory=lambda: [
+        "dim_shooting_gravity_z",
+        "dim_playmaking_creation_z",
+        "dim_self_creation_z",
+    ])
 
-    # Archetype transfer: project into N alternative templates
-    n_alt_archetypes: int = 3
+    # All 9 dims for breadth calculation
+    all_dims: list = field(default_factory=lambda: [
+        "dim_shooting_gravity_z",
+        "dim_driving_gravity_z",
+        "dim_playmaking_creation_z",
+        "dim_extra_possession_z",
+        "dim_turnover_control_z",
+        "dim_defensive_playmaking_z",
+        "dim_defensive_impact_z",
+        "dim_defensive_versatility_z",
+        "dim_self_creation_z",
+    ])
 
     # Thresholds for classification
     high_portability: float = 0.70   # Scalable star
@@ -332,12 +420,19 @@ PORTABILITY = PortabilityConfig()
 # ---------------------------------------------------------------------------
 @dataclass
 class DecompositionConfig:
-    """Config for the final impact decomposition."""
-    # Layer weights in final decomposition
-    w_portable_talent: float = 1.0     # PTS weight (not normalized, additive)
-    w_role_utilization: float = 1.0    # RUE weight
-    w_archetype_elevation: float = 1.0 # Elevation weight
-    w_scheme_amplification: float = 1.0  # Scheme amplification
+    """
+    Config for the final impact decomposition (v2.6).
+
+    v2.6 rebalances weights so portable talent dominates:
+      - Portable talent is the PRIMARY signal (45%)
+      - Role utilization is secondary (20%)
+      - Elevation and scheme are minor adjustments (20%, 15%)
+    """
+    # Layer weights in final decomposition (will be normalized to sum=1)
+    w_portable_talent: float = 2.25       # 45% — core transferable ability
+    w_role_utilization: float = 1.0       # 20% — role-specific efficiency
+    w_archetype_elevation: float = 1.0    # 20% — outperforming archetype
+    w_scheme_amplification: float = 0.75  # 15% — scheme stability (minor)
 
     # Portability thresholds (delegated to PortabilityConfig, kept for tier compat)
     high_portability: float = 0.70
@@ -356,57 +451,82 @@ class DecompositionConfig:
 DECOMPOSITION = DecompositionConfig()
 
 # ---------------------------------------------------------------------------
-# Portable Dimension Definitions — v2.0 (8 independent dimensions)
+# Portable Dimension Definitions — v2.6 (9 dimensions, position-conditional z)
 # ---------------------------------------------------------------------------
 PORTABLE_DIMENSIONS = {
-    # --- OFFENSIVE DIMENSIONS ---
+    # --- UNIVERSALLY PORTABLE (league z-scores + archetype neutralization) ---
     "shooting_gravity": {
         "number": 1,
         "domain": "offensive",
+        "z_mode": "league",   # v2.6: league z-score (position-neutral skill)
         "description": "Shooting efficiency and gravity (3PT volume, efficiency, TS%)",
         "columns": ["TS_PCT", "FG3_PCT", "FG3A_PER36", "CATCH_SHOOT_FG3_PCT", "MOVEMENT_SHOOTER_PCT"],
         "weight_key": "w_dim_shooting_gravity",
     },
-    "driving_gravity": {
-        "number": 2,
-        "domain": "offensive",
-        "description": "Rim pressure creation (drives, rim FGA, fouls drawn — NO FT%)",
-        "columns": ["DRIVES_PER36", "AT_RIM_FREQ", "FT_RATE", "PAINT_FREQ"],
-        "weight_key": "w_dim_driving_gravity",
-    },
-    "playmaking": {
+    "playmaking_creation": {
         "number": 3,
         "domain": "offensive",
-        "description": "Pass creation, assist generation, advantage creation",
-        "columns": ["AST_PER36", "PLAYMAKING_SCORE", "POTENTIAL_AST_PER36", "SECONDARY_AST_PER36"],
+        "z_mode": "league",   # v2.6: league z-score (universally portable)
+        "description": "Playmaking: creation (assists) + pressure (collapse/rotation forcing)",
+        "columns": [
+            "AST_PER36", "PLAYMAKING_SCORE",
+            "POTENTIAL_AST_PER36", "SECONDARY_AST_PER36",
+            "DRIVE_AST_RATIO", "PASSES_MADE_PER36",
+        ],
         "weight_key": "w_dim_playmaking",
     },
-    "extra_possession_creation": {
-        "number": 4,
-        "domain": "cross",
-        "description": "Rebounding / extra possessions (cross-domain: 40% off, 60% def)",
-        "columns": ["OREB_pct", "DREB_pct", "REB_PER36"],
-        "weight_key": "w_dim_extra_possession",
+    "self_creation": {
+        "number": 9,
+        "domain": "offensive",
+        "z_mode": "league",   # v2.6: NEW dimension — off-dribble shot creation
+        "description": "Self-created offense: pull-up shooting, off-dribble creation, ball dominance",
+        "columns": [
+            "PULL_UP_FGA_PER36", "PULL_UP_EFG_PCT",
+            "AVG_DRIB_PER_TOUCH", "ON_BALL_CREATION",
+            "BALL_DOMINANT_PCT",
+        ],
+        "weight_key": "w_dim_self_creation",
     },
     "turnover_control": {
         "number": 7,
         "domain": "offensive",
-        "description": "Ball security and turnover avoidance under any role",
-        "columns": ["TOV_PCT", "TOV_PER36"],
+        "z_mode": "league",   # v2.6: league z-score (but usage-adjusted metrics)
+        "description": "Ball security and turnover avoidance under any role (MF-1 enhanced)",
+        "columns": ["TOV_PCT", "TOV_PER36", "TOV_PER_TOUCH", "DRIVE_TOV_RATE"],
         "weight_key": "w_dim_turnover_control",
     },
-    # --- DEFENSIVE DIMENSIONS ---
+
+    # --- POSITION-CONDITIONAL (position z-scores) ---
+    "driving_gravity": {
+        "number": 2,
+        "domain": "offensive",
+        "z_mode": "position",  # v2.6: position z-score (rim finishing is positional)
+        "description": "Rim pressure creation (drives, rim FGA, fouls drawn — NO FT%)",
+        "columns": ["DRIVES_PER36", "AT_RIM_FREQ", "FT_RATE", "PAINT_FREQ"],
+        "weight_key": "w_dim_driving_gravity",
+    },
+    "extra_possession_creation": {
+        "number": 4,
+        "domain": "cross",
+        "z_mode": "position",  # v2.6: position z-score (rebounding is heavily positional)
+        "description": "Rebounding / extra possessions (cross-domain: 40% off, 60% def)",
+        "columns": ["OREB_pct", "DREB_pct", "REB_PER36"],
+        "weight_key": "w_dim_extra_possession",
+    },
     "defensive_playmaking": {
         "number": 5,
         "domain": "defensive",
-        "description": "Chaos creation: steals, blocks, deflections, hustle",
+        "z_mode": "position",  # v2.6: position z-score (BLK% dominated by centers)
+        "description": "Chaos creation: steals, blocks, deflections, hustle, charges, loose balls",
         "columns": ["STL_PER100_DEF_POSS", "BLK_PCT", "DEFLECTIONS",
-                     "hustle_score", "engagement_score"],
+                     "hustle_score", "engagement_score",
+                     "CHARGES_DRAWN", "DEF_LOOSE_BALLS_RECOVERED"],
         "weight_key": "w_dim_defensive_playmaking",
     },
     "defensive_impact": {
         "number": 6,
         "domain": "defensive",
+        "z_mode": "position",  # v2.6: position z-score (DRAPM favors rim protectors)
         "description": "RAPM-informed defensive impact (on/off, matchup-adjusted)",
         "columns": ["drapm", "DRTG", "d_results_pctl"],
         "weight_key": "w_dim_defensive_impact",
@@ -414,6 +534,7 @@ PORTABLE_DIMENSIONS = {
     "defensive_versatility": {
         "number": 8,
         "domain": "defensive",
+        "z_mode": "position",  # v2.6: position z-score (fix Centers +0.86 vs Guards -0.66)
         "description": "Matchup spectrum, switching, positional coverage",
         "columns": ["switch_score", "versatility_pctl", "assignment_difficulty",
                      "matchup_diversity_pctl"],

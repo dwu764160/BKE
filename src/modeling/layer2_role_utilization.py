@@ -334,15 +334,17 @@ def compute_role_utilization_efficiency(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute Role Utilization Efficiency (RUE).
 
-    RUE measures the alignment between a player's observed playtype
-    distribution and the optimal distribution for their archetype.
+    v2.6 FIX: Blended measure that combines:
+      1. Cosine similarity to archetype optimal (40%) — role alignment
+      2. Efficiency surplus quality (30%) — how well they perform across playtypes
+      3. Volume-weighted utilization (30%) — reward high-usage players who create
 
-    High RUE → player is being used in their optimal role
-    Low RUE → player may be miscast or underutilized
+    This prevents stars like Jokic from being penalized for having unique
+    but highly effective role distributions. Pure cosine similarity treated
+    unique distributions as "misalignment" when they're actually elite adaptation.
 
-    Method:
-      RUE = 1 - cosine_distance(observed_vector, optimal_vector)
-      Normalized to [0, 100] percentile.
+    High RUE → player is effective in their current role
+    Low RUE → player may be miscast, underutilized, or inefficient
     """
     cfg = ROLE_UTILIZATION
     result = df.copy()
@@ -359,7 +361,7 @@ def compute_role_utilization_efficiency(df: pd.DataFrame) -> pd.DataFrame:
             rue_scores.append(np.nan)
             continue
 
-        # Build observed and optimal vectors
+        # --- Component 1: Cosine similarity (role alignment) ---
         observed = []
         optimal = []
         for playtype in cfg.playtypes:
@@ -372,18 +374,63 @@ def compute_role_utilization_efficiency(df: pd.DataFrame) -> pd.DataFrame:
         observed = np.array(observed, dtype=float)
         optimal = np.array(optimal, dtype=float)
 
-        # Cosine similarity
         dot = np.dot(observed, optimal)
         norm_obs = np.linalg.norm(observed)
         norm_opt = np.linalg.norm(optimal)
 
         if norm_obs > 0 and norm_opt > 0:
             cosine_sim = dot / (norm_obs * norm_opt)
-            rue = float(np.clip(cosine_sim, 0, 1))
+            cosine_score = float(np.clip(cosine_sim, 0, 1))
         else:
-            rue = 0.0
+            cosine_score = 0.5
 
-        rue_scores.append(rue)
+        # --- Component 2: Efficiency surplus quality ---
+        # Average surplus across playtypes the player actually uses
+        surplus_sum = 0.0
+        surplus_count = 0
+        for playtype in cfg.playtypes:
+            surplus_col = f"{playtype}_surplus"
+            poss_col = f"{playtype}{cfg.poss_suffix}"
+            if surplus_col in result.columns:
+                surplus_val = row.get(surplus_col, np.nan)
+                poss_val = row.get(poss_col, 0) if poss_col in result.columns else 0
+                if not pd.isna(surplus_val) and poss_val >= cfg.min_playtype_poss:
+                    surplus_sum += surplus_val
+                    surplus_count += 1
+
+        if surplus_count > 0:
+            avg_surplus = surplus_sum / surplus_count
+            # Map [-0.15, +0.15] PPP surplus → [0, 1]
+            efficiency_score = float(np.clip((avg_surplus + 0.15) / 0.30, 0, 1))
+        else:
+            efficiency_score = 0.5
+
+        # --- Component 3: Volume-weighted utilization ---
+        # Players who use more playtypes at volume get a creation bonus
+        n_active_playtypes = 0
+        total_poss_share = 0.0
+        for playtype in cfg.playtypes:
+            poss_pct_col = f"{playtype}{cfg.poss_pct_suffix}"
+            poss_col = f"{playtype}{cfg.poss_suffix}"
+            poss_pct = row.get(poss_pct_col, 0) or 0
+            poss = row.get(poss_col, 0) if poss_col in result.columns else 0
+            if poss >= cfg.min_playtype_poss and poss_pct > 0.02:
+                n_active_playtypes += 1
+                total_poss_share += poss_pct
+
+        # Reward breadth: more active playtypes = more versatile role usage
+        # 1-2 playtypes = low (0.2), 3-4 = moderate (0.5-0.7), 5+ = high (0.8-1.0)
+        breadth_score = float(np.clip(n_active_playtypes / 6.0, 0, 1))
+        volume_score = float(np.clip(total_poss_share, 0, 1))
+        utilization_score = 0.6 * breadth_score + 0.4 * volume_score
+
+        # --- Blended RUE ---
+        rue = (
+            0.40 * cosine_score +
+            0.30 * efficiency_score +
+            0.30 * utilization_score
+        )
+        rue_scores.append(float(np.clip(rue, 0, 1)))
 
     result["role_utilization_raw"] = rue_scores
 

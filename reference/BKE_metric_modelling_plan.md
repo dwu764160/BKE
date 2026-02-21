@@ -1,532 +1,262 @@
-🧠 PORTABLE TALENT VS ROLE-DEPENDENT IMPACT
-📘 Blueprint v2.0 (Mathematical Corrections + Structural Fixes)
+BKE v2.7 Blueprint
 
-We will keep the v1.5 format, but explicitly repair the identified flaws.
+Goal: Statistical Maturity Pass — Correct Structural Weaknesses Without Adding Features
 
-I. Core Structural Philosophy (Clarified)
+1️⃣ Replace Hard Archetype Assignment with Probabilistic Membership (CRITICAL)
 
-Still:
+(Fixes Issue #7 — largest distortion source)
 
-Total Impact
-= Portable Talent (Layer 1)
-+ Role Optimization (Layer 2)
-+ Archetype Elevation (Layer 3)
-+ Scheme Amplification (Layer 4)
+Problem in v2.6
 
+Archetype is hard-labeled:
 
-BUT:
+primary_archetype
 
-v2.0 corrects:
+Everything depends on it:
 
-Percentile math distortion
+Neutralization expectations
 
-False portability ratio
+RUE optimal vector
 
-Dimensional misplacement (turnovers)
+Elevation baselines
 
-Cross-layer interpretability conflicts
+Portability transfer component
 
-II. Layer 1 – Portable Talent (Repaired Structure)
-Layer 1A – RAPM Backbone
-Layer 1B – Playtype Efficiency
-Layer 1C – Dimension Model (Primary)
+Boundary players get artificial discontinuities.
 
+✅ v2.7 Solution: Soft Archetype Membership
 
-Weighting remains:
+Replace:
 
-25% RAPM
-20% Playtype
-55% Dimension
+player → archetype A
 
+With:
 
-But interpretation math changes (explained below).
+player → {A: 0.52, B: 0.48}
+Implementation Plan
 
-III. Layer 1C – Portable Dimension Model (Major Revision)
+A. Use archetype_embeddings.parquet
+You already load:
 
-This is now the core portability engine.
+ARCHETYPE_EMBEDDINGS_PATH
 
-We shift from artificial 8 symmetry to 8 logically independent dimensions:
+Use distance-to-centroid → convert to softmax probabilities.
 
-🔵 OFFENSIVE PORTABLE DIMENSIONS
-1️⃣ Shooting Gravity (Unchanged)
+p_i = exp(-distance_i / τ) / Σ exp(-distance_j / τ)
 
-Measures:
+Add to model_config.py:
 
-Off-movement 3P%
+@dataclass
+class ArchetypeMembershipConfig:
+    temperature: float = 0.5
+    min_probability_floor: float = 0.05
+Apply Soft Membership To:
+Component	v2.6	v2.7
+Neutralization	subtract mean of 1 archetype	subtract weighted mean across archetypes
+RUE optimal vector	1 archetype mean	weighted archetype mean
+Elevation	compare to 1 baseline	compare to weighted baseline
+Portability transfer	binary	probabilistic
 
-C&S 3P%
+This removes boundary instability entirely.
 
-Pull-up 3P%
+2️⃣ Upgrade Neutralization from Mean-Centering → Full Conditional Standardization
 
-3PA rate
+(Fixes Issue #1 — scale bias)
 
-Shooting percentile under contest
+Problem
 
-On/off spacing effect (team rim freq when player on court)
+Current:
 
-Outputs:
+Neutralized_z = Observed_z - E[z | archetype]
 
-Shooting Gravity Score
+This removes location bias but not scale differences.
 
-League / Positional / Archetypal Percentiles
+✅ v2.7 Solution: Conditional Z Residuals
 
-No structural change.
+New formula:
 
-2️⃣ Driving Gravity (Revised)
+z_conditional =
+(Observed - μ_archetype) / σ_archetype
 
-Key corrections:
+Then optionally re-scale to league std:
 
-❌ Remove perimeter initiation filtering
+z_final = z_conditional * league_std
 
-❌ Remove FT%
+Add to NeutralizationConfig:
 
-✅ Focus on rim pressure creation
+use_full_conditional_standardization: bool = True
+rescale_to_league_variance: bool = True
 
-Metrics:
+This makes Layer 1C:
 
-Unassisted rim attempts
+“Performance relative to role distribution”
+instead of
+“Performance above role mean”
 
-Rim FGA rate
+Huge improvement.
 
-Fouls drawn per 100
+3️⃣ Replace Heuristic Shrinkage with Empirical Bayes Weighting
 
-And-1 frequency
+(Fixes Issue #3 — shrinkage math not variance-aware)
 
-Team foul rate delta (on/off)
+Problem
 
-We are measuring:
+Current shrinkage:
 
-Ability to collapse defense and generate foul pressure — not scoring skill.
+a = shrinkage_strength * max(0, 1 - GP/min_gp)
 
-This is correct refinement.
+This is deterministic and linear.
 
-3️⃣ Playmaking (Unchanged)
+✅ v2.7 Solution: Variance-Based Shrinkage
 
-Metrics:
+Compute:
 
-Adjusted AST%
+a = σ_within² / (σ_within² + σ_between² / n)
 
-Potential assists
+Posterior:
 
-Box creation
+x_post = (1 - a) * x + a * μ_prior
 
-Pass-to-shot efficiency
+Add to config:
 
-Advantage creation events
+@dataclass
+class BayesianShrinkageConfig:
+    use_empirical_bayes: bool = True
+    estimate_variance_components: bool = True
 
-Percentile normalized.
+This makes shrinkage dimension-specific and data-driven.
 
-No change.
+4️⃣ Fix Defensive Impact Asymmetry
 
-4️⃣ Extra Possession Creation (Refined)
+(Fixes Issue #2 — defense not treated symmetrically)
 
-Now simplified.
+Currently:
 
-Metrics:
+Defensive impact uses position-z
 
-OREB%
+No archetype conditioning
 
-DREB%
+No variance conditioning
 
-On/off team rebound rate delta
+This gives defensive archetypes structural advantage.
 
-This dimension contributes to:
+✅ v2.7 Solution
 
-Offensive portable score
+For defensive dimensions:
 
-Defensive portable score
+Apply soft archetype-weighted conditional standardization
 
-This is the first true cross-domain dimension.
+Use full conditional residuals (same as offense)
 
-Correct decision.
+Remove exemption logic
 
-7️⃣ Turnover Control (Restored + Elevated)
+Remove from skip_neutralization.
 
-This is important.
+Defense must obey same statistical logic as offense.
 
-Portable skill:
+5️⃣ Fix Dimension Model Variance Compression
 
-Ability to avoid giving away possessions under any role.
+(Fixes Issue #4 — composite std too low)
 
-Metrics:
+dimension_model_z std = 0.247 → too compressed.
 
-TOV%
+Likely causes:
 
-Bad pass frequency
+Over-neutralization
 
-Live-ball turnover rate
+Strong inter-dimension correlation
 
-On/off turnover delta
+Shrinkage stacking
 
-Uses percentile normalization heavily.
+✅ v2.7 Solution
 
-This was a good reintroduction.
+After Layer 1C composite:
 
-🔴 DEFENSIVE PORTABLE DIMENSIONS
-5️⃣ Defensive Playmaking (Expanded)
+Compute observed variance
 
-Metrics:
+Re-normalize to target variance (e.g., 0.40–0.45)
 
-STL%
+Add to config:
 
-BLK%
+target_dimension_model_std: float = 0.42
+enforce_target_variance: bool = True
 
-Deflections
+This keeps interpretability and separation strength intact.
 
-Loose balls recovered
+6️⃣ Reduce RUE Endogeneity
 
-Charges drawn
+(Fixes Issue #5 — RAPM feedback loop)
 
-Disruption rate (if available)
+Problem:
+Optimal archetype vector derived from top-half RAPM players.
 
-This captures chaos creation.
+That makes RAPM influence RUE baseline.
 
-No conceptual change — but hustle stats now emphasized.
+✅ v2.7 Solution
 
-6️⃣ Defensive Impact (Unchanged Core)
+Instead of:
 
-Still RAPM-informed.
+Top-half RAPM
 
-Includes:
+Use:
 
-On/off defensive rating
+Top-half PTS_z
 
-Matchup difficulty adjustments
+or better:
 
-Shot quality allowed
+Top-half neutralized dimension composite
 
-We do NOT double-count rim protection.
+This removes circular reinforcement.
 
-Correct removal of redundancy.
+Add flag:
 
+rue_optimal_source: str = "portable_talent"  # not RAPM
+7️⃣ Portability Index Clarification + Structural Tightening
 
+(Fixes Issue #6 — proxy vs real portability clarity)
 
-8️⃣ Defensive Versatility (Unchanged)
+You already improved this in v2.6.
 
-Metrics:
+For v2.7:
 
-Matchup spectrum
+Ensure portability uses conditional-residual dimensions
 
-Positional defensive coverage
+Remove any dependency on raw archetype label
 
-Switch frequency
+Use entropy of soft membership for transfer stability
 
-Cross-match success
+Add:
 
-Still portable across schemes.
+use_soft_membership_in_transfer: bool = True
+📊 v2.7 Change Summary Table
+Priority	Fix	Structural Impact
+1	Soft archetype membership	Removes boundary distortion
+2	Full conditional neutralization	Removes scale bias
+3	Empirical Bayes shrinkage	Correct reliability weighting
+4	Defensive symmetry	Removes defensive bias
+5	Variance restoration	Restores elite separation
+6	RUE decoupling	Removes RAPM feedback
+7	Portability tightening	Clarifies structural interpretation
+🔧 Required Addition to model_config.py
 
-No change.
+You currently have dimension weights, but you do NOT have:
 
-- Weighting Adjustments in Layer 1
+A centralized master weight tuning vector
 
-Because Layer 1C is now primary:
+Or a global scaling hook
 
-Suggested structure:
+Or automated normalization enforcement
 
-Layer 1 = 
-  25% RAPM Backbone
-  20% Playtype Efficiency
-  55% Dimension Model (1C)
+I strongly recommend adding:
 
+@dataclass
+class DimensionWeightTuningConfig:
+    """
+    Centralized dimension importance scaling.
+    Allows global tuning without editing individual weight keys.
+    """
+    global_multiplier: float = 1.0
+    auto_normalize: bool = True
+    allow_runtime_override: bool = True
 
-Within 1C:
-
-Equal weighting initially across 8 dimensions.
-
-We can later experiment with:
-
-Variance-based weighting
-
-Stability weighting
-
-Predictive weighting
-
-But start equal.
-
-🔁 Extra Possession Creation Handling
-
-Rebounding contributes:
-
-60% to defensive composite
-
-40% to offensive composite
-
-But stored as its own raw dimension before split.
-
-No duplication.
-
-IV. 🚨 FIX #1 – Percentile Additive Distortion
-Problem in v1.5:
-
-We were adding percentiles directly:
-
-Final Score = avg(percentiles)
-
-
-This distorts meaning because:
-
-Percentiles are rank-based, not interval-scaled.
-
-The difference between 90 and 95 ≠ difference between 50 and 55.
-
-Averaging compresses tails and exaggerates middle clusters.
-
-This causes:
-
-Artificial clustering
-
-Misleading comparisons
-
-Poor predictive validity
-
-✅ v2.0 Fix: Convert Percentiles → Z-Scores Before Aggregation
-
-New process:
-
-Compute raw metric
-
-Convert to z-score
-
-Standardize by:
-
-League distribution
-
-Positional distribution
-
-Archetype distribution
-
-Blend standardized z-values
-
-Only at final output convert composite back to percentile
-
-So:
-
-Raw → Z → Weighted Sum → Final Z → Final Percentile
-
-
-Percentiles become:
-
-Presentation tool
-
-Not aggregation math
-
-This preserves interval meaning.
-
-V. 🚨 FIX #2 – Portability Ratio Was Fake
-Problem in v1.5:
-
-We implied:
-
-Portability Ratio = Portable Talent / Total Impact
-
-
-But this does NOT measure portability.
-
-Why?
-
-Because:
-
-Total Impact already contains portable influence.
-
-Denominator is endogenous.
-
-Ratio shrinks for high-impact players even if portable.
-
-This measures composition — not transfer stability.
-
-✅ v2.0 Fix: True Portability Measurement
-
-We now define portability as:
-
-Stability of impact across context shifts.
-
-New portability measures:
-
-1️⃣ Lineup Stability Index
-
-Variance of impact across:
-
-Different teammate clusters
-
-Different spacing contexts
-
-Different defensive environments
-
-Low variance = high portability.
-
-2️⃣ Role Elasticity Test
-
-Simulate usage shifts:
-
-+5% usage
-
-−5% usage
-
-Recalculate projected impact.
-
-Players whose impact changes minimally = portable.
-
-3️⃣ Archetype Transfer Simulation
-
-Project player into:
-
-3 alternative archetype usage templates
-
-Measure projected efficiency change
-
-Less dropoff = more portable.
-
-4️⃣ On/Off Context Sensitivity
-
-Measure:
-
-On/off impact across:
-
-Bench-heavy lineups
-
-Starter-heavy lineups
-
-Different pace environments
-
-Variance-based portability.
-
-New Portability Index (True Definition)
-Portability Index
-= 1 – Normalized Impact Variance Across Contexts
-
-
-This is structural.
-
-Not compositional.
-
-Now it measures what we claim.
-
-VI. Cross-Layer Interpretation Fix
-
-In v1.5 we risked:
-
-Double attributing improvement to Layer 1 and Layer 2.
-
-Mislabeling role efficiency as portable skill.
-
-v2.0 clarification:
-
-Layer 1 measures skill capacity.
-
-Layer 2 measures usage alignment.
-
-Layer 3 measures relative dominance.
-
-Layer 4 measures environmental amplification.
-
-No overlap.
-
-Each layer must be measurable with others held constant.
-
-VII. Weighting Philosophy Correction
-
-We must stop assuming equal dimension weight is optimal.
-
-v2.0 introduces:
-
-Stability-Weighted Dimension Scaling
-
-Dimensions weighted by:
-
-Year-to-year stability
-
-Predictive correlation with future RAPM
-
-Cross-team transfer reliability
-
-Unstable metrics receive shrinkage.
-
-VIII. Bayesian Shrinkage Introduction
-
-v2.0 introduces:
-
-Empirical Bayes shrinkage for:
-
-Defensive playmaking
-
-On/off metrics
-
-Small sample role splits
-
-This prevents noise from inflating portability scores.
-
-IX. v2.0 Mathematical Pipeline
-STEP 1: Fetch raw metrics
-STEP 2: Clean + adjust for role
-STEP 3: Convert to z-scores
-STEP 4: Apply shrinkage
-STEP 5: Aggregate within dimensions
-STEP 6: Aggregate within layers
-STEP 7: Simulate context variance
-STEP 8: Compute portability index
-STEP 9: Convert final composites to percentiles
-STEP 10: Output standardized player card
-
-X. Updated Known Fixes Summary
-Issue	v1.5 Problem	v2.0 Fix
-Turnover placement	Misclassified	Now offensive
-Percentile averaging	Rank distortion	Z-score aggregation
-Portability ratio	Fake compositional stat	Variance-based stability index
-Rim protection redundancy	Double counted	Removed
-Driving gravity misdefinition	Included FT%	Removed FT%
-Symmetry forcing	4/4 artificial	Dimension-based logic
-XI. Remaining v2.0 To-Do List (High Priority)
-
-We still must:
-
-Multi-year stabilization
-
-Playoff portability testing
-
-Aging curve integration
-
-Injury-adjusted variance modeling
-
-Archetype clustering validation
-
-Cross-team transfer case studies
-
-Impact volatility score
-
-Outlier tail handling correction
-
-XII. Is Layer 1C More Important Than Entire Layers?
-
-Yes.
-
-Portable traits can outweigh role optimization entirely.
-
-That is philosophically correct.
-
-Role does not create skill.
-
-Skill survives role.
-
-So the model is now aligned with that principle.
-
-XIII. Summary of Changes from v1.5 → v2.0
-
-Major:
-
-Fixed percentile math distortion.
-
-Rebuilt portability measurement properly.
-
-Corrected turnover dimension classification.
-
-Removed fake ratio logic.
-
-Introduced variance-based portability.
-
-Introduced z-score aggregation.
-
-Introduced shrinkage.
-
-Clarified layer independence.
-
-Removed redundant rim protection.
+This ensures future stability-weighted re-scaling can occur in one place.

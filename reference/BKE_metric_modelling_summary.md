@@ -1,8 +1,8 @@
-# BKE Metric Modelling Summary (v2.0)
+# BKE Metric Modelling Summary (v2.6)
 
 ## Overview — Portable Talent vs Role-Dependent Impact Decomposition Engine
 
-BKE v2.0 is a multi-layer hierarchical decomposition engine that separates scalable talent from system amplification. v2.0 fixes the mathematical distortions of v1.5 by switching to z-score aggregation, implementing a true variance-based portability index, and expanding to an 8-dimension portable model.
+BKE v2.6 is a multi-layer hierarchical decomposition engine that separates scalable talent from system amplification. v2.6 builds on v2.5 and adds calibrated hierarchical shrinkage in Layer 1, implemented year-over-year backtesting, an updated RUE blend, and scheme-stability handling that is bonus-only in Total Impact.
 
 For every player-season, it produces:
 
@@ -16,11 +16,26 @@ Where Role-Dependent Impact is further decomposed:
 Role-Dependent Impact = RUE + Archetype Elevation + Scheme Amplification
 ```
 
-**v2.0 aggregation pipeline:** Raw → Z-score → Weighted Sum → Final Z → Percentile (presentation only)
+**v2.6 aggregation pipeline:** Raw → Z-score → Archetype-Neutralized/Position-Conditional Z → Hierarchical Shrinkage → Weighted Sum → Final Z → Percentile (presentation only)
 
-Percentiles are strictly presentation-layer. All internal aggregation uses z-scores to preserve interval meaning.
+Percentiles are strictly terminal — never used as inputs to any layer or aggregation step (Fix #2).
 
-**Guiding principles:**
+**v2.6 key additions over v2.5:**
+- **Bayesian hierarchical shrinkage (implemented):** Player-level shrinkage toward archetype/position priors with calibration by GP × minutes reliability.
+- **Backtesting framework (implemented):** Spearman rank stability, tier accuracy, RMSE, archetype stability, position-split diagnostics.
+- **RUE refinement (implemented):** Blended RUE = 40% role alignment cosine + 30% efficiency surplus quality + 30% volume-weighted utilization.
+- **Scheme contribution fix (implemented):** Scheme stability in Total Impact is bonus-only (negative scheme z no longer subtracts TI).
+
+**v2.5 key additions over v2.0 (retained):**
+- **Archetype-conditional neutralization (Fix #3):** Subtract archetype-expected z-score from 6 of 8 dimensions, so Layer 1C measures ability *above what's expected for the player's role*
+- **Three-level z-scores (Fix #1):** League, positional, and archetype z-scores for all dimension columns
+- **portability_ratio removed from public outputs (Fix #4):** Retained internally as alias for portability_index
+- **MF-1:** Enhanced turnover control (TOV_PER_TOUCH, DRIVE_TOV_RATE)
+- **MF-4:** Expanded defensive playmaking (CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED from hustle stats)
+- **MF-5:** Playmaking split into creation (AST/36, Playmaking Score) + pressure (Potential AST/36, Secondary AST/36, DRIVE_AST_RATIO, PASSES_MADE_PER36)
+- **Bug fix:** elevation_z preserved through Layer 3 (was being dropped)
+
+**Guiding principles (unchanged from v2.0):**
 - Strict separation: role assignment (archetype) is independent from value estimation (BKE)
 - Portable talent captures context-neutral skill; role-dependent impact captures environment-specific value
 - Z-score aggregation preserves interval meaning; percentiles are presentation-only
@@ -34,9 +49,9 @@ Percentiles are strictly presentation-layer. All internal aggregation uses z-sco
 
 | Module | Purpose |
 |--------|---------|
-| `model_config.py` | Centralized config: paths, weights, thresholds, z-score/shrinkage settings, 8-dimension definitions |
-| `percentile_engine.py` | Three-level percentile standardization + z-score functions + Bayesian shrinkage |
-| `layer1_portable_talent.py` | Context-neutral talent estimation (25% RAPM + 20% Playtype + 55% 8-Dimension Model) |
+| `model_config.py` | Centralized config: paths, weights, thresholds, z-score/shrinkage settings, 8-dimension definitions, NeutralizationConfig |
+| `percentile_engine.py` | Three-level percentile standardization + z-score functions + Bayesian shrinkage + archetype-conditional neutralization |
+| `layer1_portable_talent.py` | Context-neutral talent estimation (25% RAPM + 20% Playtype + 55% 8-Dimension Model) with neutralization |
 | `layer2_role_utilization.py` | Playtype surplus + Role Utilization Efficiency (RUE) + z-score outputs |
 | `layer3_archetype_elevation.py` | Player impact above/below archetype baseline + elevation z-scores |
 | `layer4_scheme_amplification.py` | Context sensitivity estimation + scheme stability z-scores |
@@ -52,9 +67,10 @@ Percentiles are strictly presentation-layer. All internal aggregation uses z-sco
 - `player_rapm.parquet` — Multi-year Bayesian RAPM (pooled + single-season, O/D split)
 - `modeling_inputs_all.parquet` — DARKO projections, linear stats (TS%, eFG%, USG%, AST%, TOV%, OREB%, DREB%, per-36 rates)
 - `player_profiles_advanced.parquet` — Box score profiles, four factors, on/off, ORTG/DRTG
-- `player_archetypes.parquet` — Offensive archetypes + playtype columns + tracking data (drives, rim attempts, paint frequency, FT rate, potential/secondary assists, turnovers, pcv entropy)
+- `player_archetypes.parquet` — Offensive archetypes + playtype columns + tracking data (drives, rim attempts, paint frequency, FT rate, potential/secondary assists, turnovers, passes made, touches, pcv entropy)
 - `defensive_archetypes_v2.parquet` — Defensive archetypes, switch score, versatility, hustle score, engagement score, deflections, matchup diversity, d_results, assignment difficulty
 - `player_position_estimates.parquet` — Positional percentage estimates for bucketing
+- **NEW in v2.5:** `data/tracking/{season}/hustle_stats.parquet` — CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED, LOOSE_BALLS_RECOVERED, SCREEN_ASSISTS
 
 **Qualification filters:** MIN >= 500, GP >= 20, MPG >= 15.0, Possessions >= 500
 
@@ -68,29 +84,56 @@ Percentiles are strictly presentation-layer. All internal aggregation uses z-sco
 
 **1B. Playtype Efficiency (20%):** Aggregated playtype z-scores weighted by possession share.
 
-**1C. Portable Dimension Model (55%) — 8 Independent Dimensions:**
+**1C. Portable Dimension Model (55%) — 8 Independent Dimensions (v2.5 Neutralized):**
 
-| # | Dimension | Domain | Sub-metrics | Weight |
-|---|-----------|--------|------------|--------|
-| 1 | Shooting Gravity | Offense | TS% (adj), FG3% (adj), FG3A/36, C&S FG3% | 0.125 |
-| 2 | Driving Gravity | Offense | DRIVES/36, AT_RIM_FREQ, FT_RATE, PAINT_FREQ | 0.125 |
-| 3 | Playmaking | Offense | AST/36, Playmaking Score, Potential AST/36, Secondary AST/36 | 0.125 |
-| 4 | Extra Possession | Cross | OREB%, DREB%, REB/36 (split 40% offense / 60% defense) | 0.125 |
-| 5 | Defensive Playmaking | Defense | STL/100, BLK%, Deflections, hustle_score, engagement_score (Bayesian shrinkage) | 0.125 |
-| 6 | Defensive Impact | Defense | DRAPM, DRTG (inverted), d_results_pctl (no rim protection — redundancy removed) | 0.125 |
-| 7 | Turnover Control | Offense | TOV%, TOV/36 (both inverted — lower is better) | 0.125 |
-| 8 | Defensive Versatility | Defense | switch_score, versatility_pctl, assignment_difficulty, matchup_diversity_pctl | 0.125 |
+| # | Dimension | Domain | Sub-metrics | Weight | Neutralized? |
+|---|-----------|--------|------------|--------|--------------|
+| 1 | Shooting Gravity | Offense | TS% (adj), FG3% (adj), FG3A/36, C&S FG3% | 0.125 | Yes |
+| 2 | Driving Gravity | Offense | DRIVES/36, AT_RIM_FREQ, FT_RATE, PAINT_FREQ | 0.125 | Yes |
+| 3 | Playmaking Creation | Offense | **Creation** (50%): AST/36, Playmaking Score; **Pressure** (50%): Potential AST/36, Secondary AST/36, DRIVE_AST_RATIO, PASSES_MADE_PER36 | 0.125 | Yes |
+| 4 | Extra Possession | Cross | OREB%, DREB%, REB/36 (split 40% offense / 60% defense) | 0.125 | Yes |
+| 5 | Defensive Playmaking | Defense | STL/100, BLK%, Deflections, hustle_score, engagement_score, **CHARGES_DRAWN**, **DEF_LOOSE_BALLS_RECOVERED** (Bayesian shrinkage) | 0.125 | No (already context-neutral) |
+| 6 | Defensive Impact | Defense | DRAPM, DRTG (inverted), d_results_pctl | 0.125 | No (already context-neutral) |
+| 7 | Turnover Control | Offense | TOV%, TOV/36, **TOV_PER_TOUCH**, **DRIVE_TOV_RATE** (all inverted) | 0.125 | Yes |
+| 8 | Defensive Versatility | Defense | switch_score, versatility_pctl, assignment_difficulty, matchup_diversity_pctl | 0.125 | No (structural) |
+
+**Bold** items are new in v2.5.
 
 Each sub-metric is z-scored within season (winsorized at ±3.5σ). Missing components default to 0 (league average). Dimension composites are averaged z-scores of their sub-metrics.
 
-**v2.0 changes from v1.5:**
-- Expanded from 6 skill components to 8 dimensions
-- Driving Gravity revised: removed FT%, focused on rim pressure (drives, rim FGA, fouls drawn, paint frequency)
-- Turnover Control restored as standalone offensive dimension (was embedded in passing)
-- Bayesian shrinkage applied to defensive playmaking metrics
-- Assignment difficulty converted from categorical (Low/Medium/High) to numeric scale
-- Extra Possession split cross-domain: 40% offensive, 60% defensive
-- Rim protection removed from Defensive Impact to avoid redundancy with Defensive Playmaking
+**v2.5 Archetype-Conditional Neutralization (Fix #3):**
+
+After computing raw dimension z-scores, 6 of 8 dimensions are neutralized:
+
+```
+Neutralized_z = Observed_z - E[z | archetype, season]
+```
+
+Where `E[z | archetype, season]` is the mean z-score for that archetype cohort in that season. This ensures Layer 1C measures ability *above what's expected for the player's role*, preventing archetype-typical skills from inflating portable talent scores.
+
+Small-cohort handling: cohorts < 8 shrink expected z toward league mean (0) by 50%. Cohorts < 2 assume expected = 0.
+
+Dimensions **not** neutralized: Defensive Impact (RAPM is already regularized/context-neutral), Defensive Versatility (structural metric).
+
+Pre-neutralization values stored as `{dim}_z_raw` columns for diagnostics.
+
+**v2.5 Three-Level Z-Scores (Fix #1):**
+
+For each dimension z-score column:
+- **League z**: the raw (or neutralized) z-score within season
+- **Positional z**: z-score within season × position_bucket groups
+- **Archetype z**: z-score within season × archetype groups (min cohort 5)
+
+Stored as `{col}_positional` and `{col}_archetype` suffixed columns.
+
+**v2.5 Derived Metrics (computed before dimension model):**
+
+| Metric | Formula | Used In |
+|--------|---------|---------|
+| TOV_PER_TOUCH | TOV / TOUCHES | Turnover Control (MF-1) |
+| DRIVE_TOV_RATE | DRIVE_TOV / DRIVES | Turnover Control (MF-1) |
+| DRIVE_AST_RATIO | DRIVE_AST / DRIVES | Playmaking Pressure (MF-5) |
+| PASSES_MADE_PER36 | PASSES_MADE * 36 / MPG | Playmaking Pressure (MF-5) |
 
 **1D. Portable Talent Score (PTS):**
 
@@ -234,7 +277,7 @@ This is **structural** (variance of impact across contexts), not **compositional
 
 ---
 
-## Example Output Card
+## Example Output Card (v2.5)
 
 ```
 Nikola Jokic (2022-23):
@@ -248,6 +291,12 @@ Nikola Jokic (2022-23):
     Lineup Stability:  0.89 | Role Elasticity: 0.91
     Archetype Transfer: 0.72 | Context Sensitivity: 0.76
   RAPM: +5.91 | ORAPM: +3.72 | DRAPM: +2.19
+
+  v2.5 Dimension Detail (neutralized z-scores):
+    Shooting Gravity:      z=-0.32 (raw: +0.45, archetype expects +0.77)
+    Playmaking Creation:   z=+2.10 (creation: +2.30, pressure: +1.90)
+    Turnover Control:      z=+0.85 (TOV_PER_TOUCH: +1.1, DRIVE_TOV: +0.6)
+    Def Playmaking:        z=+1.45 (includes CHARGES_DRAWN, LOOSE_BALLS)
 ```
 
 ---
@@ -256,13 +305,14 @@ Nikola Jokic (2022-23):
 
 | File | Format | Description |
 |------|--------|-------------|
-| `bke_v20_decomposition.parquet` | Parquet | Full decomposition table (~280+ columns, 1971 rows) |
-| `bke_v20_decomposition.csv` | CSV | Same as above, human-readable |
-| `bke_v20_report.json` | JSON | Summary report with top-10 lists, z-score/distribution stats |
+| `bke_v26_decomposition.parquet` | Parquet | Full decomposition table (~344 columns, 1971 rows) |
+| `bke_v26_decomposition.csv` | CSV | Same as above, human-readable |
+| `bke_v26_report.json` | JSON | Summary report with top-10 lists, z-score/distribution stats |
+| `bke_v26_backtest.json` | JSON | Year-over-year backtesting diagnostics |
 
 ---
 
-## Validation Results (v2.0)
+## Validation Results (v2.5)
 
 | Metric | All Seasons |
 |--------|-------------|
@@ -273,23 +323,79 @@ Nikola Jokic (2022-23):
 | Elevation range | 0.3-100.0 |
 | Scheme stability range | 0.3-100.0 |
 | NaN in final output (all key cols) | 0 |
-| dim_shooting_gravity_z std | 0.607 |
-| dim_driving_gravity_z std | 0.639 |
-| dim_playmaking_z std | 0.848 |
-| dim_extra_possession_z std | 0.892 |
-| dim_defensive_playmaking_z std | 0.638 |
+| dim_shooting_gravity_z std | 0.522 |
+| dim_driving_gravity_z std | 0.462 |
+| dim_playmaking_creation_z std | 0.370 |
+| dim_extra_possession_z std | 0.674 |
+| dim_defensive_playmaking_z std | 0.520 |
 | dim_defensive_impact_z std | 0.825 |
-| dim_turnover_control_z std | 0.853 |
+| dim_turnover_control_z std | 0.450 |
 | dim_defensive_versatility_z std | 0.769 |
-| dimension_model_z std | 0.277 |
-| portable_talent_z std | 0.478 |
-| total_impact_z std | 0.455 |
-| portability_index_raw mean | 0.605 |
-| portability_index_raw std | 0.078 |
-| Surplus abs mean | 0.325 |
-| Runtime | ~8s |
+| dimension_model_z std | 0.247 |
+| portable_talent_z std | 0.461 |
+| total_impact_z std | 0.453 |
+| portability_index_raw mean | 0.611 |
+| portability_index_raw std | 0.076 |
+| Surplus abs mean | 15.42 |
+| Neutralization raw cols | 6 (dim 1-4, 5 def playmaking, 7 TO) |
+| Positional z-score cols | 11 |
+| Archetype z-score cols | 14 |
+| Runtime | ~8.3s |
 
-Portability class distribution: ~30% Scalable Star, ~30% Context-Moderate, ~40% System Player.
+Portability class distribution: 286 Scalable Star (30%), 285 Context-Moderate (30%), 379 System Player (40%).
+
+Note: Neutralized dimension z-score stds are slightly lower than v2.0 raw stds, which is expected — removing archetype-expected variation compresses the distribution marginally.
+
+---
+
+## Changes from v2.0 → v2.5
+
+### Fix #1: Three-Level Z-Scores
+**v2.0:** League-level z-scores only for dimension columns.
+**v2.5:** For each dimension z-score, three levels are computed:
+- **League z**: z-score within season (same as v2.0)
+- **Positional z**: z-score within season × position_bucket (11 columns)
+- **Archetype z**: z-score within season × primary_archetype, min cohort 5 (14 columns)
+
+### Fix #2: Percentiles Strictly Terminal
+**v2.0:** Percentiles were already mostly terminal, but some code paths could feed percentiles into aggregation.
+**v2.5:** Enforced strictly — percentiles are ONLY computed for presentation at the very end. No percentile is ever used as an input to any layer or aggregation step.
+
+### Fix #3: Archetype-Conditional Neutralization (THE BIG ONE)
+**v2.0:** Dimension z-scores were raw league z-scores. A player's shooting gravity z-score compared them to all players, not to players in their role. This inflated portability for archetype-typical skills.
+**v2.5:** 6 of 8 dimensions are neutralized by subtracting the archetype-expected z-score:
+```
+Neutralized_z = Observed_z - E[z | archetype, season]
+```
+Dimensions neutralized: Shooting Gravity, Driving Gravity, Playmaking Creation, Extra Possession, Turnover Control, Defensive Playmaking.
+Dimensions NOT neutralized: Defensive Impact (RAPM already regularized), Defensive Versatility (structural).
+Small-cohort shrinkage: cohorts < 8 shrink toward league mean (50%), cohorts < 2 assume expected = 0.
+
+### Fix #4: portability_ratio Removed from Public Outputs
+**v2.0:** Both `portability_ratio` and `portability_index` were in player cards and reports.
+**v2.5:** `portability_ratio` removed from player card and report. Retained internally as alias for `portability_index` for backward compatibility.
+
+### Fix #5: Archetype Instability (Noted, Not Implemented)
+**Deferred beyond v2.6:** Archetype assignment should use probabilistic membership (soft assignment) instead of hard classification to reduce instability at decision boundaries.
+
+### MF-1: Enhanced Turnover Control
+**v2.0:** TOV%, TOV/36 only.
+**v2.5:** Adds TOV_PER_TOUCH (turnovers per touch — ball security) and DRIVE_TOV_RATE (drive turnovers per drive — decision-making under pressure). Both inverted (lower is better). Derived from existing TOUCHES and DRIVES tracking data.
+
+### MF-4: Expanded Defensive Playmaking
+**v2.0:** STL/100, BLK%, Deflections, hustle_score, engagement_score.
+**v2.5:** Adds CHARGES_DRAWN and DEF_LOOSE_BALLS_RECOVERED from `hustle_stats.parquet` tracking data. Both are Bayesian-shrunk alongside existing metrics. No new data fetcher was needed — hustle stats already existed in `data/tracking/{season}/hustle_stats.parquet`.
+
+### MF-5: Playmaking Split (Creation + Pressure)
+**v2.0:** Single "Playmaking" dimension averaging AST/36, Playmaking Score, Potential AST/36, Secondary AST/36.
+**v2.5:** Split into two 50/50 sub-components:
+- **Creation** (direct assist generation): AST/36, Playmaking Score
+- **Pressure** (collapse/rotation forcing): Potential AST/36, Secondary AST/36, DRIVE_AST_RATIO, PASSES_MADE_PER36
+Sub-component z-scores stored for diagnostics (`dim_playmaking_creation_sub_z`, `dim_playmaking_pressure_sub_z`).
+
+### Bug Fix: elevation_z Preserved Through Layer 3
+**v2.0:** Layer 3's cleanup code dropped ALL `_z` columns (`z_cols = [c for c in result.columns if c.endswith("_z")]`), including `elevation_z` which the decomposition engine needed.
+**v2.5:** Cleanup excludes `elevation_z` from the drop list.
 
 ---
 
@@ -337,40 +443,64 @@ Portability class distribution: ~30% Scalable Star, ~30% Context-Moderate, ~40% 
 
 ---
 
-## Key Differences from v2.0 Plan → Implementation
+## Key Differences from v2.5 Plan → Implementation
 
-### 1. Portability Components Use Proxy Approximations
+### 1. Portability Components Use Proxy Approximations (unchanged from v2.0)
 **Plan:** Specified lineup stability from "variance across teammate clusters," on/off splits from PBP, and usage shift simulation.
-**Implementation:** Approximates using (a) multi-model agreement (RAPM vs DARKO variance), (b) dimensional consistency (variance across 8 dimensions), (c) surplus CoV + usage entropy, and (d) scheme stability + ORAPM/DRAPM balance. True lineup-level variance requires per-lineup possession data not readily available.
+**Implementation:** Approximates using (a) multi-model agreement (RAPM vs DARKO variance), (b) dimensional consistency (variance across 8 dimensions), (c) surplus CoV + usage entropy, and (d) scheme stability + ORAPM/DRAPM balance.
 
-### 2. Stability-Weighted Dimension Scaling Deferred
+### 2. Stability-Weighted Dimension Scaling Deferred (unchanged from v2.0)
 **Plan:** Specified year-to-year stability weighting, predictive correlation with future RAPM, and cross-team transfer reliability.
-**Implementation:** Equal weighting (0.125 each) across 8 dimensions. Stability-based and predictive weighting deferred to v2.1 (requires multi-year backtesting infrastructure).
+**Implementation:** Equal weighting (0.125 each) across 8 dimensions. Stability-based and predictive weighting deferred to v2.6+ (requires multi-year backtesting infrastructure).
 
-### 3. Some Planned Metrics Not Available
+### 3. Some Planned Metrics Not Available (unchanged from v2.0)
 **Plan:** Listed and-1 frequency, bad pass frequency, live-ball turnover rate, on/off spacing effect, box creation, advantage creation events, disruption rate, cross-match success, shot quality allowed.
-**Implementation:** Uses available tracking data proxies: drives/36, AT_RIM_FREQ, FT_RATE for driving; POTENTIAL_AST/SECONDARY_AST for playmaking; hustle_score/engagement_score for defensive playmaking. Remaining metrics require tracking data feeds not currently in the pipeline.
+**Implementation:** Uses available tracking data proxies. v2.5 added TOV_PER_TOUCH, DRIVE_TOV_RATE, DRIVE_AST_RATIO, PASSES_MADE_PER36, CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED — narrowing the gap but not closing it entirely.
 
-### 4. No Formal Bayesian Hierarchical Regression
-**Plan:** Implied structured hierarchical regression (Player > Archetype > Position).
-**Implementation:** Uses additive z-score weighted composition with empirical Bayes shrinkage at the metric level. Full hierarchical regression deferred to v2.1.
+### 4. Bayesian Hierarchical Shrinkage Implemented in v2.6
+**Plan:** Structured hierarchy (Player > Archetype > Position).
+**Implementation:** Hierarchical shrinkage now implemented in Layer 1 with reliability calibration by games played and minutes; full probabilistic MCMC regression remains out of scope.
 
-### 5. No Backtesting Yet
-**Plan:** Specifies multi-year stabilization, playoff portability testing, aging curve integration, and cross-team transfer case studies.
-**Implementation:** Not yet implemented. Planned for v2.1+.
+### 5. Backtesting Implemented in v2.6
+**Plan:** Multi-year stabilization and transfer diagnostics.
+**Implementation:** Implemented with rank correlation, tier accuracy, RMSE, archetype stability, position splits, and big-mover reporting.
+
+### 6. Neutralization Applied to 6 of 8 Dimensions (partially different from plan)
+**Plan:** Implied neutralization for all dimensions.
+**Implementation:** Defensive Impact and Defensive Versatility are NOT neutralized — they are already context-neutral by construction (RAPM is regularized; versatility is structural). This is an intentional design decision, not a limitation.
+
+### 7. Playmaking Split is 50/50 Creation+Pressure (implementation detail)
+**Plan:** Specified separate creation and pressure sub-components.
+**Implementation:** Implemented as a 50/50 blend of creation sub-z and pressure sub-z within the single playmaking_creation dimension. Sub-component z-scores stored for diagnostics.
 
 ---
 
-## Deliverables (v2.0)
+## Deliverables (v2.6)
 
 - 4-layer hierarchical decomposition with z-score aggregation backbone
-- 8-dimension portable talent model (Layer 1C) as the primary portability engine
+- 9-dimension portable talent model (Layer 1C) with archetype-conditional neutralization and self-creation
+- Three-level z-scores (league, positional, archetype) for all dimensions
 - True Portability Index (4 structural components, variance-based)
+- Enhanced turnover control (TOV_PER_TOUCH, DRIVE_TOV_RATE)
+- Expanded defensive playmaking (CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED)
+- Playmaking creation+pressure split with sub-component diagnostics
+- portability_ratio removed from public outputs
+- elevation_z bug fix in Layer 3
 - Three-level percentile standardization (presentation layer only)
 - Bayesian shrinkage for noisy defensive/hustle metrics
 - Fixed playtype surplus (corrected per-game threshold)
 - Impact tiers (Elite / All-Star / Starter / Rotation / Fringe)
 - Scheme classification (Portable / Context-Moderate / System-Dependent)
 - All 950 qualified player-seasons across 3 seasons scored with zero NaN
-- Full output: parquet + CSV + JSON report
+- Full output: parquet (~344 cols) + CSV + JSON report + JSON backtest diagnostics
 - Modular, explainable, and basketball-first architecture
+
+## Known Issues / Missing Features (Deferred to Later Iterations)
+
+1. **Fix #5: Archetype assignment instability** → Deferred beyond v2.6 (probabilistic archetype membership / soft assignment)
+2. **MF-3: Archetype confidence intervals** → Deferred
+3. **Stability-weighted dimension scaling** (year-to-year, predictive correlation) → v2.6+
+4. **Extended backtesting** (team-changers, playoff portability, aging curves) → Next iteration
+5. **Full probabilistic hierarchical regression** (Player > Archetype > Position with full posterior inference) → Next iteration
+6. **PCV entropy from PCV computation** (currently uses emb_entropy_norm as proxy)
+7. **Some plan metrics not available:** live-ball TO rate, on-ball TOs, bad pass frequency, on/off spacing effect, box creation, advantage creation events, disruption rate, cross-match success, shot quality allowed

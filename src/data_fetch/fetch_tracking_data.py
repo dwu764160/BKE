@@ -1,7 +1,11 @@
 """
 src/data_fetch/fetch_tracking_data.py
 Fetches "Style" and "Tracking" data using TLS Impersonation (curl_cffi).
-UPDATED: Adds fallback for broken 2022-23 CatchShoot endpoint.
+
+v2.6 adds:
+  - PostTouch, ElbowTouch, PaintTouch tracking measures
+  - Additional defense dashboard categories (2PT, LT10, GT15)
+  - Hustle stats (disruption-related metrics)
 """
 
 import pandas as pd
@@ -30,13 +34,20 @@ TRACKING_MEASURES = {
     "Possessions": ("Possessions", "touches"),
     "Rebounding": ("Rebounding", "rebounding"),
     "Efficiency": ("Efficiency", "shooting-efficiency"),
-    "SpeedDistance": ("SpeedDistance", "speed-distance")
+    "SpeedDistance": ("SpeedDistance", "speed-distance"),
+    # Note: PostTouch/ElbowTouch/PaintTouch data is included in the
+    # Possessions tracking file (POST_TOUCHES, ELBOW_TOUCHES, PAINT_TOUCHES,
+    # PTS_PER_POST_TOUCH, PTS_PER_ELBOW_TOUCH, PTS_PER_PAINT_TOUCH columns).
 }
 
 DEFENSE_CATEGORIES = {
     "Overall": "defense-dash-overall",
     "Less Than 6Ft": "defense-dash-lt6",
-    "3 Pointers": "defense-dash-3pt"
+    "3 Pointers": "defense-dash-3pt",
+    # v2.6: Additional defense dashboard categories
+    "2 Pointers": "defense-dash-2pt",
+    "Less Than 10Ft": "defense-dash-lt10",
+    "Greater Than 15Ft": "defense-dash-gt15",
 }
 
 def ensure_dirs():
@@ -243,6 +254,48 @@ def fetch_synergy(season):
             
             smart_sleep()
 
+
+def fetch_hustle_stats(season):
+    """
+    v2.6: Fetch hustle stats (LeagueHustleStatsPlayer).
+
+    Includes: CONTESTED_SHOTS, DEFLECTIONS, CHARGES_DRAWN,
+    SCREEN_ASSISTS, LOOSE_BALLS_RECOVERED, BOX_OUTS, etc.
+    These are key inputs for disruption rate and defensive playmaking.
+    """
+    print(f"\n💪 Fetching Hustle Stats for {season}...")
+    season_dir = DATA_DIR / season
+    season_dir.mkdir(exist_ok=True)
+
+    url = "https://stats.nba.com/stats/leaguehustlestatsplayer"
+
+    for per_mode, suffix in [("PerGame", ""), ("Totals", "_totals")]:
+        outfile = season_dir / f"hustle_stats{suffix}.parquet"
+        cache_key = f"hustle_stats{suffix}_{season}"
+
+        if outfile.exists():
+            continue
+
+        print(f"   Fetching hustle stats ({per_mode})...", end=" ")
+
+        params = {
+            "LeagueID": "00",
+            "PerMode": per_mode,
+            "Season": season,
+            "SeasonType": "Regular Season",
+        }
+
+        df = fetch_url_cached(url, params, "hustle", cache_key)
+
+        if df is not None and not df.empty:
+            df.columns = [c.upper() for c in df.columns]
+            df.to_parquet(outfile, index=False)
+            print(f"✅ ({len(df)} rows)")
+        else:
+            print("❌ Empty/Failed")
+
+        smart_sleep()
+
 def main():
     print("=== Starting Stream B: Robust Fetch with Fallbacks ===")
     ensure_dirs()
@@ -251,6 +304,7 @@ def main():
         fetch_tracking(season)
         fetch_defense_dashboard(season)
         fetch_synergy(season)
+        fetch_hustle_stats(season)
         
     print("\n✅ Stream B Complete.")
 

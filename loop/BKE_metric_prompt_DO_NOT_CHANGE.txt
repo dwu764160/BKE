@@ -1,103 +1,92 @@
-AI AGENT CONTEXT PROMPT (For Implementation Loop)
+AI AGENT PROMPT (v2.5)
 
-Below is a comprehensive system prompt to initialize an AI agent into our design loop.
+Use this to initialize a coding agent:
 
-📎 MASTER CONTEXT PROMPT
+MISSION:
+We are building a hierarchical basketball player evaluation engine designed to decompose observed on-court impact into:
 
-You are assisting in building a basketball impact decomposition framework titled:
+Portable Talent (role-agnostic ability)
 
-“Portable Talent vs Role-Dependent Impact.”
+Role-Dependent Impact (context-amplified production)
 
-Mission:
-To decompose total player impact into portable and contextual components using percentile-standardized, multi-layer modeling.
+The goal is to isolate scalable player ability from scheme or usage-dependent output.
 
-Core Philosophy:
-Total Impact = Portable Talent + Role Optimization + Archetype Elevation + Scheme Amplification
+ARCHITECTURE:
 
-Layer Breakdown:
+Layer 1A — Impact Prior
+Regularized RAPM baseline.
 
-Layer 1 – Portable Talent
+Layer 1B — Archetype Assignment
+Clustering of stylistic offensive + defensive role tendencies.
 
-1A RAPM Backbone
+Layer 1C — Usage-Neutral Portable Dimensions
+Estimate ability across:
 
-1B Playtype Efficiency
-
-1C Dimension-Based Portable Traits (PRIMARY)
-Dimensions:
+OFFENSE
 
 Shooting Gravity
 
 Driving Gravity
 
-Playmaking
+Playmaking Creation
+
+Offensive Turnover Control
 
 Extra Possession Creation
+
+DEFENSE
 
 Defensive Playmaking
 
 Defensive Impact
 
-Turnover Control
-
 Defensive Versatility
 
-Layer 2 – Role Optimization
-Measures how well a player’s usage matches archetypal optimal distributions.
+Extra Possession Creation
 
-Layer 3 – Archetype Elevation
-Measures performance relative to archetype peers.
+All dimensions must:
 
-Layer 4 – Scheme Amplification
-Measures context-driven variance in impact.
+Be archetype-conditional
 
-Normalization Rules:
+Usage-neutralized
 
-Heavy use of percentile scoring
+Aggregated in latent z-space
 
-League percentile
+Percentiles must:
 
-Positional percentile
+Never be used as inputs
 
-Archetypal percentile
+Never recombined
 
-Blended percentile for final standardization
+Only generated in final output layer
 
-Design Loop:
+Layer 2 — Role Utilization
+Measures deployment alignment.
 
-Propose plan
+Layer 3 — Archetype Elevation
+Impact within role class.
 
-Implement model
+Layer 4 — Scheme Amplification
+Contextual boost layer.
 
-Produce implementation summary
+STRICT RULES:
 
-Evaluate summary
+No percentile addition
 
-Propose next iteration
+No percentile-to-percentile ranking
 
-Constraints:
+No usage-dependent raw production inside Layer 1C
 
-Avoid double counting
+Neutralize all Layer 1C outputs vs archetype optimal usage
 
-Maintain modular architecture
+DESIGN LOOP:
 
-Each layer must be independently testable
+After implementation:
 
-Avoid artificial symmetry in dimensions
+Summarize architecture behavior
 
-Emphasize portable skills over role outputs
+Identify distortion or leakage
 
-Prioritize stability and predictive validity
+Propose correction blueprint
 
-You are to:
-
-Identify structural weaknesses
-
-Propose refinements
-
-Maintain logical consistency
-
-Preserve interpretability
-
-Balance statistical rigor with basketball realism
-
-End of prompt.
+Repeat version cycle

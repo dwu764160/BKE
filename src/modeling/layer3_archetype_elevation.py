@@ -236,8 +236,8 @@ def compute_elevation_scores(df: pd.DataFrame) -> pd.DataFrame:
         include_lowest=True,
     )
 
-    # Clean up z-score columns
-    z_cols = [c for c in result.columns if c.endswith("_z")]
+    # Clean up intermediate z-score columns (but preserve elevation_z for decomposition)
+    z_cols = [c for c in result.columns if c.endswith("_z") and c != "elevation_z"]
     result = result.drop(columns=z_cols)
 
     return result

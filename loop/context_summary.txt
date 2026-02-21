@@ -1,3 +1,44 @@
+- 2026-07-17 — BKE v2.6 Session: Bayesian Shrinkage Fix + L4 Fix + Backtesting + System Audit
+  - Fixed Bayesian shrinkage calibration in `src/modeling/bayesian_hierarchical.py`:
+    - Bug: player_noise_var = within_var / reliability gave λ=0.5 for ALL players (50% shrinkage)
+    - Fix: player_noise_var = within_var / (GP * reliability), so full-season players get ~1% shrinkage
+    - Result: Dimension stds preserved (shooting 0.522→0.493, only 5.5% reduction)
+  - Fixed L4 (Scheme Stability) penalizing stars in `src/modeling/decomposition_engine.py`:
+    - Bug: Negative scheme_z (SGA=-2.299, Giannis=-2.030) subtracted from TI
+    - Fix: Clipped scheme_z to >=0 in TI formula (bonus-only, no penalty)
+    - Result: SGA 100.0 (#1), Giannis 99.7 (#2), Jokic 99.1 (#4) in 2024-25
+  - Backtesting framework (`src/modeling/backtesting.py`) created and run:
+    - PTS Spearman ρ=+0.553, TI within-1-tier accuracy=76.0% (n=263 returning)
+    - Dimension stability: driving (0.840) most stable, playmaking creation (0.297) least
+    - Archetype stability: 53.6% (offensive + defensive)
+	- Full system audit written to `loop/system_audit_v2.6.md`:
+    - Overall grade: B- (good framework, role player inflation needs fixing)
+    - Top issue: Layer 3 elevation inflates role players (Gafford #3, Pritchard #5)
+    - All 3 deferred features now implemented and validated
+  - Pipeline: 950 qualified, ~12s, 344 columns, 3 seasons
+
+- 2026-02-20 — BKE v2.5 Implementation Complete (upgraded from v2.0)
+- Updated 5 modules in `src/modeling/` to v2.5:
+  - `model_config.py` — Added NeutralizationConfig (min_cohort=8, shrinkage=0.50, 6/8 dims neutralized), TRACKING_DIR, v2.5 output paths (bke_v25_*), expanded PORTABLE_DIMENSIONS: playmaking→playmaking_creation with creation+pressure sub-components, turnover_control adds TOV_PER_TOUCH/DRIVE_TOV_RATE, defensive_playmaking adds CHARGES_DRAWN/DEF_LOOSE_BALLS_RECOVERED
+  - `percentile_engine.py` — Added neutralize_by_archetype() and neutralize_dimensions() functions for archetype-conditional neutralization with small-cohort shrinkage
+  - `layer1_portable_talent.py` — Added load_hustle_stats(), compute_derived_metrics(), rewrote compute_dimension_model() with playmaking creation+pressure split (MF-5), enhanced TO metrics (MF-1), expanded def playmaking (MF-4), archetype neutralization call, three-level z-scores (positional + archetype)
+  - `layer3_archetype_elevation.py` — Fixed elevation_z bug (was being dropped by cleanup code)
+  - `decomposition_engine.py` — Updated to v2.5: version refs, portability_ratio removed from public outputs (Fix #4), portability_index used in report/card/console prints
+- Results: 950 qualified player-seasons across 3 seasons, 0 NaN, 314 columns
+- Outputs: bke_v25_decomposition.parquet (314 cols, 1971 rows), .csv, bke_v25_report.json
+- Key v2.5 validation:
+  - 6 neutralization raw columns present (dim 1-4, def playmaking, TO control)
+  - Neutralized dim stds slightly lower than v2.0 raw (expected: archetype variance removed)
+  - 11 positional z-score columns, 14 archetype z-score columns
+  - Playmaking creation sub z and pressure sub z stored for diagnostics
+  - TOV_PER_TOUCH, DRIVE_TOV_RATE, DRIVE_AST_RATIO, PASSES_MADE_PER36 derived and active
+  - CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED loaded from hustle_stats.parquet (1669 rows merged)
+  - Portability class: 286 Scalable Star, 285 Context-Moderate, 379 System Player
+  - Runtime: ~8.3s
+- No new data fetcher needed — all data already existed
+- Updated reference/BKE_metric_modelling_summary.md to v2.5 with full changelog
+- Known issues deferred: Fix #5 (archetype instability → v2.6), MF-3 (confidence intervals), stability-weighted dims, backtesting, hierarchical regression, missing tracking metrics
+
 - 2026-07-16 — BKE v2.0 Implementation Complete (upgraded from v1.5)
 - Updated all 7 modules in `src/modeling/` to v2.0:
 - `model_config.py` — Added ZScoreConfig, BayesianShrinkageConfig, PortabilityConfig, 8-dimension PORTABLE_DIMENSIONS dict, v2.0 output paths, 25/20/55 Layer 1 weights
