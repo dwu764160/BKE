@@ -88,6 +88,28 @@ def load_xrapm_v2():
 def load_linear_metrics():
     return _load_parquet(f"{PROCESSED_DIR}/metrics_linear.parquet")
 
+def load_bke_scores():
+    path = f"{PROCESSED_DIR}/BKE_Scores_v27.json"
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return {}
+
+    players = payload.get("players", {}) if isinstance(payload, dict) else {}
+    index = {}
+    for _, rec in players.items():
+        if not isinstance(rec, dict):
+            continue
+        pid = normalize_player_id(rec.get("player_id"))
+        season = str(rec.get("season", "")).strip()
+        if not pid or not season:
+            continue
+        index[(pid, season)] = rec
+    return index
+
 def load_player_season_stats():
     path = f"{HISTORICAL_DIR}/complete_player_season_stats.parquet"
     if not os.path.exists(path):
@@ -362,7 +384,7 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map, bke_map):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -480,6 +502,33 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             'xrapm_v2': xrapm_v2_map.get((pid, season), {}),
             'linear': linear_map.get((pid, season), {}),
             'season_stats': season_stats_map.get((pid, season), {}),
+            'bke': {
+                'rank': clean_value((bke_map.get((pid, season), {}) or {}).get('rank')),
+                'final_BKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_BKE_percentile')),
+                'final_OBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_OBKE_percentile')),
+                'final_DBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_DBKE_percentile')),
+                'transformed_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_BKE')),
+                'transformed_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_OBKE')),
+                'transformed_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_DBKE')),
+            },
+            'bke_details': {
+                'rank': clean_value((bke_map.get((pid, season), {}) or {}).get('rank')),
+                'raw_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_OBKE')),
+                'raw_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_DBKE')),
+                'raw_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('raw_BKE')),
+                'transformed_OBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_OBKE')),
+                'transformed_DBKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_DBKE')),
+                'transformed_BKE': clean_value((bke_map.get((pid, season), {}) or {}).get('transformed_BKE')),
+                'final_OBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_OBKE_percentile')),
+                'final_DBKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_DBKE_percentile')),
+                'final_BKE_percentile': clean_value((bke_map.get((pid, season), {}) or {}).get('final_BKE_percentile')),
+                'layer1_offensive_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer1_offensive_raw')),
+                'layer1_defensive_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer1_defensive_raw')),
+                'layer2_rue_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer2_rue_raw')),
+                'layer3_off_elevation_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer3_off_elevation_raw')),
+                'layer3_def_elevation_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer3_def_elevation_raw')),
+                'layer4_scheme_bonus_raw': clean_value(((bke_map.get((pid, season), {}) or {}).get('layer_scores') or {}).get('layer4_scheme_bonus_raw')),
+            },
         }
         details[key] = detail
 
@@ -790,6 +839,21 @@ function renderReasons(off,def){
   return h;
 }
 
+function renderBKEHighlights(bke){
+    if(!bke)return '';
+    var cards=[];
+    function push(label,val){if(val!==null&&val!==undefined&&val!=='')cards.push({label:label,value:val});}
+    push('BKE Rank',bke.rank);
+    push('BKE Percentile',bke.final_BKE_percentile!=null?Number(bke.final_BKE_percentile).toFixed(1)+'%':null);
+    push('OBKE Percentile',bke.final_OBKE_percentile!=null?Number(bke.final_OBKE_percentile).toFixed(1)+'%':null);
+    push('DBKE Percentile',bke.final_DBKE_percentile!=null?Number(bke.final_DBKE_percentile).toFixed(1)+'%':null);
+    push('Transformed BKE',bke.transformed_BKE);
+    push('Transformed OBKE',bke.transformed_OBKE);
+    push('Transformed DBKE',bke.transformed_DBKE);
+    if(!cards.length)return '';
+    return '<div class="msec"><h3>BKE Highlights</h3>'+renderSG(cards)+'</div>';
+}
+
 function renderPositionEstimate(pr){
     if(!pr)return '';
     var hasShares = pr.pct_pg!=null || pr.pct_sg!=null || pr.pct_sf!=null || pr.pct_pf!=null || pr.pct_c!=null;
@@ -842,6 +906,7 @@ function openModal(key){
   var ln=d.linear||{};
     var ss=d.season_stats||{};
     var am=d.archetype_model||{};
+    var bk=d.bke||{};
     var gp=ps.GP||ss.GP||null;
   function add(l,v){if(v!==null&&v!==undefined&&v!=='')hl.push({label:l,value:v});}
     add('MPG',p.mpg);add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);
@@ -872,6 +937,7 @@ function openModal(key){
 
   document.getElementById('mBody').innerHTML=
     (hl.length?'<div class="msec"><h3>Season Highlights</h3><h4 class="msec-sub">General Box Score</h4>'+renderSG(hl)+(adv.length?'<h4 class="msec-sub">Advanced Statistics</h4>'+renderSG(adv):'')+'</div>':'')
+        +renderBKEHighlights(bk)
     +arch
         +renderPositionEstimate(pr)
     +renderPT(d.playtypes)
@@ -882,7 +948,8 @@ function openModal(key){
     +renderKV('RAPM',d.rapm||{})
     +renderKV('xRAPM',d.xrapm||{})
     +renderKV('xRAPM v2',d.xrapm_v2||{})
-    +renderKV('Linear Metrics (BKE-computed)',d.linear||{});
+    +renderKV('Linear Metrics (BKE-computed)',d.linear||{})
+    +renderKV('BKE Details',d.bke_details||{});
 
   /* add collapsible toggles to each section */
   document.querySelectorAll('#mBody .msec').forEach(function(sec){
@@ -981,6 +1048,7 @@ def main():
     xrapm_df    = load_xrapm()
     xrapm_v2_df = load_xrapm_v2()
     linear_df   = load_linear_metrics()
+    bke_map     = load_bke_scores()
     season_stats_df = load_player_season_stats()
     salaries_df = load_player_salaries()
 
@@ -988,12 +1056,13 @@ def main():
     print(f"  Defensive archetypes: {len(def_df)}")
     print(f"  Position estimates: {len(pos_est_df)}")
     print(f"  Linear metrics: {len(linear_df)}")
+    print(f"  BKE scores: {len(bke_map)}")
     print(f"  Season stats: {len(season_stats_df)}")
     print(f"  Salaries: {len(salaries_df)}")
 
     html = generate_html(
         off_df, def_df, profiles_df, bios_df, pos_est_df,
-        rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map,
+        rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map, bke_map,
     )
 
     os.makedirs("app", exist_ok=True)

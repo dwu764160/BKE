@@ -261,6 +261,98 @@ x_post = (1 - a) * x + a * mu_prior
 
 ---
 
+## Final Comprehensive Output — BKE (v2.7 Addendum)
+
+This addendum defines the final OBKE/DBKE/BKE constructor used for league-wide final ranking output in `BKE_Scores_v27.json`.
+
+### Inputs
+
+- Source file: `data/processed/bke_v27_decomposition.parquet`
+- Population: **eligible players only** (`qualified == True`)
+- Signals are raw/z layer composites only (no earlier percentile reuse)
+
+### Dimension Scores Bundle
+
+Per eligible player, the constructor carries forward raw + z for the 9 portable dimensions:
+- Shooting Gravity
+- Driving Gravity
+- Playmaking Creation
+- Extra Possession
+- Defensive Playmaking
+- Defensive Impact
+- Turnover Control
+- Defensive Versatility
+- Self Creation
+
+### Layer Composites (Pre-transform)
+
+The script builds layer-level offensive/defensive composites before final transforms:
+- `layer1_offensive_raw = offensive_portable_z`
+- `layer1_defensive_raw = defensive_portable_z`
+- `layer2_rue_raw = role_utilization_raw_z` (fallback to z-score of `role_utilization_raw`)
+- `layer3_off_elevation_raw = zscore(elevation_orapm)`
+- `layer3_def_elevation_raw = zscore(elevation_drapm)`
+- `layer4_scheme_bonus_raw = max(scheme_stability_z, 0)` (bonus-only)
+
+### OBKE/DBKE Construction
+
+`OBKE_raw` (weighted offensive composite):
+
+```
+OBKE_raw = 0.55*layer1_offensive_raw
+         + 0.25*layer2_rue_raw
+         + 0.20*layer3_off_elevation_raw
+```
+
+`DBKE_raw` (weighted defensive composite):
+
+```
+DBKE_raw = 0.60*layer1_defensive_raw
+         + 0.25*layer3_def_elevation_raw
+         + 0.15*layer4_scheme_bonus_raw
+```
+
+`BKE_raw`:
+
+```
+BKE_raw = OBKE_raw + DBKE_raw
+```
+
+### Monotonic Transform + Final Percentiles
+
+Monotonic transform is applied to OBKE/DBKE/BKE:
+
+```
+transformed_x = sign(x) * log(1 + |x|)
+```
+
+Final percentiles are computed league-wide across **eligible players only**:
+- `final_OBKE_percentile`
+- `final_DBKE_percentile`
+- `final_BKE_percentile`
+
+Final ranking uses only terminal BKE percentile:
+
+```
+rank = descending_rank(final_BKE_percentile)
+```
+
+This is the only percentile used for ranking.
+
+### Output Artifact
+
+- Script: `src/modeling/construct_bke_scores_v27.py`
+- Output: `data/processed/BKE_Scores_v27.json`
+
+Per player entry includes:
+- `raw_OBKE`, `raw_DBKE`
+- `transformed_OBKE`, `transformed_DBKE`
+- `final_OBKE_percentile`, `final_DBKE_percentile`
+- `raw_BKE`, `transformed_BKE`, `final_BKE_percentile`
+- `rank`
+
+---
+
 ## Example Output Card (updated for v2.7 fields)
 
 ```

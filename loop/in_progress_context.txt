@@ -1,3 +1,16 @@
+2026-02-20 — Unknown-name repair + BKE viewer enhancements
+- Patched `src/modeling/construct_bke_scores_v27.py` to resolve non-informative player names (`Unknown`) via season-aware and id-only fallback maps sourced from authoritative processed/historical parquet files.
+- Rebuilt `data/processed/BKE_Scores_v27.json`; all 5 previously unknown entries now resolve by player ID.
+- Updated `app/player_data_viewer.py` modal with two new sections:
+  - `BKE Highlights` (placed below Season Highlights and above Archetypes)
+  - `BKE Details` (placed at very bottom under Linear Metrics)
+- Regenerated `app/player_data.html` with the new sections.
+
+2026-02-20 — Final Comprehensive BKE constructor implemented
+- Added `src/modeling/construct_bke_scores_v27.py` to generate `data/processed/BKE_Scores_v27.json` from `bke_v27_decomposition.parquet`.
+- Implemented explicit layer composites, OBKE/DBKE raw construction, monotonic transform, terminal league-wide percentiles, and final rank by `final_BKE_percentile`.
+- Updated docs/context: `readme.md`, `reference/BKE_metric_modelling_summary.md` (append-only addendum), `loop/context_summary.txt`.
+
 2026-02-20 — Modelling summary format restoration pass
 - Restored `reference/BKE_metric_modelling_summary.md` to the prior long-form section structure after user feedback.
 - Applied v2.7 deltas inside existing sections (no additional pipeline logic changes in this pass).

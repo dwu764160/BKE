@@ -50,6 +50,7 @@ POSSESSIONS_GLOB = os.path.join(DATA_DIR, "possessions_clean_*.parquet")
 BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.parquet")
 BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.csv")
 BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v27_report.json")
+BKE_SCORES_V27_JSON = os.path.join(OUTPUT_DIR, "BKE_Scores_v27.json")
 
 # Hustle stats (raw tracking data for MF-4)
 TRACKING_DIR = "data/tracking"

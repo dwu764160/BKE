@@ -70,6 +70,7 @@ python3 src/modeling/decomposition_engine.py                 # Run BKE v2.7 full
 #             Layer 2 (Role Utilization Efficiency)
 #             Layer 3 (Archetype Elevation)
 #             Layer 4 (Scheme Stability, bonus-only)
+python3 src/modeling/construct_bke_scores_v27.py            # Build final OBKE/DBKE/BKE output JSON (terminal ranking)
 python3 -m src.modeling.backtesting                          # Run year-over-year prediction backtest
 python3 -m src.modeling.backtesting --all-pairs              # Run all season-pair backtests
 ```
@@ -97,7 +98,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary)
-- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, `bke_v27_decomposition.parquet`, `bke_v27_decomposition.csv`, `bke_v27_report.json`, `bke_v27_backtest.json`, validation report
+- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, `bke_v27_decomposition.parquet`, `bke_v27_decomposition.csv`, `bke_v27_report.json`, `BKE_Scores_v27.json`, `bke_v27_backtest.json`, validation report
 - `data/tracking/` — tracking-derived JSONs
 
 # Notes
