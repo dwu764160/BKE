@@ -6,7 +6,7 @@ BKE v2.7 — Final Comprehensive Output Constructor
 Builds terminal OBKE / DBKE / BKE outputs from decomposition-layer raw signals,
 then writes:
 
-    data/processed/BKE_Scores_v27.json
+    data/processed/bke/BKE_Scores_v27.json
 
 Rules enforced:
   - No re-percentiling of earlier layers or dimensions.

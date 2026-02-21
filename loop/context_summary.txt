@@ -1,3 +1,21 @@
+- 2026-02-21 — BKE v2.9 Diagnostic Suite + Pipeline Reorganization + Viewer Updates
+	- **Task 1 (Adjustment Script):** Rewired `scripts/BKE_model_config_adjustment.sh` verification section for new directory structure. Pipeline chain: model_rapm → ingest_darko → decomposition_engine → construct_bke_scores_v27 → player_data_viewer.
+	- **Task 2 (BKE Rank Display):** Added ordinal suffix helper (`ordSuffix`) and `fbkeCard(pct,rank)` JS function in `app/player_data_viewer.py`. Card now shows `BKE: 98.9% (11th)` format.
+	- **Task 3 (Directory Reorganization):** Created `data/processed/bke/` and `reports/` directories. Moved BKE decomposition files to `data/processed/bke/`, report files to `reports/`. Updated all path references in: `model_config.py`, `backtesting.py`, `ingest_darko.py`, `decomposition_engine.py`, `construct_bke_scores_v27.py`, `player_data_viewer.py`, `BKE_model_config_adjustment.sh`, `compare_bref_advanced_metrics.py`. Full audit completed.
+	- **Task 4 (v2.9 Diagnostic Suite):** Created `tests/bke_v29_diagnostics.py` — 8-domain diagnostic suite:
+		1. OBKE/DBKE Variance Asymmetry Audit (tests 1.1-1.3)
+		2. Defensive Signal Quality Audit (tests 2.1-2.3)
+		3. Counting Stats vs On/Off Dominance (tests 3.1-3.3)
+		4. Variance Anchor Stress Test (tests 4.1-4.2)
+		5. Offense Weight Bias Experiment (test 5.1)
+		6. Archetype Coefficient Audit (tests 6.1-6.3)
+		7. Portability vs Role-Dependent Drag (test 7.1)
+		8. Rank Movement Driver Decomposition (test 8)
+	- Output: `reports/bke_v29_diagnostic_master.json` (525KB, 950 players, 3 seasons, 0.15s runtime)
+	- Key findings: Variance symmetric (48/52), DBKE-DRAPM corr=0.87, no counting stat dilution, balanced rank drivers, no anchor leakage
+	- Updated: `model_config.py` (added `BKE_V29_DIAGNOSTIC_JSON`), `readme.md` (pipeline + data layout), `reference/BKE_metric_modelling_summary.md` (v2.9 section appended)
+	- No structural/weight changes — measurement only iteration.
+
 - 2026-02-21 — BKE v2.8 completion + card stat-slot update
 	- Updated `app/player_data_viewer.py` card overview row to display `BKE` percentile in the former `RIM` slot and removed external card-level BKE badge usage.
 	- Implemented v2.8 decomposition integrity updates in `src/modeling/model_config.py` + `src/modeling/decomposition_engine.py`:

@@ -1,4 +1,4 @@
-# BKE Metric Modelling Summary (v2.8)
+# BKE Metric Modelling Summary (v2.9)
 
 ## Overview — Portable Talent vs Role-Dependent Impact Decomposition Engine
 
@@ -289,7 +289,7 @@ Note: v2.8 decomposition changes are upstream and diagnostic-focused; the final 
 
 ### Inputs
 
-- Source file: `data/processed/bke_v27_decomposition.parquet`
+- Source file: `data/processed/bke/bke_v27_decomposition.parquet`
 - Population: **eligible players only** (`qualified == True`)
 - Signals are raw/z layer composites only (no earlier percentile reuse)
 
@@ -364,7 +364,7 @@ This is the only percentile used for ranking.
 ### Output Artifact
 
 - Script: `src/modeling/construct_bke_scores_v27.py`
-- Output: `data/processed/BKE_Scores_v27.json`
+- Output: `data/processed/bke/BKE_Scores_v27.json`
 
 Per player entry includes:
 - `raw_OBKE`, `raw_DBKE`
@@ -407,6 +407,11 @@ Player (Season):
 | `layer_scores_v28.json` | JSON | Per-player layer score bundle |
 | `obke_dbke_scores_v28.json` | JSON | Per-player OBKE/DBKE/BKE decomposition bundle |
 | `BKE_Scores_v27.json` | JSON | Final constructor output (terminal league-wide ranking artifact) |
+| `bke_v29_diagnostic_master.json` | JSON | v2.9 diagnostic suite output — 8-domain audit results + player-level metrics |
+
+**Directory structure:**
+- Decomposition data (`parquet`, `csv`, score bundles): `data/processed/bke/`
+- Reports and diagnostics (`report.json`, `variance_report.json`, etc.): `reports/`
 
 ---
 
@@ -424,6 +429,92 @@ Selected decomposition diagnostics from latest run:
 - Qualified players: 950 / 1971 total rows
 - Runtime: ~62.8s
 - Top impact list and portability classifications produced successfully
+
+---
+
+## V2.9 — Diagnostic Suite (Tests Only)
+
+v2.9 is a measurement-only iteration. No weights, structure, or logic changes. A central diagnostic script runs 8 audit domains against the v2.8 decomposition output and writes results to a unified JSON report.
+
+### Diagnostic Script
+
+- Script: `tests/bke_v29_diagnostics.py`
+- Input: `data/processed/bke/bke_v28_decomposition.parquet`
+- Output: `reports/bke_v29_diagnostic_master.json`
+
+### 8 Diagnostic Domains
+
+| Domain | Tests | Purpose |
+|--------|-------|---------|
+| 1. OBKE/DBKE Variance Asymmetry Audit | 1.1–1.3 | Quantify whether defense dominates ranking movement |
+| 2. Defensive Signal Quality Audit | 2.1–2.3 | Validate DBKE correlates with true defensive impact |
+| 3. Counting Stats vs On/Off Dominance | 3.1–3.3 | Test whether counting stats dominate on/off signal |
+| 4. Variance Anchor Stress Test | 4.1–4.2 | Verify seasonwise variance anchoring and year-to-year stability |
+| 5. Offense Weight Bias Experiment | 5.1 | Simulate 55/45 and 60/40 offense-biased composites |
+| 6. Archetype Coefficient Audit | 6.1–6.3 | Detect hidden archetype-weight biases |
+| 7. Portability vs Role-Dependent Drag | 7.1 | Measure whether offensive stars are over-dragged by role component |
+| 8. Rank Movement Driver Decomposition | 8 | Decompose BKE rank into per-component contributions |
+
+### Diagnostic Results Summary (v2.9 run)
+
+| Metric | Value |
+|--------|-------|
+| Qualified players | 950 |
+| Seasons | 2022-23, 2023-24, 2024-25 |
+| Runtime | ~0.15s |
+| Output | `reports/bke_v29_diagnostic_master.json` (525KB) |
+
+**Domain 1 — Variance Asymmetry:**
+- Offensive variance share: 48.1%, Defensive: 51.7%, Covariance: 0.2%
+- Verdict: **SYMMETRIC** — no defense-dominant asymmetry detected
+- Tail sensitivity: defensive bottom-5% penalty exists but proportionate to offensive top-5%
+
+**Domain 2 — Defensive Signal Quality:**
+- corr(DBKE, DRAPM) = 0.871 — strong alignment
+- corr(def_impact, DRAPM) = 0.824 >> corr(def_playmaking, DRAPM) = 0.351 — proper separation
+- Partial correlation (controlling for STL/BLK) = 0.859 — counting stats are NOT diluting
+- Counting noise risk: LOW
+
+**Domain 3 — Counting Stats vs On/Off:**
+- OBKE correlates well with orapm and rate metrics
+- Standardized regression coefficients (DBKE): beta_DRAPM dominates over beta_STL
+- No steals overreliance detected
+
+**Domain 4 — Variance Anchor:**
+- Per-season std ratios are stable, no anchor leakage
+- Year-to-year OBKE stability: ~0.64; DBKE stability: 0.52–0.63
+- Noise asymmetry: moderate in 2022-23→2023-24, symmetric in 2023-24→2024-25
+
+**Domain 5 — Offense Weight Bias:**
+- 55/45 and 60/40 simulations produce small mean rank shifts
+- Top-10 overlap remains high across simulations
+- Offensive specialists gain moderately under biased composites; two-way players are stable
+
+**Domain 6 — Archetype Coefficient Audit:**
+- No per-archetype multipliers or discrete boosts found in pipeline
+- All conditioning is probabilistic via soft memberships
+- DBKE variance range across archetypes is proportionate to OBKE range
+
+**Domain 7 — Portability vs Role Drag:**
+- Mean rank delta (portable vs total) is near zero — no systemic over-drag
+- Top offensive players' drag is examined per-player in the report
+
+**Domain 8 — Rank Movement Decomposition:**
+- Offensive driver share: 48.2%, Defensive: 51.8%
+- Primary rank driver: **BALANCED**
+- Role compression ratio is within expected bounds
+
+### Changes from v2.8 → v2.9
+
+### 1) Central Diagnostic Suite
+**v2.8:** Distribution integrity diagnostics embedded in decomposition engine.
+**v2.9:** Standalone 8-domain diagnostic suite (`tests/bke_v29_diagnostics.py`) produces unified JSON report.
+
+### 2) No Structural Changes
+No weights, layer boundaries, transforms, or archetype logic were modified. v2.9 is measurement-only.
+
+### 3) Output Artifact
+New: `reports/bke_v29_diagnostic_master.json` — includes domain-level audit results and per-player diagnostic metrics (OBKE_z, DBKE_z, BKE_equal_var, rank simulations).
 
 ---
 
@@ -560,6 +651,14 @@ Turnover-control expansion, defensive playmaking expansion, and playmaking creat
 - Distribution-integrity diagnostics and expanded decomposition artifacts
 - Output/version migration to `bke_v28_*` decomposition artifacts
 - Updated report/readme/loop context notes
+
+## Deliverables (v2.9)
+
+- Central diagnostic suite: `tests/bke_v29_diagnostics.py`
+- 8-domain audit covering variance asymmetry, defensive signal quality, counting stats dominance, variance anchoring, offense bias, archetype coefficients, portability drag, and rank movement decomposition
+- Unified JSON report: `reports/bke_v29_diagnostic_master.json`
+- Per-player diagnostic metrics (OBKE_z, DBKE_z, BKE_equal_var, rank simulations)
+- No structural changes to decomposition engine or scoring pipeline
 
 ## Known Issues / Missing Features (Deferred)
 

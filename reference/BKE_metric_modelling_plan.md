@@ -1,433 +1,399 @@
-🧠 BKE v2.8 Blueprint
+🧪 V2.9 DIAGNOSTIC SUITE
 
-Theme: Distribution Integrity, Signal Preservation, and Final BKE Consolidation
-Goal: Fix compression, variance collapse, and percentile distortion while avoiding overfitting.
+We’ll group tests into 8 major domains.
 
-I. Core Objectives of v2.8
+1️⃣ OBKE / DBKE VARIANCE ASYMMETRY AUDIT
+Goal:
 
-v2.8 is built around four priorities, all fully addressed:
+Quantify exactly how defense dominates ranking movement.
 
-Priority A — Fix Distribution Compression
-Priority B — Preserve Meaningful Variance Across Players
-Priority C — Prevent Double-Smoothing / Signal Dilution
-Priority D — Produce Final Comprehensive BKE (OBKE + DBKE)
-
-Additionally:
-
-Avoid re-percentiling intermediate layers (per v2.5 rule)
-
-Use Option B for percentile math (monotonic transforms preserved)
-
-Keep raw composites internally continuous
-
-Produce final standardized BKE outputs
-
-II. The Distribution Problems (Explicitly Addressed)
-
-You identified three major distribution risks (a, b, c). v2.8 directly solves them:
-
-🔴 Problem A: Percentile Compression at Upper Tiers
-Issue
-
-When many elite players cluster in high percentiles (e.g., 92–99), additive structures flatten real separation.
-
-This:
-
-Diminishes elite separation
-
-Artificially tightens rankings
-
-Creates fragile ordering
-
-v2.8 Fix — Nonlinear Stretch Before Final Percentiling (Option B)
-
-We introduce:
-
-Step 1: Build raw continuous composite scores (NO percentiles)
-
-Dimension composites remain raw weighted sums.
-
-Step 2: Apply monotonic variance-preserving transform:
-
-Choose one:
-
-Logit stretch
-
-Z-score standardization
-
-Rankit transformation (Blom adjustment)
-
-Mild exponential stretch on upper tail
-
-Preferred for v2.8:
-Z-score → logistic rescale
-
-This:
-
-Preserves ordering
-
-Expands upper and lower tails
-
-Prevents 92–99 compression
-
-Only AFTER this transformation do we compute final percentiles.
-
-This avoids percentile-on-percentile collapse.
-
-🔴 Problem B: Variance Collapse Through Layer Aggregation
-Issue
-
-Layer stacking causes variance to shrink:
-
-Dimension → Layer → OBKE → BKE
-
-Each weighted average narrows spread
-
-Over time:
-
-Players converge artificially
-
-Extreme profiles are muted
-
-v2.8 Fix — Variance Monitoring + Spread Anchoring
-
-We implement:
-
-1. Variance Audit at Every Layer
-
-For each layer:
-
-Mean
-
-Std deviation
-
-IQR
-
-Kurtosis
-
-If std dev shrinks > X% from previous layer:
-→ flag compression
-
-2. Spread Anchoring Rule
-
-Each layer must retain at least:
-
-65–75% of variance of underlying dimension aggregate
-
-If below threshold:
-
-Apply variance rescaling (multiply by scaling factor)
-
-Not nonlinear — linear stretch only
-
-This keeps:
-
-Outliers meaningful
-
-Specialists visible
-
-Archetypes intact
-
-🔴 Problem C: Double-Smoothing via On-Off + Percentiles
-Issue
-
-On-off metrics are already context-adjusted.
-Percentiling them again smooths signal further.
-
-Result:
-
-Role-dependent impact diluted
-
-High-leverage impact players undervalued
-
-v2.8 Fix — Raw On-Off Integration
-
-For on-off metrics:
-
-Convert to possession-normalized rates
-
-Z-score within position group
-
-Use directly in composite
-
-Do NOT percentile until final output
-
-This preserves:
-
-True magnitude
-
-Lineup leverage
-
-Signal strength
-
-III. Layer Integrity Review (Diagnostic Focus)
-
-v2.8 performs a full system audit of:
-
-Layer 1c (Dimensions) — Distribution Diagnostics
-
-Each of the 8 dimensions:
-
-Shooting Gravity
-
-Driving Gravity
-
-Playmaking
-
-Extra Possession Creation
-
-Defensive Playmaking
-
-Defensive Impact
-
-Turnover Control
-
-Defensive Versatility
-
-For each:
-
-Add:
-
-Raw score distribution plot
-
-Z-score histogram
-
-Percentile spacing check
-
-Tail separation measurement
-
-We compute:
-
-90–95 separation
-
-95–99 separation
-
-Top 5 players raw spread
-
-If spacing too narrow:
-
-Adjust weighting
-
-Apply mild nonlinear stretch
-
-Or increase raw component weighting
-
-IV. Offensive / Defensive Split Stabilization
-OBKE = Weighted sum of 4 offensive dimensions
-DBKE = Weighted sum of 4 defensive dimensions
-
-In v2.8:
-
-We implement:
-
-1. Independent normalization pipelines
-
-OBKE and DBKE remain raw until final step.
-
-2. Offensive-Defensive Balance Audit
+Test 1.1 — Raw Variance Decomposition
 
 Compute:
 
-Correlation between OBKE and DBKE
+var(OBKE_raw)
+var(DBKE_raw)
+var(BKE_raw)
+cov(OBKE_raw, DBKE_raw)
 
-Variance comparison
+Then compute contribution to total variance:
 
-Relative scale ratio
+𝑉
+𝑎
+𝑟
+(
+𝐵
+𝐾
+𝐸
+)
+=
+𝑉
+𝑎
+𝑟
+(
+𝑂
+)
++
+𝑉
+𝑎
+𝑟
+(
+𝐷
+)
++
+2
+𝐶
+𝑜
+𝑣
+(
+𝑂
+,
+𝐷
+)
+Var(BKE)=Var(O)+Var(D)+2Cov(O,D)
 
-If one side consistently dominates magnitude:
-→ Apply scale normalization to equalize variance contribution.
+Output:
 
-We want:
+off_variance_share
+def_variance_share
+covariance_share
 
-OBKE and DBKE to have similar distribution widths
+If defense > 60% of variance share → asymmetry confirmed.
 
-Not identical means — just comparable spread
+Test 1.2 — Z-Standardized Symmetry Simulation
 
-V. Removal of Portability Ratio (Finalized)
+Simulate:
 
-Per v2.5 decision:
+OBKE_z = zscore(OBKE_raw)
+DBKE_z = zscore(DBKE_raw)
+BKE_equal_var = OBKE_z + DBKE_z
 
-Portability ratio removed from reports
+Then:
 
-Portability concept remains embedded in layer weights
+Rank delta vs actual BKE
 
-No explicit scalar displayed
+Top 20 rank shifts
 
-This avoids:
+Offensive specialist shifts
 
-Misleading interpretation
+Output:
 
-Artificial simplification of multidimensional impact
+rank_shift_equalized
+mean_shift_off_specialists
 
-VI. Overfitting Guardrails
+This tells you how much asymmetry alone is driving distortion.
 
-To avoid overfitting while expanding diagnostics:
+Test 1.3 — Tail Sensitivity
 
-1. No manual player-by-player tuning
+Measure:
 
-All changes must:
+Top 5% DBKE variance
+Top 5% OBKE variance
+Bottom 5% DBKE penalty magnitude
 
-Apply league-wide
+Defense often drives tail penalties harder than offense.
 
-Be formulaic
+2️⃣ DEFENSIVE SIGNAL QUALITY AUDIT
 
-Be reproducible
+You want to test:
 
-2. Archetype separation test
+Does DBKE correlate with true defensive impact?
 
-If top 20 players become homogeneous:
-→ investigate over-smoothing.
+Test 2.1 — DBKE vs Ground Truth Signals
 
-3. Holdout validation
+Compute correlations:
 
-Split players into:
+corr(DBKE_raw, DRAPM)
+corr(DBKE_raw, on_off_DRTG)
+corr(DBKE_raw, opponent_FG%)
+corr(DBKE_raw, defensive_EPM_if_available)
 
-High minutes
+Also compare:
 
-Medium minutes
+corr(def_playmaking, DRAPM)
+corr(def_impact, DRAPM)
 
-Ensure distributions hold in both.
+If:
 
-VII. Final Comprehensive Output — BKE
+def_playmaking correlates similarly to def_impact → counting noise risk.
 
-v2.8 produces FOUR output files:
+Test 2.2 — Partial Correlation Test
 
-1️⃣ dimension_scores.json
+Control for steals/blocks:
 
-Raw + z-score for each of 8 dimensions
+partial_corr(DBKE_raw, DRAPM | steals, blocks)
 
-2️⃣ layer_scores.json
+If correlation rises after controlling → counting stats are diluting true signal.
 
-Layer composites before final transformation
+Test 2.3 — Defensive Component Variance Contribution
 
-3️⃣ obke_dbke_scores.json
+Break DBKE into:
 
-OBKE + DBKE raw and standardized
+def_portable
+def_elevation
+scheme_bonus
 
-4️⃣ bke_scores.json (NEW)
+Then break def_portable into:
 
-For each eligible player:
+def_impact
+def_playmaking
+def_versatility
+extra_possession_def
 
-{
-  player_name:
-    raw_OBKE,
-    raw_DBKE,
-    transformed_OBKE,
-    transformed_DBKE,
-    final_OBKE_percentile,
-    final_DBKE_percentile,
-    raw_BKE,
-    transformed_BKE,
-    final_BKE_percentile,
-    rank
-}
-VIII. Final BKE Construction
+Compute:
 
-Step-by-step:
+variance_share_per_component
 
-OBKE_raw = weighted offensive composite
+If Defensive Playmaking variance > Defensive Impact variance:
+→ structural misalignment.
 
-DBKE_raw = weighted defensive composite
+3️⃣ COUNTING STATS VS ON/OFF DOMINANCE
 
-BKE_raw = OBKE_raw + DBKE_raw
+You want:
 
-Apply monotonic transform to BKE_raw
+On defense, on-off > counting stats
+On offense, volume scoring matters meaningfully
 
-Compute final percentile (league-wide eligible players)
+Test 3.1 — Offensive Decomposition
 
-This is the ONLY percentile that matters for ranking.
+Correlate OBKE_raw with:
 
-No re-percentiling earlier layers.
+points_per_100
+points_per_36
+raw_points_total
+offensive_RAPM
+on_off_ORTG
+true_shooting
+usage_rate
 
-IX. Deliverables for v2.8
-Diagnostic Outputs:
+Key comparison:
 
-Variance report per layer
+corr(OBKE, raw_points_total)
+corr(OBKE, points_per_100)
 
-Compression report
+If OBKE is dominated by rate stats → volume underweighted.
 
-Tail separation metrics
+Test 3.2 — Replace Rate With Volume Simulation
 
-OBKE/DBKE balance stats
+Diagnostic simulation only:
 
-Correlation matrix of dimensions
+self_creation_volume = points_total * efficiency_adjustment
+Replace self_creation dimension temporarily
+Recompute OBKE
+Compare rank shift
 
-Production Outputs:
+Measure:
 
-dimension_scores.json
+volume_sensitivity_index
+Test 3.3 — Counting Stats Sensitivity Index (Defense)
 
-layer_scores.json
+Run regression:
 
-obke_dbke_scores.json
+DBKE_raw ~ steals + blocks + DRAPM + on_off_DRTG
 
-bke_scores.json
+Extract standardized betas.
 
-X. What v2.8 Is NOT Doing
+If steals coefficient comparable to DRAPM coefficient → overreliance.
 
-No new dimensions
+4️⃣ VARIANCE ANCHOR STRESS TEST
 
-No weight overhaul
+You anchored seasonwise variance.
 
-No portability reintroduction
+Now test:
 
-No archetype modeling changes
+Test 4.1 — Per-Season OBKE vs DBKE Std
 
-No predictive validation yet
+For each season:
 
-This is structural integrity and signal preservation only.
+std_OBKE
+std_DBKE
+ratio
 
-XI. Implementation Checklist
+If one season spikes → anchor leakage.
 
-Before marking 2.8 complete:
+Test 4.2 — Cross-Season Stability
 
- All dimensions show healthy spread
+Track:
 
- Upper tail separation preserved
+player_year_to_year_OBKE_corr
+player_year_to_year_DBKE_corr
 
- OBKE and DBKE variances comparable
+Defense tends to be noisier year-to-year.
 
- No double percentiling
+If DBKE stability < 0.5 and OBKE > 0.7 → noise asymmetry confirmed.
 
- On-off integrated raw
+5️⃣ OFFENSE WEIGHT BIAS EXPERIMENT
 
- BKE distribution visually normal-like
+NBA structurally values offense more.
 
- No excessive clustering 90–99
+But do not change system — simulate.
 
- Reports auto-generated
+Test 5.1 — Offense-Biased Composite
 
-XII. Summary of What v2.8 Changes
+Simulate:
 
-Compared to v2.5:
+BKE_55_45 = 0.55*OBKE_raw + 0.45*DBKE_raw
+BKE_60_40 = 0.60*OBKE_raw + 0.40*DBKE_raw
 
-Major Additions
+Measure:
 
-Full distribution diagnostics layer
+Top 10 stability
 
-Variance preservation rules
+Offensive specialist movement
 
-Tail stretch transformation
+Two-way player drop magnitude
 
-OBKE/DBKE balancing audit
+Output:
 
-Final BKE output file
+bias_sensitivity_curve
+6️⃣ ARCHETYPE COEFFICIENT AUDIT
 
-Major Fixes
+Critical.
 
-Percentile compression
+You must ensure there are no hidden archetype-weight biases.
 
-Variance collapse
+Test 6.1 — Archetype Mean Component Values
 
-On-off double smoothing
+For each archetype:
 
-Upper-tier flattening
+Compute mean:
 
-Removals
+mean_OBKE
+mean_DBKE
+mean_def_playmaking
+mean_def_impact
+mean_self_creation
 
-Portability ratio from reports
+If archetypes structurally skew toward defensive inflation → bias.
 
-Architectural Status
+Test 6.2 — Hardcoded Weight Detection
 
-Layers remain architecturally intact
+Search codebase for:
 
-Now mathematically stabilized
+if archetype == ...
+multiplier
+manual weight
+
+Output a parsed coefficient table:
+
+archetype_weight_table
+
+Confirm all are probabilistic, not discrete boosts.
+
+Test 6.3 — Archetype Conditional Variance
+
+Within each archetype:
+
+std_OBKE
+std_DBKE
+
+If defensive archetypes have 2x DBKE variance → structural artifact.
+
+7️⃣ PORTABILITY VS ROLE DEPENDENT DRAG
+
+Test whether offensive stars are being over-dragged by role component.
+
+Test 7.1 — Delta Between Portable Rank and Total Rank
+
+Compute:
+
+rank_delta = rank(portable_talent) - rank(total_impact)
+
+Is defensive penalty the driver?
+
+Break delta into:
+
+off_drag
+def_drag
+role_drag
+8️⃣ RANK MOVEMENT DRIVER DECOMPOSITION
+
+This is the most revealing test.
+
+For each player:
+
+Decompose final BKE rank movement into contributions from:
+
+OBKE variance component
+DBKE variance component
+role compression
+scheme adjustment
+
+Output:
+
+rank_movement_decomposition
+
+This shows which component moves players most.
+
+📦 MASTER DIAGNOSTIC FILE STRUCTURE
+
+Your unified file should include:
+
+Player-Level Metrics
+OBKE_raw
+DBKE_raw
+OBKE_z
+DBKE_z
+BKE_raw
+BKE_equal_var
+BKE_55_45
+BKE_60_40
+rank_actual
+rank_equal_var
+rank_shift_equal_var
+rank_shift_55_45
+rank_shift_60_40
+Variance Contributions
+off_variance_share
+def_variance_share
+def_portable_variance_share
+def_playmaking_variance_share
+def_impact_variance_share
+Correlations
+corr_DBKE_DRAPM
+corr_DBKE_onoff
+corr_def_playmaking_DRAPM
+corr_def_impact_DRAPM
+corr_OBKE_points_total
+corr_OBKE_points_per_100
+Stability
+year_to_year_OBKE_corr
+year_to_year_DBKE_corr
+Archetype Diagnostics
+archetype
+archetype_OBKE_mean
+archetype_DBKE_mean
+archetype_DBKE_std
+
+Everything exported into:
+
+bke_v29_diagnostic_master.json
+🔬 What This Will Reveal
+
+By running this suite, you will know:
+
+Whether defense is variance-dominant (not overweighted)
+
+Whether steals are diluting DRAPM alignment
+
+Whether offense is under-weighting scoring volume
+
+Whether archetypes are implicitly biasing defense
+
+Whether small offense bias (55/45) materially improves realism
+
+Whether DBKE is noisier year-to-year
+
+🎯 What We Are NOT Doing
+
+No weight changes
+
+No structural redesign
+
+No defensive collapse
+
+No archetype redefinition
+
+We are measuring everything.
+
+If you'd like, next I can:

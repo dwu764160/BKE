@@ -1,3 +1,17 @@
+2026-02-21 — v2.9 diagnostic suite completed + pipeline reorganization
+- All 4 tasks completed in this session:
+  1. Adjustment script rewired for new directory structure
+  2. BKE rank display added to player cards (percentile + ordinal rank)
+  3. data/processed reorganized: BKE data → data/processed/bke/, reports → reports/
+  4. v2.9 diagnostic suite created (tests/bke_v29_diagnostics.py)
+- v2.9 diagnostics: 8 domains, 950 players, 3 seasons, reports/bke_v29_diagnostic_master.json
+- Key diagnostic findings (no action needed yet):
+  - Variance is symmetric (48/52 off/def) — no defense-dominant asymmetry
+  - DBKE-DRAPM correlation strong (0.87), no counting stat dilution
+  - Cross-season stability: OBKE ~0.64, DBKE ~0.52-0.63
+  - Rank movement drivers are balanced
+- Next: Review diagnostic findings and decide on v3.0 direction
+
 2026-02-21 — v2.8 decomposition finalized + card BKE slot moved
 - `app/player_data_viewer.py`
   - Card overview stat row now shows `BKE` in the former `RIM` slot.

@@ -20,7 +20,7 @@ Integration:
 Outputs:
     - Prints summary to console
     - Returns a diagnostics DataFrame
-    - Optionally saves to data/processed/bke_v27_backtest.json
+    - Optionally saves to reports/bke_v27_backtest.json
 =============================================================================
 """
 
@@ -36,7 +36,8 @@ from scipy import stats as scipy_stats
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.modeling.model_config import (
-    PROCESSED_DIR,
+    BKE_DIR,
+    REPORTS_DIR,
     SEASONS,
     DECOMPOSITION,
 )
@@ -352,7 +353,7 @@ def run_backtest(
     """
     # Load data if not provided
     if df is None:
-        parquet_path = os.path.join(PROCESSED_DIR, "bke_v27_decomposition.parquet")
+        parquet_path = os.path.join(BKE_DIR, "bke_v27_decomposition.parquet")
         if not os.path.exists(parquet_path):
             print(f"ERROR: {parquet_path} not found. Run decomposition first.")
             return {}
@@ -503,7 +504,8 @@ def run_backtest(
     }
 
     if save_output:
-        out_path = os.path.join(PROCESSED_DIR, "bke_v27_backtest.json")
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        out_path = os.path.join(REPORTS_DIR, "bke_v27_backtest.json")
         with open(out_path, "w") as f:
             json.dump(output, f, indent=2, default=lambda x: float(x) if isinstance(x, (np.floating, np.integer)) else str(x))
         print(f"\n  Saved: {out_path}")
@@ -527,7 +529,7 @@ def run_consecutive_season_backtest(
       - Combined: 2022-23 + 2023-24 → 2024-25
     """
     if df is None:
-        parquet_path = os.path.join(PROCESSED_DIR, "bke_v27_decomposition.parquet")
+        parquet_path = os.path.join(BKE_DIR, "bke_v27_decomposition.parquet")
         if not os.path.exists(parquet_path):
             return {}
         df = pd.read_parquet(parquet_path)

@@ -32,7 +32,11 @@ from typing import Dict, List, Tuple
 DATA_DIR = "data/historical"
 PROCESSED_DIR = "data/processed"
 OUTPUT_DIR = "data/processed"
+BKE_DIR = os.path.join(PROCESSED_DIR, "bke")
+REPORTS_DIR = "reports"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(BKE_DIR, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
 # Input data files
 RAPM_PATH = os.path.join(PROCESSED_DIR, "player_rapm.parquet")
@@ -46,21 +50,27 @@ ARCHETYPE_EMBEDDINGS_PATH = os.path.join(PROCESSED_DIR, "archetype_embeddings.pa
 POSITION_ESTIMATES_PATH = os.path.join(PROCESSED_DIR, "player_position_estimates.parquet")
 POSSESSIONS_GLOB = os.path.join(DATA_DIR, "possessions_clean_*.parquet")
 
-# Output files — v2.7
-BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.parquet")
-BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.csv")
-BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v27_report.json")
-BKE_SCORES_V27_JSON = os.path.join(OUTPUT_DIR, "BKE_Scores_v27.json")
+# Output files — v2.7 (BKE decomposition data → data/processed/bke/)
+BKE_OUTPUT_PARQUET = os.path.join(BKE_DIR, "bke_v27_decomposition.parquet")
+BKE_OUTPUT_CSV = os.path.join(BKE_DIR, "bke_v27_decomposition.csv")
+BKE_REPORT_JSON = os.path.join(REPORTS_DIR, "bke_v27_report.json")
+BKE_SCORES_V27_JSON = os.path.join(BKE_DIR, "BKE_Scores_v27.json")
 
 # Output files — v2.8 decomposition + diagnostics
-BKE_V28_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v28_decomposition.parquet")
-BKE_V28_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v28_decomposition.csv")
-BKE_V28_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_report.json")
-BKE_V28_VARIANCE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_variance_report.json")
-BKE_V28_COMPRESSION_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v28_compression_report.json")
-BKE_V28_DIMENSION_SCORES_JSON = os.path.join(OUTPUT_DIR, "dimension_scores_v28.json")
-BKE_V28_LAYER_SCORES_JSON = os.path.join(OUTPUT_DIR, "layer_scores_v28.json")
-BKE_V28_OBKE_DBKE_SCORES_JSON = os.path.join(OUTPUT_DIR, "obke_dbke_scores_v28.json")
+BKE_V28_OUTPUT_PARQUET = os.path.join(BKE_DIR, "bke_v28_decomposition.parquet")
+BKE_V28_OUTPUT_CSV = os.path.join(BKE_DIR, "bke_v28_decomposition.csv")
+BKE_V28_REPORT_JSON = os.path.join(REPORTS_DIR, "bke_v28_report.json")
+BKE_V28_VARIANCE_REPORT_JSON = os.path.join(REPORTS_DIR, "bke_v28_variance_report.json")
+BKE_V28_COMPRESSION_REPORT_JSON = os.path.join(REPORTS_DIR, "bke_v28_compression_report.json")
+BKE_V28_DIMENSION_SCORES_JSON = os.path.join(BKE_DIR, "dimension_scores_v28.json")
+BKE_V28_LAYER_SCORES_JSON = os.path.join(BKE_DIR, "layer_scores_v28.json")
+BKE_V28_OBKE_DBKE_SCORES_JSON = os.path.join(BKE_DIR, "obke_dbke_scores_v28.json")
+
+# Backtest output — reports/
+BKE_BACKTEST_JSON = os.path.join(REPORTS_DIR, "bke_v27_backtest.json")
+
+# v2.9 Diagnostic suite output — reports/
+BKE_V29_DIAGNOSTIC_JSON = os.path.join(REPORTS_DIR, "bke_v29_diagnostic_master.json")
 
 # Hustle stats (raw tracking data for MF-4)
 TRACKING_DIR = "data/tracking"

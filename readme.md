@@ -73,6 +73,7 @@ python3 src/modeling/decomposition_engine.py                 # Run BKE v2.8 full
 python3 src/modeling/construct_bke_scores_v27.py            # Build final OBKE/DBKE/BKE output JSON (terminal ranking)
 python3 -m src.modeling.backtesting                          # Run year-over-year prediction backtest
 python3 -m src.modeling.backtesting --all-pairs              # Run all season-pair backtests
+python3 tests/bke_v29_diagnostics.py                         # Run v2.9 diagnostic suite (8 domains → JSON report)
 ```
 
 ## Visualization / Export
@@ -98,7 +99,9 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary)
-- `data/processed/` — outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `defensive_archetypes_v2_impact_report.csv`, `defensive_archetypes_v2_impact_report.txt`, `bke_v28_decomposition.parquet`, `bke_v28_decomposition.csv`, `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`, `BKE_Scores_v27.json` (includes terminal league-wide percentiles plus grouped transformed percentiles by `position_bucket`, `primary_archetype`, and `defensive_archetype`), `bke_v27_backtest.json`, validation report
+- `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`
+- `data/processed/bke/` — BKE decomposition data: `bke_v28_decomposition.parquet`, `bke_v28_decomposition.csv`, `BKE_Scores_v27.json` (includes terminal league-wide percentiles plus grouped transformed percentiles by `position_bucket`, `primary_archetype`, and `defensive_archetype`), `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`
+- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `modeling_inputs_report.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`
 - `data/tracking/` — tracking-derived JSONs
 
 # Notes

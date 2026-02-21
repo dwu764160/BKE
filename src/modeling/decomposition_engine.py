@@ -30,13 +30,13 @@ All outputs percentile-standardized at three levels:
   - League / Position / Archetype
 
 Outputs:
-    - data/processed/bke_v28_decomposition.parquet / .csv
-    - data/processed/bke_v28_report.json
-    - data/processed/bke_v28_variance_report.json
-    - data/processed/bke_v28_compression_report.json
-    - data/processed/dimension_scores_v28.json
-    - data/processed/layer_scores_v28.json
-    - data/processed/obke_dbke_scores_v28.json
+    - data/processed/bke/bke_v28_decomposition.parquet / .csv
+    - reports/bke_v28_report.json
+    - reports/bke_v28_variance_report.json
+    - reports/bke_v28_compression_report.json
+    - data/processed/bke/dimension_scores_v28.json
+    - data/processed/bke/layer_scores_v28.json
+    - data/processed/bke/obke_dbke_scores_v28.json
 =============================================================================
 """
 

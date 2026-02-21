@@ -89,7 +89,7 @@ def load_linear_metrics():
     return _load_parquet(f"{PROCESSED_DIR}/metrics_linear.parquet")
 
 def load_bke_scores():
-    path = f"{PROCESSED_DIR}/BKE_Scores_v27.json"
+    path = f"{PROCESSED_DIR}/bke/BKE_Scores_v27.json"
     if not os.path.exists(path):
         return {}
     try:
@@ -787,6 +787,20 @@ function fbke(v){
     if(!isFinite(n))return '<span class="na">&mdash;</span>';
     return n.toFixed(1)+'%';
 }
+function ordSuffix(n){
+    if(n===null||n===undefined)return '';
+    var v=Number(n);if(!isFinite(v)||v<1)return '';
+    var s=['th','st','nd','rd'],m=v%100;
+    return v+(s[(m-20)%10]||s[m]||s[0]);
+}
+function fbkeCard(pct,rank){
+    if(pct===null||pct===undefined||pct==='')return '<span class="na">&mdash;</span>';
+    var n=Number(pct);
+    if(!isFinite(n))return '<span class="na">&mdash;</span>';
+    var txt=n.toFixed(1)+'%';
+    if(rank!==null&&rank!==undefined){var o=ordSuffix(rank);if(o)txt+=' <span style="color:#7c8bb5;font-size:11px">('+o+')</span>';}
+    return txt;
+}
 
 /* ---- progress ---- */
 function updProg(cur,tot){
@@ -809,7 +823,7 @@ function cardHTML(p){
     +'<div class="st"><div class="sv">'+p.rpg+'</div><div class="sl">RPG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.usg,'%')+'</div><div class="sl">USG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.ts,'%')+'</div><div class="sl">TS%</div></div>'
-    +'<div class="st"><div class="sv">'+fbke(p.bke_pct)+'</div><div class="sl">BKE</div></div>'
+    +'<div class="st"><div class="sv">'+fbkeCard(p.bke_pct,p.bke_rank)+'</div><div class="sl">BKE</div></div>'
     +'</div>'
     +'<div class="arow">'
     +'<div class="abox"><div class="albl">Offense</div><div class="aname off">'+p.off_archetype+eBadge(p.eff_tier)+'</div><div class="conf">Fit: '+p.off_confidence+'%'+(p.off_secondary?' &middot; '+p.off_secondary:'')+'</div></div>'

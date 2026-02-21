@@ -154,7 +154,9 @@ def main() -> None:
         "has_rapm_rate": float(merged["has_rapm"].mean()) if len(merged) else 0.0,
         "has_darko_rate": float(merged["has_darko"].mean()) if len(merged) else 0.0,
     }
-    report_path = os.path.join(OUT_DIR, "modeling_inputs_report.json")
+    reports_dir = "reports"
+    os.makedirs(reports_dir, exist_ok=True)
+    report_path = os.path.join(reports_dir, "modeling_inputs_report.json")
     pd.Series(report).to_json(report_path, indent=2)
 
     print(f"✅ Modeling inputs rows: {len(merged):,}")

@@ -1,28 +1,85 @@
-AI AGENT PROMPT (v2.5)
+Use the following in a fresh chat to resume exactly where we left off:
 
-Use this to initialize a coding agent:
+🔷 PROJECT CONTINUITY PROMPT — BKE ENGINE (v2.8 STATE)
 
-MISSION:
-We are building a hierarchical basketball player evaluation engine designed to decompose observed on-court impact into:
+You are continuing development of a basketball impact metric system called BKE (Basketball Knowledge Engine).
 
-Portable Talent (role-agnostic ability)
+This project has evolved through multiple structured iterations (v1.5 → v2.0 → v2.5 → v2.6 → v2.7 → v2.8). The system is architecturally mature, distributionally stabilized, and decomposition-focused.
 
-Role-Dependent Impact (context-amplified production)
+Your role is to evaluate, refine, and carefully improve the system without overfitting, while preserving its philosophical foundations.
 
-The goal is to isolate scalable player ability from scheme or usage-dependent output.
+🎯 CORE MISSION
 
-ARCHITECTURE:
+BKE decomposes:
 
-Layer 1A — Impact Prior
-Regularized RAPM baseline.
+Total Impact = Portable Talent + Role-Dependent Impact
 
-Layer 1B — Archetype Assignment
-Clustering of stylistic offensive + defensive role tendencies.
+Where:
 
-Layer 1C — Usage-Neutral Portable Dimensions
-Estimate ability across:
+Role-Dependent Impact = RUE + Archetype Elevation + Scheme Amplification
 
-OFFENSE
+The system must:
+
+Distinguish context-neutral skill from context-specific value
+
+Preserve z-score-first math internally
+
+Use percentiles only for terminal presentation
+
+Avoid percentile reuse in aggregation
+
+Avoid overfitting to specific player archetypes
+
+Preserve two-way value without artificial symmetry
+
+🧠 CURRENT VERSION: v2.8
+
+v2.8 is a distribution-integrity and variance-anchoring pass, not a structural redesign.
+
+Key v2.8 Features
+
+Raw → Z-score backbone (no percentile reuse internally)
+
+Soft archetype membership (embedding-based probabilistic assignment)
+
+Full conditional neutralization (mean + variance)
+
+Empirical-Bayes shrinkage path
+
+Seasonwise variance anchoring for:
+
+role_dependent_impact_z
+
+total_impact_z
+
+Logistic terminal transform before percentile ranking
+
+Expanded diagnostic outputs:
+
+Variance reports
+
+Compression reports
+
+Tail separation
+
+OBKE/DBKE balance
+
+Portability ratio removed from public outputs
+
+Final ranking uses only terminal BKE percentile
+
+🧱 ARCHITECTURE
+Layers
+
+Layer 1: Portable Talent
+
+RAPM backbone (25%)
+
+Playtype efficiency (20%)
+
+9-dimension portable model (55%)
+
+Portable dimensions include:
 
 Shooting Gravity
 
@@ -30,63 +87,184 @@ Driving Gravity
 
 Playmaking Creation
 
-Offensive Turnover Control
-
 Extra Possession Creation
-
-DEFENSE
 
 Defensive Playmaking
 
 Defensive Impact
 
+Turnover Control
+
 Defensive Versatility
 
-Extra Possession Creation
+Self Creation
 
-All dimensions must:
+Layer 2: Role Utilization Efficiency (RUE)
 
-Be archetype-conditional
+Usage-conditioned surplus
 
-Usage-neutralized
+Cosine similarity to archetype-optimal template
 
-Aggregated in latent z-space
+Configurable optimal source
 
-Percentiles must:
+Layer 3: Archetype Elevation
 
-Never be used as inputs
+RAPM vs archetype baseline
 
-Never recombined
+Surplus vs baseline
 
-Only generated in final output layer
+Efficiency vs baseline
 
-Layer 2 — Role Utilization
-Measures deployment alignment.
+Layer 4: Scheme Amplification
 
-Layer 3 — Archetype Elevation
-Impact within role class.
+Context sensitivity
 
-Layer 4 — Scheme Amplification
-Contextual boost layer.
+Scheme bonus-only in Total Impact
 
-STRICT RULES:
+📊 OBKE / DBKE CONSTRUCTION (CURRENT)
 
-No percentile addition
+OBKE_raw =
+0.55 * offensive_portable
 
-No percentile-to-percentile ranking
+0.25 * RUE
 
-No usage-dependent raw production inside Layer 1C
+0.20 * offensive_elevation
 
-Neutralize all Layer 1C outputs vs archetype optimal usage
+DBKE_raw =
+0.60 * defensive_portable
 
-DESIGN LOOP:
+0.25 * defensive_elevation
 
-After implementation:
+0.15 * scheme_bonus
 
-Summarize architecture behavior
+BKE_raw = OBKE_raw + DBKE_raw
 
-Identify distortion or leakage
+Monotonic transform:
 
-Propose correction blueprint
+transformed_x = sign(x) * log(1 + |x|)
 
-Repeat version cycle
+Final percentiles computed league-wide (eligible players only).
+
+⚠️ CURRENT ISSUE UNDER EVALUATION
+
+We are currently diagnosing a potential imbalance:
+
+Problem Observed
+
+OBKE and DBKE have equal weight in total BKE.
+
+Players like Stephen Curry and Damian Lillard rank lower than expected because of weak defensive impact.
+
+Defensive BKE appears to overweight defensive counting stats (steals, deflections).
+
+Players like Harden or Luka may receive defensive boosts due to steals despite poor defensive impact.
+
+Defensive Impact dimension may not be sufficiently dominant relative to Defensive Playmaking.
+
+We are NOT solving this yet.
+
+We are currently in evaluation mode, not redesign mode.
+
+📌 EVALUATION QUESTIONS
+
+The next step in the project is to analyze:
+
+Does Defensive Playmaking (steals/hustle) correlate strongly with DBKE?
+
+Does DBKE correlate strongly with true defensive value signals?
+
+DRAPM
+
+On/off DRTG
+
+Opponent FG% allowed
+
+Is defensive impact being diluted by counting stats?
+
+Is OBKE vs DBKE variance comparable?
+
+Are small offensive specialists being punished more than intended?
+
+Is the model philosophically correct in valuing two-way players, or overly symmetric?
+
+The goal is to diagnose, not redesign.
+
+🧭 DESIGN PHILOSOPHY (DO NOT BREAK)
+
+Archetype = role behavior, not value
+
+Portable talent = context-neutral skill
+
+Role-dependent = contextual expression
+
+Two-way players should be rewarded
+
+Offensive-only stars should not be artificially inflated
+
+Defensive-only specialists should not be artificially inflated
+
+Counting stats must not dominate true impact signals
+
+Avoid overfitting to specific players
+
+Avoid ad-hoc weight changes without systemic justification
+
+🧪 KNOWN CONSTRAINTS
+
+950 qualified players across 3 seasons
+
+Soft-membership archetype conditioning active
+
+Variance anchoring active
+
+Logistic terminal transform active
+
+Percentiles strictly terminal
+
+Backtests not rerun for v2.8
+
+Some advanced tracking micro-events unavailable
+
+🚫 DO NOT
+
+Immediately redesign weights
+
+Add new layers
+
+Add ad-hoc player corrections
+
+Introduce hard caps
+
+Overfit to Curry/Lillard case
+
+Collapse defensive component entirely
+
+🎯 WHAT YOU SHOULD DO NEXT
+
+Continue from this state and:
+
+Evaluate the OBKE/DBKE balance rigorously.
+
+Propose diagnostic tests before proposing structural changes.
+
+If recommending adjustments, keep them small and principled.
+
+Ensure philosophical coherence with decomposition mission.
+
+📎 CURRENT VERSION STATUS
+
+Latest run:
+
+Qualified players: 950
+
+Seasons: 2022–23, 2023–24, 2024–25
+
+Runtime ~63 seconds
+
+Diagnostic artifacts generated
+
+Constructor output still v27 path
+
+No defensive recalibration yet implemented
+
+End of continuity prompt.

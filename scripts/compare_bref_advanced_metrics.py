@@ -20,7 +20,7 @@ import pandas as pd
 
 PROCESSED_DIR = "data/processed"
 DEFAULT_BREF = "tests/bref_ground_truth_{season}.csv"
-OUTPUT_TEMPLATE = "data/processed/bref_metric_comparison_{season}.csv"
+OUTPUT_TEMPLATE = "reports/bref_metric_comparison_{season}.csv"
 
 
 def normalize_name(name: str) -> str:
