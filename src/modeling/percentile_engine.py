@@ -541,6 +541,7 @@ def apply_bayesian_shrinkage(
     shrinkage_strength: float = 0.20,
     gp: Optional[pd.Series] = None,
     min_gp_full: int = 50,
+    group_labels: Optional[pd.Series] = None,
 ) -> pd.Series:
     """
     Apply empirical Bayes shrinkage to a metric series.
@@ -560,16 +561,158 @@ def apply_bayesian_shrinkage(
     -------
     Shrunk series.
     """
-    if gp is not None:
-        # More shrinkage for low-GP players
-        gp_factor = np.clip(gp / min_gp_full, 0.0, 1.0)
-        effective_shrinkage = shrinkage_strength * (1 + (1 - gp_factor))
-        effective_shrinkage = np.clip(effective_shrinkage, 0.0, 0.8)
-    else:
-        effective_shrinkage = shrinkage_strength
+    valid = series.dropna()
+    if valid.empty:
+        return series
 
-    shrunk = (1 - effective_shrinkage) * series + effective_shrinkage * prior
+    if not BAYESIAN_SHRINKAGE.use_empirical_bayes:
+        if gp is not None:
+            gp_factor = np.clip(gp / min_gp_full, 0.0, 1.0)
+            effective_shrinkage = shrinkage_strength * (1 + (1 - gp_factor))
+            effective_shrinkage = np.clip(effective_shrinkage, 0.0, 0.8)
+        else:
+            effective_shrinkage = shrinkage_strength
+        return (1 - effective_shrinkage) * series + effective_shrinkage * prior
+
+    if BAYESIAN_SHRINKAGE.estimate_variance_components and group_labels is not None:
+        temp = pd.DataFrame({"x": series, "g": group_labels}).dropna()
+        if len(temp) >= 8 and temp["g"].nunique() >= 2:
+            grouped = temp.groupby("g")["x"]
+            within_var = grouped.var().fillna(0.0).mean()
+            between_var = grouped.mean().var()
+        else:
+            within_var = valid.var()
+            between_var = max(valid.var() * 0.25, 1e-6)
+    else:
+        within_var = valid.var()
+        between_var = max(valid.var() * 0.25, 1e-6)
+
+    within_var = float(max(within_var, 1e-6))
+    between_var = float(max(between_var, 1e-6))
+
+    if gp is not None:
+        n = np.clip(gp.fillna(min_gp_full / 2) / max(min_gp_full, 1), 1e-3, None)
+    else:
+        n = pd.Series(1.0, index=series.index)
+
+    # v2.7 requested form:
+    #   a = sigma_within^2 / (sigma_within^2 + sigma_between^2 / n)
+    a = within_var / (within_var + (between_var / n))
+    a = np.clip(a * max(shrinkage_strength, 0.0), 0.0, 0.95)
+
+    shrunk = (1 - a) * series + a * prior
     return shrunk
+
+
+def _get_soft_membership_columns(df: pd.DataFrame) -> List[str]:
+    """Return soft archetype membership columns if present."""
+    cols = [c for c in df.columns if c.startswith("arch_prob_")]
+    return sorted(cols)
+
+
+def _normalize_memberships(row_vals: pd.Series) -> pd.Series:
+    vals = row_vals.fillna(0.0).clip(lower=0.0)
+    total = float(vals.sum())
+    if total <= 0:
+        return vals
+    return vals / total
+
+
+def neutralize_by_soft_archetype(
+    df: pd.DataFrame,
+    z_col: str,
+    season_col: str = "season",
+) -> pd.Series:
+    """
+    v2.7 soft-membership conditional neutralization.
+
+    For player i, archetype-weighted expectation is:
+      mu_i = sum_j p_ij * mu_j
+      sd_i = sum_j p_ij * sd_j
+
+    If full conditional mode is enabled:
+      z_i' = (z_i - mu_i) / sd_i
+    Else:
+      z_i' = z_i - mu_i
+    """
+    if z_col not in df.columns:
+        return pd.Series(0.0, index=df.index)
+
+    prob_cols = _get_soft_membership_columns(df)
+    if not prob_cols:
+        return neutralize_by_archetype(
+            df,
+            z_col,
+            archetype_col="primary_archetype",
+            season_col=season_col,
+            min_cohort=NEUTRALIZATION.min_cohort_for_neutralization,
+            small_cohort_shrinkage=NEUTRALIZATION.small_cohort_shrinkage,
+        )
+
+    result = df[z_col].copy()
+    eps = 1e-6
+
+    for season in df[season_col].dropna().unique():
+        s_mask = df[season_col] == season
+        season_df = df.loc[s_mask]
+
+        # Per-archetype weighted moments
+        mu_by_arch: Dict[str, float] = {}
+        sd_by_arch: Dict[str, float] = {}
+        for p_col in prob_cols:
+            weights = season_df[p_col].fillna(0.0).clip(lower=0.0)
+            z_vals = season_df[z_col].astype(float)
+            valid = z_vals.notna() & (weights > 0)
+
+            if valid.sum() < 2:
+                mu_by_arch[p_col] = 0.0
+                sd_by_arch[p_col] = 1.0
+                continue
+
+            w = weights.loc[valid]
+            x = z_vals.loc[valid]
+            w_sum = float(w.sum())
+            if w_sum <= 0:
+                mu_by_arch[p_col] = 0.0
+                sd_by_arch[p_col] = 1.0
+                continue
+
+            mu = float((w * x).sum() / w_sum)
+            var = float((w * (x - mu) ** 2).sum() / w_sum)
+            sd = float(np.sqrt(max(var, eps)))
+
+            mu_by_arch[p_col] = mu
+            sd_by_arch[p_col] = sd
+
+        season_mean = float(season_df[z_col].mean()) if season_df[z_col].notna().any() else 0.0
+        season_std = float(season_df[z_col].std()) if season_df[z_col].notna().any() else 1.0
+        if np.isnan(season_std) or season_std < eps:
+            season_std = 1.0
+
+        for idx in season_df.index:
+            obs = season_df.at[idx, z_col]
+            if pd.isna(obs):
+                continue
+
+            probs = _normalize_memberships(season_df.loc[idx, prob_cols])
+            if float(probs.sum()) <= 0:
+                expected_mu = season_mean
+                expected_sd = season_std
+            else:
+                expected_mu = float(sum(probs[p] * mu_by_arch.get(p, 0.0) for p in prob_cols))
+                expected_sd = float(sum(probs[p] * sd_by_arch.get(p, 1.0) for p in prob_cols))
+                expected_sd = max(expected_sd, eps)
+
+            if NEUTRALIZATION.use_full_conditional_standardization:
+                neutralized = (obs - expected_mu) / expected_sd
+                if NEUTRALIZATION.rescale_to_league_variance:
+                    neutralized = neutralized * season_std
+            else:
+                neutralized = obs - expected_mu
+
+            result.at[idx] = neutralized
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -665,6 +808,8 @@ def neutralize_dimensions(
     cfg = NEUTRALIZATION
     result = df.copy()
 
+    prob_cols = _get_soft_membership_columns(result)
+
     for z_col in dim_z_cols:
         if z_col not in result.columns:
             continue
@@ -676,13 +821,19 @@ def neutralize_dimensions(
         # Store raw for diagnostics
         result[f"{z_col}_raw"] = result[z_col].copy()
 
-        # Neutralize
-        result[z_col] = neutralize_by_archetype(
-            result, z_col,
-            archetype_col=archetype_col,
-            season_col=season_col,
-            min_cohort=cfg.min_cohort_for_neutralization,
-            small_cohort_shrinkage=cfg.small_cohort_shrinkage,
-        )
+        if prob_cols:
+            result[z_col] = neutralize_by_soft_archetype(
+                result,
+                z_col,
+                season_col=season_col,
+            )
+        else:
+            result[z_col] = neutralize_by_archetype(
+                result, z_col,
+                archetype_col=archetype_col,
+                season_col=season_col,
+                min_cohort=cfg.min_cohort_for_neutralization,
+                small_cohort_shrinkage=cfg.small_cohort_shrinkage,
+            )
 
     return result

@@ -1,21 +1,21 @@
 """
 src/modeling/model_config.py
 =============================================================================
-BKE v2.6 — Centralized Configuration for the Portable Talent vs
-             Role-Dependent Impact Decomposition Engine.
+BKE v2.7 — Centralized Configuration for the Portable Talent vs
+                         Role-Dependent Impact Decomposition Engine.
 
-v2.6 corrections over v2.5:
-  - Position-conditional z-scores for biased dimensions (Fix #4)
-  - Self-Creation dimension added (Dim 9) — off-dribble, pull-up, usage-based
-  - Basketball-informed dimension weights replace equal 0.125 weighting
-  - Portability index rewritten: real structural components, not proxies
-  - Big-man bias eliminated: shooting/playmaking/creation weighted higher,
-    rebounding/rim-protection weighted lower to reflect true portability
+v2.7 statistical maturity updates:
+    - Soft archetype memberships (distance-to-centroid + softmax)
+    - Full conditional neutralization (mean + variance conditioning)
+    - Empirical-Bayes variance-component shrinkage hooks
+    - Defensive symmetry in archetype conditioning
+    - Dimension composite variance restoration target
+    - RUE decoupling from RAPM-driven archetype templates
 
 Prior versions:
-  v2.5: Archetype-conditional neutralization, expanded hustle stats
-  v2.0: Z-score aggregation, variance-based portability, 8 dimensions
-  v1.5: Initial percentile-based pipeline
+    v2.6: Position z-scores, self-creation dim, scheme bonus-only TI
+    v2.5: Archetype-conditional neutralization, expanded hustle stats
+    v2.0: Z-score aggregation, variance-based portability, 8 dimensions
 
 All thresholds, weights, paths, and structural constants live here.
 No other module should define model-wide constants.
@@ -46,10 +46,10 @@ ARCHETYPE_EMBEDDINGS_PATH = os.path.join(PROCESSED_DIR, "archetype_embeddings.pa
 POSITION_ESTIMATES_PATH = os.path.join(PROCESSED_DIR, "player_position_estimates.parquet")
 POSSESSIONS_GLOB = os.path.join(DATA_DIR, "possessions_clean_*.parquet")
 
-# Output files — v2.6
-BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v26_decomposition.parquet")
-BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v26_decomposition.csv")
-BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v26_report.json")
+# Output files — v2.7
+BKE_OUTPUT_PARQUET = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.parquet")
+BKE_OUTPUT_CSV = os.path.join(OUTPUT_DIR, "bke_v27_decomposition.csv")
+BKE_REPORT_JSON = os.path.join(OUTPUT_DIR, "bke_v27_report.json")
 
 # Hustle stats (raw tracking data for MF-4)
 TRACKING_DIR = "data/tracking"
@@ -139,6 +139,10 @@ class PortableTalentConfig:
     min_poss_full_weight: int = 3000  # possessions for full reliability weight
     min_poss_partial: int = 500       # minimum for any weight
 
+    # v2.7: variance restoration for Layer 1C composite
+    target_dimension_model_std: float = 0.42
+    enforce_target_variance: bool = True
+
 
 PORTABLE_TALENT = PortableTalentConfig()
 
@@ -177,6 +181,10 @@ class RoleUtilizationConfig:
     # Archetype optimal playtype distributions derived from data
     # These are populated at runtime from archetype cohort means
     archetype_optimal_distributions: Dict[str, Dict[str, float]] = field(default_factory=dict)
+
+    # v2.7: decouple from RAPM for archetype-optimal templates
+    # Allowed: "portable_talent", "dimension_model", "rapm"
+    rue_optimal_source: str = "portable_talent"
 
 
 ROLE_UTILIZATION = RoleUtilizationConfig()
@@ -308,6 +316,10 @@ class BayesianShrinkageConfig:
     # Prior source: "league_mean" or "positional_mean"
     prior_source: str = "league_mean"
 
+    # v2.7: variance-component empirical Bayes switches
+    use_empirical_bayes: bool = True
+    estimate_variance_components: bool = True
+
 
 BAYESIAN_SHRINKAGE = BayesianShrinkageConfig()
 
@@ -319,15 +331,14 @@ class NeutralizationConfig:
     """
     Configuration for archetype-conditional neutralization of Layer 1C dimensions.
 
-    v2.6 neutralizes all portable dimensions by subtracting the archetype
-    expected output, so that Layer 1C measures ability ABOVE what's expected
-    for the player's role — not raw observed production.
+        v2.7 applies soft-membership conditional neutralization so Layer 1C
+        captures role-adjusted performance with both location and scale control.
 
-    Neutralized_z = Observed_z - E[z | archetype]
+        Mean-centering mode:
+            Neutralized_z = Observed_z - E[z | archetype]
 
-    v2.6: Position-conditional z-scores REPLACE neutralization for
-    position-dominated dimensions. Neutralization is still applied to
-    league-wide z-score dimensions for archetype adjustment.
+        Full conditional mode:
+            Neutralized_z = (Observed_z - E[z | archetype]) / SD[z | archetype]
     """
     # Minimum archetype cohort size for reliable expected value
     min_cohort_for_neutralization: int = 8
@@ -335,16 +346,20 @@ class NeutralizationConfig:
     # If cohort too small, shrink toward league mean (0.0) instead
     small_cohort_shrinkage: float = 0.50
 
-    # Dimensions to neutralize (league-z dimensions only in v2.6)
+    # Dimensions to neutralize (v2.7: all target dimensions, including defense)
     neutralize_dimensions: list = field(default_factory=lambda: [
         "dim_shooting_gravity_z",
+        "dim_driving_gravity_z",
         "dim_playmaking_creation_z",
+        "dim_extra_possession_z",
+        "dim_defensive_playmaking_z",
+        "dim_defensive_impact_z",
         "dim_self_creation_z",
         "dim_turnover_control_z",
+        "dim_defensive_versatility_z",
     ])
 
-    # Dimensions using position-conditional z-scores (v2.6) — NOT neutralized
-    # because positional z already removes expected positional output
+    # Dimensions using position-conditional z-scores (kept for diagnostics)
     position_z_dimensions: list = field(default_factory=lambda: [
         "dim_driving_gravity_z",
         "dim_extra_possession_z",
@@ -353,14 +368,12 @@ class NeutralizationConfig:
         "dim_defensive_versatility_z",
     ])
 
-    # Dimensions that are NOT neutralized (already context-neutral by construction)
-    skip_neutralization: list = field(default_factory=lambda: [
-        "dim_defensive_impact_z",       # Uses position-conditional z (v2.6)
-        "dim_defensive_versatility_z",  # Uses position-conditional z (v2.6)
-        "dim_driving_gravity_z",        # Uses position-conditional z (v2.6)
-        "dim_extra_possession_z",       # Uses position-conditional z (v2.6)
-        "dim_defensive_playmaking_z",   # Uses position-conditional z (v2.6)
-    ])
+    # v2.7: no structural exemptions in conditioning path
+    skip_neutralization: list = field(default_factory=list)
+
+    # v2.7: full conditional standardization controls
+    use_full_conditional_standardization: bool = True
+    rescale_to_league_variance: bool = True
 
 
 NEUTRALIZATION = NeutralizationConfig()
@@ -412,6 +425,9 @@ class PortabilityConfig:
     high_portability: float = 0.70   # Scalable star
     low_portability: float = 0.40    # System-amplified
 
+    # v2.7: soft-membership transfer signal
+    use_soft_membership_in_transfer: bool = True
+
 
 PORTABILITY = PortabilityConfig()
 
@@ -449,6 +465,36 @@ class DecompositionConfig:
 
 
 DECOMPOSITION = DecompositionConfig()
+
+
+# ---------------------------------------------------------------------------
+# v2.7 Soft Archetype Membership config
+# ---------------------------------------------------------------------------
+@dataclass
+class ArchetypeMembershipConfig:
+    """Distance-to-centroid soft archetype memberships."""
+    temperature: float = 0.5
+    min_probability_floor: float = 0.05
+
+
+ARCHETYPE_MEMBERSHIP = ArchetypeMembershipConfig()
+
+
+# ---------------------------------------------------------------------------
+# v2.7 Dimension weight tuning hook
+# ---------------------------------------------------------------------------
+@dataclass
+class DimensionWeightTuningConfig:
+    """
+    Centralized dimension importance scaling.
+    Allows global tuning without editing individual weight keys.
+    """
+    global_multiplier: float = 1.0
+    auto_normalize: bool = True
+    allow_runtime_override: bool = True
+
+
+DIMENSION_WEIGHT_TUNING = DimensionWeightTuningConfig()
 
 # ---------------------------------------------------------------------------
 # Portable Dimension Definitions — v2.6 (9 dimensions, position-conditional z)

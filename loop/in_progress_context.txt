@@ -1,3 +1,7 @@
+2026-02-20 — Modelling summary format restoration pass
+- Restored `reference/BKE_metric_modelling_summary.md` to the prior long-form section structure after user feedback.
+- Applied v2.7 deltas inside existing sections (no additional pipeline logic changes in this pass).
+
 DO NOT CHANGE — IN-PROGRESS CONTEXT (Machine-Readable Guidance)
 
 Purpose:
@@ -5,34 +9,503 @@ Purpose:
 - It is intended to be written to by models that are failing on a task so other models can pick up
   where they left off. Do not manually edit this file unless you are coordinating the handoff.
 
+Required Sections (use these headings exactly; other tools rely on them):
+1) CONTEXT:
+	- Brief summary of the task, current working directory, and any key files or inputs in use.
+2) FAILURE_REASON:
+	- Short, precise description of why the current attempt failed (errors, unexpected outputs).
+3) ATTEMPTED_METHODS:
+	- List the strategies, commands, and code changes that were tried (bullet list).
+4) SOURCES_READ:
+	- Links, files, docs, and commands consulted during troubleshooting.
+5) NEXT_STEPS (explicit):
+	- One-line actionable items the next agent should attempt, ordered by priority.
+
+Formatting rules for automations:
+- Keep each section label (e.g., CONTEXT:) on its own line, followed by content lines.
+- Use plain text only — avoid embedding binary, images, or complex markup.
+- Keep entries concise; prefer short bullet lists and single-line commands for reproducibility.
+
+Example (template):
 CONTEXT:
-- Task: BKE v2.6 — Bayesian shrinkage, backtesting framework, L4 fix, system audit
+- Task: BKE v2.5 implementation — 5 modeling modules updated, pipeline validated, summary updated.
 - Env: Linux (WSL), venv at `.venv/`, Python 3.10
-- Key files modified this session:
-  - `src/modeling/bayesian_hierarchical.py` — Fixed shrinkage calibration (was 50% for all players, now ~1-5% based on GP*reliability)
-  - `src/modeling/decomposition_engine.py` — L4 scheme stability now bonus-only (clipped to >=0 in TI formula)
-  - `src/modeling/backtesting.py` — Created and run, all tests pass
-- Status: ✅ All three deferred features implemented and validated
-- Pipeline: 950 qualified, ~12s runtime, 344 columns
+- Key files: `src/modeling/model_config.py`, `src/modeling/percentile_engine.py`, `src/modeling/layer1_portable_talent.py`, `src/modeling/layer3_archetype_elevation.py`, `src/modeling/decomposition_engine.py`, `reference/BKE_metric_modelling_summary.md`
+- Status: ✅ Completed. v2.5 implementation validated with 950 qualified players, 314 cols, 0 NaN.
+- v2.5 features: archetype-conditional neutralization (6/8 dims), three-level z-scores, playmaking creation+pressure split, enhanced TO/defensive playmaking metrics, elevation_z bug fix, portability_ratio removed from public outputs.
+- No new data fetcher needed — all data already existed in tracking/hustle_stats.parquet.
 
-COMPLETED:
-- [x] Bayesian shrinkage calibration fixed (observation noise now scales with GP*reliability)
-- [x] Backtesting framework created and run (PTS ρ=0.553, TI within-1=76.0%)
-- [x] L4 scheme stability fix (bonus-only, no penalty for stars)
-- [x] Full system audit written (loop/system_audit_v2.6.md)
-- [x] Context files updated
+FAILURE_REASON:
+- N/A (implementation completed successfully after debugging 5 issues).
 
-KNOWN ISSUES (from audit):
-1. Layer 3 elevation inflates role players (Gafford #3, Pritchard #5 in 2024-25)
-2. RUE favors simple roles over complex ones
-3. Playmaking creation dimension unstable (ρ=0.297 year-over-year)
-4. RAPM noise for players on bad teams (LeBron -5.16 in 2024-25)
-5. "Unknown" player appearing in bottom-5 (data quality issue)
+ATTEMPTED_METHODS:
+- Updated all 7 src/modeling/ files from v1.5 to v2.0 per BKE_metric_modelling_plan.md
+- Debugged assignment_difficulty categorical column (Low/Medium/High -> 0/0.5/1.0)
+- Expanded load_archetypes() to include driving/tracking/entropy columns
+- Expanded load_defensive_archetypes() to include hustle/engagement/deflection/matchup columns
+- Fixed min_playtype_poss from 25 (season total) to 0.3 (per-game) — surplus was always zero in v1.5
+- Added _avg_z_components() for NaN-safe dimension averaging (fillna(0) for missing components)
+- Used emb_entropy_norm as proxy for pcv_entropy in role elasticity computation
+- Updated BKE_metric_modelling_summary.md to v2.0 with full change log and plan differences
+
+SOURCES_READ:
+- Local: reference/BKE_metric_modelling_plan.md (v2.0 plan, 532 lines)
+- Local: reference/BKE_metric_modelling_summary.md (v1.5 summary, updated to v2.0)
+- Local: All 7 src/modeling/ files (read + edited)
+- Local: data/processed/player_archetypes.parquet (column inspection)
+- Local: data/processed/defensive_archetypes_v2.parquet (column inspection)
+- Local: data/processed/modeling_inputs_all.parquet (column inspection)
+
+NEXT_STEPS (explicit):
+- v2.1 planned: Stability-weighted dimension scaling (year-to-year stability, predictive RAPM correlation)
+- v2.1 planned: Multi-year backtesting (team-changers, playoff portability, aging curves)
+- v2.1 planned: Formal Bayesian hierarchical regression (Player > Archetype > Position)
+- v2.1 planned: Additional tracking metrics (box creation, advantage creation, disruption rate)
+
+DO NOT CHANGE this file format or the section headings; other automated agents rely on them.
+
+
+---------------------------------------------CONTENTS STARTS HERE-----------------------------------------
+CONTEXT:
+- Task: Implement v2.7 modelling plan (soft memberships, conditional standardization, EB shrinkage, RUE decoupling, portability transfer tightening) and update docs.
+- Env: Linux, Python pipeline in `src/modeling/`
+- Key files changed: `src/modeling/model_config.py`, `src/modeling/percentile_engine.py`, `src/modeling/layer1_portable_talent.py`, `src/modeling/layer2_role_utilization.py`, `src/modeling/layer3_archetype_elevation.py`, `src/modeling/decomposition_engine.py`, `src/modeling/backtesting.py`, `readme.md`, `reference/BKE_metric_modelling_summary.md`.
+- Status: ✅ Code changes implemented; pending final runtime validation + metric sanity check after regeneration.
+
+FAILURE_REASON:
+- N/A (implementation in progress; no blocking runtime error recorded at this checkpoint).
+
+ATTEMPTED_METHODS:
+- Added centralized v2.7 config knobs for archetype memberships, neutralization mode, empirical-Bayes toggles, RUE optimal source, and variance restoration.
+- Loaded `archetype_embeddings.parquet` and computed `arch_prob_*` via distance-to-centroid softmax.
+- Upgraded neutralization path to soft-membership conditional standardization in shared percentile utilities.
+- Replaced heuristic shrinkage path with variance-component EB formula in shrinkage utility and wired Layer 1 defensive playmaking callsite.
+- Applied soft-membership weighting to RUE optimal vectors and Layer 3 baseline expectations.
+- Added soft-membership entropy transfer signal to portability component outputs.
+- Migrated outputs/labels from v2.6/v26 to v2.7/v27 in decomposition/backtesting/docs.
+
+SOURCES_READ:
+- Local: `reference/BKE_metric_modelling_plan.md` (v2.7 blueprint)
+- Local: `src/modeling/*.py` modules listed above
+- Local: `data/processed/archetype_embeddings.parquet` schema inspection
+- Web: SciPy softmax docs (`scipy.special.softmax`) for stable softmax reference
+- Web: Empirical Bayes references (Wikipedia EB/Bayes estimator pages) for shrinkage structure
+
+NEXT_STEPS (explicit):
+- Run decomposition and backtesting to regenerate v27 artifacts.
+- Validate changed modules for runtime/errors and inspect key distribution diagnostics.
+- If validation is clean, finalize loop/documentation consistency pass.
+
+CONTEXT:
+- Task: Player Profile System Enhancement + Offensive Archetypes v4.3
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: data/processed/player_archetypes.parquet, data/processed/archetype_embeddings.parquet, data/processed/defensive_archetypes_v2.parquet, data/tracking/{season}/shot_zones.parquet
+- Status: ✅ Offensive Archetypes v4.3 COMPLETE — PnR Big absorption, harsher Interior Scorer, archetype embeddings, Inside-the-Arc rename
+
+COMPLETED (2025-06-11):
+================================================================================
+Phase 3b++: Offensive Archetypes v4.3 — PnR Big Absorption + Archetype Embeddings
+================================================================================
+
+✅ OFFENSIVE ARCHETYPES v4.3 - COMPLETE
+- PnR Big absorption: bigs with PROMINENT_PRROLLMAN (P50) redirected from Off-Ball Finisher / Interior Scorer → PnR Rolling Big
+- Harsher Interior Scorer: rim-runner bigs (HIGH_AT_RIM + LOW_MIDRANGE + PROMINENT_PRROLLMAN) always fall through
+- SKILL_FINISHING_MIN raised 0.25 → 0.40
+- "Midrange Lean" subtype renamed → "Inside-the-Arc" across all files
+- Distribution shift: PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19
+- Validated: Jarrett Allen → PnR Rolling Big, Daniel Gafford → PnR Rolling Big, Gobert/Capela stable
+
+✅ ARCHETYPE EMBEDDINGS - COMPLETE (1,680 player-seasons, 11-dim vectors)
+- compute_archetype_embedding(): softmax-weighted 11-dim vectors per player
+- Uses pctile ranks + archetype-feature relevance matrix → confidence scores → α-scaled softmax
+- Output: data/processed/archetype_embeddings.parquet + .csv
+- Enables similarity search, clustering, and smooth archetype transitions
+
+✅ HTML VIEWER UPDATED
+- Reset All button added (clears search, dropdowns, resets sort)
+- "Inside-the-Arc" subtype reflected in reason text
+
+COMPLETED (2025-06-09):
+================================================================================
+Phase 3b+: Offensive Archetypes v4 — Shot Zones + Rotation Piece Elimination
+================================================================================
+
+✅ SHOT ZONE DATA FETCHER - COMPLETE
+- Created src/data_fetch/fetch_shot_zones.py using LeagueDashPlayerShotLocations API
+- Fetched 3 seasons: 539 + 572 + 569 players
+- Computes AT_RIM_FREQ, MIDRANGE_FREQ, PAINT_FREQ, CORNER3_FREQ, AB3_FREQ
+- Output: data/tracking/{season}/shot_zones.parquet
+
+✅ OFFENSIVE ARCHETYPES v4 - COMPLETE (1,680 player-seasons, 11 archetypes)
+- All-Around Scorer moved before Ballhandler in hierarchy
+- All-Around scoring gate lowered P60 → P50
+- Rotation Piece ELIMINATED — replaced with best-fit fallback
+- New subtypes: Midrange Scorer (42 total), Rim Finisher (14 total)
+- Validated: DeRozan→Midrange Scorer, Curry→Gravity Engine, KD→High Volume/Midrange, SGA→Heliocentric
+
+✅ xRAPM COLLINEARITY FIX - COMPLETE
+- Created compute_xrapm_improved.py with:
+  * Collinear pair detection (503 pairs at 60%+ shared possessions)
+  * Multi-year career priors (3-year lookback)
+  * Doubled prior strength for collinear players (Wings/duos like Tatum/Brown)
+- Validation Results (2023-24 vs NET_RATING):
+  * Overall correlation: 0.582 → 0.668 (+0.087 improvement)
+  * Collinear players: 0.544 → 0.645 (+0.101 improvement)  
+  * MAE reduced by 44.9%
+- Output: data/processed/player_xrapm_v2.csv (1,432 player-seasons)
+
+✅ MATCHUP DATA FETCHER - COMPLETE
+- Created fetch_matchup_data.py
+- Fetched 414,407 matchups across 3 seasons
+- Computed matchup versatility & difficulty scores
+
+✅ DEFENSIVE ARCHETYPES v2 - COMPLETE
+- Created compute_defensive_archetypes_v2.py with 5 archetypes (down from 9)
+- Uses percentile-based thresholds for proper distribution
+- Distribution: Rotation 43%, Off-Ball 16%, POA 16%, Rim 12%, Switchable 11%
+- Validation: Gobert→Rim, AD→Rim, Wemby→Rim, Jrue→POA, Trae→Off-Ball(Liability)
+- Output: data/processed/defensive_archetypes_v2.parquet (1,687 player-seasons)
+
+✅ PLAYER ARCHETYPE VIEWER - COMPLETE
+- Created app/player_archetype_viewer.py
+- Generates interactive HTML viewer at app/player_archetypes.html
+- Shows all players with offensive/defensive archetypes and reasoning
+- Supports search/filter by name, archetype, season
+
+CURRENT TASK:
+================================================================================
+Phase 3d: Player Profile System Enhancement (PLANNING ONLY)
+================================================================================
+
+CURRENT PLAYER PROFILE SYSTEM:
+- Database: data/player_team_profiles.db (SQLite)
+- Tables: players (686), teams (30), fetch_cache
+- Player fields: player_id, full_name, team_id, position, age, height, weight, wingspan (0% filled), experience
+- Fetcher: src/data_fetch/fetch_profiles.py (uses NBA API commonplayerinfo + B-Ref scraping)
+
+PROFILE ENHANCEMENT PLAN (DO NOT START - PLANNING ONLY):
+1. Add offensive archetype to player profiles
+2. Add defensive archetype to player profiles  
+3. Add key stats (xRAPM, BPM, WS, USG%, etc.)
+4. Add salary data (need new data source)
+5. Create unified player card/export format
+
+DATA SOURCES FOR SALARY:
+- ESPN player pages
+- Spotrac (requires scraping)
+- Basketball-Reference contracts page
+- HoopsHype salary data
+
+IMPLEMENTATION APPROACH:
+- Option A: Extend SQLite schema with new columns
+- Option B: Create separate parquet export with all data merged
+- Option C: Both (SQLite for base, parquet for analytics)
+
+NEXT STEPS (for next session):
+1. Decide on salary data source
+2. Implement salary fetcher
+3. Create unified player profile export
+4. Add profiles to viewer
 
 NEXT_STEPS:
-- Cap L3 elevation per archetype (max 1.5σ) — highest-priority fix
-- Add role complexity weighting to RUE
-- Stabilize playmaking creation dimension (multi-season smoothing)
-- Apply Bayesian shrinkage to RAPM directly
-- Incorporate unused tracking data into defensive dimensions
-- Reduce L3 weight from 20% to 12-15%
+1. ✅ Defensive archetypes reduced to 5 - DONE
+2. ✅ Player archetype viewer created - DONE
+3. ✅ Shot zone data fetched (3 seasons) - DONE
+4. ✅ Offensive archetypes v4 (Rotation Piece eliminated, Midrange Scorer/Rim Finisher) - DONE
+5. ✅ Viewer updated for v4 - DONE
+6. Grand Unified Model: Create compute_rapm_metrics.py (Layer 3 — RAPM + BPM prior → EPM-like metric)
+7. Player Profile Enhancement: Decide on salary data source, implement fetcher, create unified export
+- RESULTS: Full v4.3 validation: 0 Rotation Piece, PnR Rolling 13→40, Off-Ball Finisher 54→36, Interior Scorer 33→19, Stationary 45, Movement 26, Perimeter 17, Connector 29. Allen/Gafford→PnR Rolling Big. Archetype embeddings (1,680 player-seasons, 11-dim).
+- RECENT WORK: v4.3 — PnR Big absorption (prominent P50 path), harsher Interior Scorer (SKILL_FINISHING_MIN 0.40, rim-runner check), Inside-the-Arc rename, archetype embeddings, Reset All button in viewer
+- SOURCES_READ: NBA.com LeagueDashPlayerShotLocations API docs, local repo files
+
+CONTEXT:
+- Task: Defensive archetypes v3.1 refactor (role-only assignment, structural gates, hard rarity caps) + one-run impact report.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: src/data_compute/compute_defensive_archetypes_v2.py, reference/player_defensive_archetypes.md, data/processed/defensive_archetypes_v2*.parquet/csv
+- Status: ✅ Completed with outputs regenerated and baseline-vs-new report saved.
+
+FAILURE_REASON:
+- Initial v3.1 pass over-routed many players into `Rotational Big` due to broad big gate using rim-presence percentile.
+
+ATTEMPTED_METHODS:
+- Replaced score+damping assignment with layered decision tree and behavior indices.
+- Added POA/Versatile hard caps (`12%` and `8%`) with deterministic demotion logic.
+- Kept effectiveness/fit columns but removed them from assignment path.
+- Fixed size-band gate to prioritize bio position and require stronger center-share+height evidence for Big fallback.
+- Re-ran classifier after gate fix.
+- Generated impact report from baseline snapshot:
+  - data/processed/defensive_archetypes_v2_impact_report.csv
+  - data/processed/defensive_archetypes_v2_impact_report.txt
+
+SOURCES_READ:
+- Local: src/data_compute/compute_defensive_archetypes_v2.py
+- Local: reference/player_defensive_archetypes.md
+- Local: readme.md
+- Web: https://www.nba.com/stats/help/glossary
+- Web: https://www.hooperuniversity.com/breakdowns/ball-screen-defense-playing-drop-coverage
+- Web: https://html.duckduckgo.com/html/?q=NBA+switch+defense+drop+coverage+screen+navigation
+
+NEXT_STEPS (explicit):
+- Evaluate whether Wing Stopper should be broadened (currently very rare) without relaxing POA/Versatile hard caps.
+
+CONTEXT:
+- Task: Defensive archetypes v3.2 implementation per user request (fix routing bias and threshold cliffs).
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+- Status: ✅ Completed v3.2 with confidence-scored in-band routing and margin stabilization.
+
+FAILURE_REASON:
+- v3.1 hard-threshold tree produced routing bias (order effects), suppressing multi-signal players and overusing fallback paths.
+
+ATTEMPTED_METHODS:
+- Replaced branch-first logic with role confidence scoring (argmax over eligible roles per size band).
+- Added margin rule (top-second < 0.035 => rotational role).
+- Removed hard-cap enforcement dependency.
+- Tuned eligibility and score weights:
+  - Guard POA anchor (composite + ball-pressure + screen-nav)
+  - Wing versatile eligibility widened to reduce false suppression
+  - Big role competition rebalanced to let Mobile Big win when appropriate
+- Re-ran script and validated distribution + known-player spot checks.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+- Prior context sources retained in this file (NBA glossary + drop coverage references).
+
+NEXT_STEPS (explicit):
+- If needed, tune Wing Stopper prevalence (currently very rare) by slightly increasing wing_stopper confidence weight and/or lowering wing stopper anchor floor.
+
+CONTEXT:
+- Task: Defensive archetypes v3.2 detailed algorithm retry (replace prior routing behavior, run once, produce percentage-change impact report).
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`, `data/processed/defensive_archetypes_v2_impact_report.csv`
+- Status: ✅ Completed. Script run succeeded and impact report refreshed.
+
+FAILURE_REASON:
+- First report regeneration attempt failed due to schema mismatch (`season` vs `SEASON`, and no precomputed `minutes_per_game` column in baseline parquet).
+
+ATTEMPTED_METHODS:
+- Updated classifier to detailed v3.2 role-competition logic with deterministic size-band gates and anchor-eligible in-band competition.
+- Applied margin rule at `0.05`, low-activity override (`engagement < 0.25` and `top_score < 0.65`), and confidence from score separation.
+- Executed: `.venv/bin/python src/data_compute/compute_defensive_archetypes_v2.py`.
+- Regenerated impact files using uppercase schema columns and computed `MPG = MIN / GP` for baseline comparability.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+- Local outputs: `data/processed/defensive_archetypes_v2.parquet`, `data/processed/defensive_archetypes_v2_impact_report.csv`
+
+NEXT_STEPS (explicit):
+- If further calibration is requested, first target `Mobile Big` recovery by rebalancing big-role anchors/weights without reintroducing hard caps.
+
+CONTEXT:
+- Task: Defensive archetypes v3.3 tuning prep; remove Rotational Big and keep only big-role identities.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/data_compute/compute_defensive_archetypes_v2.py`, `reference/player_defensive_archetypes.md`, `readme.md`
+- Status: ✅ Completed. Rotational Big removed from assignment and outputs regenerated.
+
+FAILURE_REASON:
+- N/A (implementation completed successfully).
+
+ATTEMPTED_METHODS:
+- Updated big-band competition to use only `Rim Protector`, `Dropping Big`, `Mobile Big`.
+- Disabled rotational margin fallback for big band while retaining guard/wing rotational fallback.
+- Re-ran classifier and regenerated impact report files.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `reference/player_defensive_archetypes.md`
+- Local: `readme.md`
+
+NEXT_STEPS (explicit):
+- If requested, tune big-role anchor thresholds to rebalance `Mobile Big` vs `Rim Protector` split in v3.3.
+
+CONTEXT:
+- Task: Replace trivial defensive size-band routing inputs with realistic player position distribution estimates from lineup data.
+- Env: Linux, Python 3.10
+- Key files: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `readme.md`
+- Status: ✅ Implemented new position estimate stage and wired defensive archetypes to use it.
+
+FAILURE_REASON:
+- External BRef page ingestion unavailable in environment (Cloudflare 403 and fetch extraction failure).
+
+ATTEMPTED_METHODS:
+- Tried direct BRef fetch and metadata pages; blocked by anti-bot challenge.
+- Implemented internal BRef-style alternative using possession lineups:
+  - shortest->PG, 2nd->SG, 3rd->SF, 4th->PF, tallest->C.
+  - weighted by possession duration seconds.
+  - fallback distributions from bio primary position when lineup coverage is missing.
+- Updated defensive classifier loader to `player_position_estimates.parquet` and switched size-band routing to own-position shares + height + primary estimate.
+
+SOURCES_READ:
+- Local: `data/historical/possessions_clean_2024-25.parquet`
+- Local: `src/features/derive_possessions.py`
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `readme.md`
+- Web: `https://www.basketball-reference.com/robots.txt`
+
+NEXT_STEPS (explicit):
+- Run and validate:
+  1) `python3 src/data_compute/compute_position_estimate.py`
+  2) `python3 src/data_compute/compute_defensive_archetypes_v2.py`
+  3) review size-band and archetype distribution shifts for 2024-25.
+
+CONTEXT:
+- Task: Make position estimate outputs strictly per-season and surface PG/SG/SF/PF/C shares in frontend modal.
+- Env: Linux, Python 3.10
+- Key files: `src/data_compute/compute_position_estimate.py`, `src/data_compute/compute_defensive_archetypes_v2.py`, `app/player_data_viewer.py`, `readme.md`
+- Status: ✅ Completed.
+
+FAILURE_REASON:
+- N/A (request was implementation scope expansion, not a runtime failure).
+
+ATTEMPTED_METHODS:
+- Updated position-estimate compute stage to save one parquet/csv per season plus combined compatibility artifact.
+- Updated defensive classifier loader to consume `player_position_estimates_{season}.parquet` via glob with fallback to combined file.
+- Updated frontend viewer loader to consume per-season files and added modal “Position Estimate” block with PG/SG/SF/PF/C percentages.
+
+SOURCES_READ:
+- Local: `src/data_compute/compute_position_estimate.py`
+- Local: `src/data_compute/compute_defensive_archetypes_v2.py`
+- Local: `app/player_data_viewer.py`
+- Local: `readme.md`
+
+NEXT_STEPS (explicit):
+- Optional: add compact consistency audit in viewer generation to flag players where `primary_position_estimate` disagrees with legacy bio position.
+
+CONTEXT:
+- Task: Advanced modeling expansion (RAPM + DARKO + BKE plan), reference cleanup review, and RAPM path reorganization.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: `src/modeling/compute_rapm.py`, `src/modeling/compute_xrapm.py`, `src/modeling/compute_xrapm_improved.py`, `reference/modelling_stats.md`, `readme.md`
+- Status: ✅ Core restructuring completed; RAPM/xRAPM moved to modeling stage and docs/scripts updated.
+
+FAILURE_REASON:
+- None. No runtime blockers encountered for file moves/path updates.
+
+ATTEMPTED_METHODS:
+- Moved RAPM/xRAPM scripts from `src/data_compute/` to `src/modeling/`.
+- Updated pipeline/readme/reproduction references to new script paths.
+- Added comprehensive modeling strategy doc covering RAPM vs DARKO sourcing and BKE custom metric architecture.
+- Updated loop context summary with rationale and outputs.
+
+SOURCES_READ:
+- Web: `https://apanalytics.shinyapps.io/DARKO/`
+- Web: `https://xrapm.com/about_page.html`
+- Web: `https://dunksandthrees.com/about/epm`
+- Web: `https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html`
+- Web: `https://www.basketball-reference.com/about/bpm2.html`
+- Web: `https://github.com/jerryengelmann/RAPM`
+- Web: `https://github.com/donjo/nbasalarymodel`
+
+NEXT_STEPS (explicit):
+- Run targeted validation (`python -m py_compile` for moved modeling scripts) and path-grep sanity check.
+- Produce comprehensive RAPM modeling critique (correctness + accuracy) and list prioritized fixes.
+- Review `reference/` documents for deletion-candidate recommendations and present in chat for user review.
+
+CONTEXT:
+- Task: Salary integration for player data viewer. Add per-season salary to player modal subtitle in app/player_data_viewer.py, using data/historical/player_salaries_{season}.parquet files.
+- Env: Linux, venv at `.venv/`, Python 3.10
+- Key files: app/player_data_viewer.py, src/data_fetch/fetch_player_salaries.py, data/historical/player_salaries_2022-23.parquet, etc.
+- Status: ✅ Complete. Salary now appears in modal subtitle for correct player-season.
+
+FAILURE_REASON:
+- N/A (implementation completed successfully).
+
+ATTEMPTED_METHODS:
+- Added salary loader and player_id normalization to viewer script.
+- Patched modal subtitle logic to append salary if present.
+- Validated output in app/player_data.html and confirmed correct salary for Joel Embiid 2023-24.
+
+SOURCES_READ:
+- Local: app/player_data_viewer.py
+- Local: data/historical/player_salaries_2022-23.parquet, data/historical/player_salaries_2023-24.parquet
+- Local: readme.md
+
+NEXT_STEPS (explicit):
+- None. Await further user requests or validation feedback.
+
+CONTEXT:
+- Task: finalize advanced-modeling deliverables after RAPM/xRAPM migration, including reference-folder deletion review and RAPM correctness/accuracy critique.
+- Env: Linux, Python 3.10
+- Key files: `src/modeling/compute_rapm.py`, `reference/modelling_stats.md`, `reference/advanced_metrics_fetch_plan.md`, `reference/plan.md`, `reference/roadmap.md`
+- Status: ✅ Migration complete, validation suite run after move.
+
+FAILURE_REASON:
+- N/A (no execution failure). Remaining items are analytical recommendations and synthesis.
+
+ATTEMPTED_METHODS:
+- Ran `python3 tests/validate_rapm.py` to verify post-move integrity.
+- Audited repo references for old `src/data_compute/compute_*rapm*.py` paths.
+- Reviewed `reference/` docs for overlap, stale content, and deletion candidates.
+
+SOURCES_READ:
+- Local: `src/modeling/compute_rapm.py`
+- Local: `reference/modelling_stats.md`
+- Local: `reference/plan.md`
+- Local: `reference/roadmap.md`
+- Local: `reference/initial_eval_plan.md`
+- Local: `reference/computed_vs_fetched_proposal.md`
+- Local: `reference/BPM_trends.txt`
+- Local: `reference/column name.txt`
+- Local: `loop/context_summary.txt`
+
+NEXT_STEPS (explicit):
+- Provide chat-level deletion-review recommendations for `reference/`.
+- Deliver comprehensive RAPM modeling critique with prioritized fixes.
+
+CONTEXT:
+- Task: implement RAPM fixes, rename RAPM script to `model_rapm.py`, remove old modeling scripts, and add DARKO fetch/normalize/ingest scripts.
+- Env: Linux, Python 3.10
+- Key files: `src/modeling/model_rapm.py`, `src/data_fetch/fetch_darko_manual.py`, `src/data_normalize/normalize_darko.py`, `src/modeling/ingest_darko.py`, `reference/modeling_info.md`
+- Status: ✅ Implemented.
+
+FAILURE_REASON:
+- N/A (no blocking runtime error). Full RAPM recomputation not executed in this step due runtime cost; validation run referenced existing outputs.
+
+ATTEMPTED_METHODS:
+- Rewrote RAPM modeling into `model_rapm.py` with opponent-controlled split design and pooled-prior target-season refinement.
+- Added DARKO manual intake, normalization, and modeling-ingest scripts.
+- Deleted deprecated modeling scripts (`compute_rapm.py`, `compute_xrapm.py`, `compute_xrapm_improved.py`).
+- Updated pipeline docs/scripts/tests to new paths and outputs.
+
+SOURCES_READ:
+- Web: `https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.RidgeCV.html`
+- Web: `https://apanalytics.shinyapps.io/DARKO/`
+- Web: `https://www.basketball-reference.com/about/bpm2.html`
+- Web: `https://xrapm.com/about_page.html`
+- Local: `reference/modelling_stats.md`
+
+NEXT_STEPS (explicit):
+- Optional: run `python3 src/modeling/model_rapm.py` to regenerate RAPM outputs with the new logic.
+- Optional: place DARKO CSV exports in `data/historical/darko/raw/` (or run `fetch_darko_manual.py --input <dir>`) then run normalize/ingest steps.
+---
+
+MOST RECENT ENTRY (2026-07-16):
+
+1) CONTEXT:
+- BKE v1.5 implementation completed successfully.
+- All 7 modules in src/modeling/ created, debugged, and validated.
+- Full pipeline runs in ~2.5s producing 232-column output for 1971 player-seasons (950 qualified).
+
+2) STATUS: COMPLETE
+- No failures. All bugs identified and fixed during development.
+
+3) COMPLETED_WORK:
+- model_config.py — Centralized configuration
+- percentile_engine.py — Three-level percentile standardization
+- layer1_portable_talent.py — Portable Talent Score
+- layer2_role_utilization.py — RUE via playtype surplus + cosine similarity
+- layer3_archetype_elevation.py — Elevation above archetype baseline
+- layer4_scheme_amplification.py — Scheme stability with proxy features
+- decomposition_engine.py — Final assembly + CLI
+- reference/BKE_metric_modelling_summary.md updated to v1.5
+
+4) NEXT_STEPS:
+- Implement backtesting on role-change players (v1.6 plan item)
+- Consider adding full possession-data mode for Layer 4 (slower but more accurate)
+- Tune component weights based on validation against external metrics
+- Add uncertainty estimation
+

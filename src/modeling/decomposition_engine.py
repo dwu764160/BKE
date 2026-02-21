@@ -1,7 +1,7 @@
 """
 src/modeling/decomposition_engine.py
 =============================================================================
-BKE v2.5 — FINAL DECOMPOSITION ENGINE
+BKE v2.7 — FINAL DECOMPOSITION ENGINE
 
 Ties together all four layers into the complete impact decomposition:
 
@@ -11,7 +11,7 @@ Ties together all four layers into the complete impact decomposition:
                                    +-- Archetype Elevation
                                    +-- Scheme Amplification
 
-v2.5 changes from v2.0:
+v2.7 changes from v2.6:
   - Archetype-conditional neutralization in Layer 1C (Fix #3)
   - Three-level z-scores: league, positional, archetype (Fix #1)
   - Percentiles strictly terminal — never fed as inputs (Fix #2)
@@ -30,8 +30,8 @@ All outputs percentile-standardized at three levels:
   - League / Position / Archetype
 
 Outputs:
-  - data/processed/bke_v25_decomposition.parquet / .csv
-  - data/processed/bke_v25_report.json
+    - data/processed/bke_v27_decomposition.parquet / .csv
+    - data/processed/bke_v27_report.json
 =============================================================================
 """
 
@@ -78,14 +78,14 @@ from src.modeling.layer4_scheme_amplification import build_scheme_amplification
 
 def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute Total Impact using v2.5 z-score aggregation.
+    Compute Total Impact using v2.7 z-score aggregation.
 
     Pipeline:
       1. Grab layer z-scores (portable_talent_z, RUE z, elevation_z, scheme_stability_z)
       2. Weighted z-score composite: Total_z = sum(w_i * z_i) / sum(w_i)
       3. Convert final z-score to percentile (presentation only)
 
-    v2.5: dimension z-scores have been archetype-neutralized upstream.
+    v2.7: dimension z-scores have soft-membership conditional neutralization upstream.
     """
     cfg = DECOMPOSITION
     result = df.copy()
@@ -208,7 +208,7 @@ def compute_total_impact(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# v2.6: Structural Portability Index
+# v2.7: Structural Portability Index
 # ---------------------------------------------------------------------------
 
 def _compute_dimensional_breadth(df: pd.DataFrame) -> pd.Series:
@@ -311,6 +311,36 @@ def _compute_two_way_balance(df: pd.DataFrame) -> pd.Series:
     return result.clip(0, 1)
 
 
+def _compute_archetype_transfer(df: pd.DataFrame) -> pd.Series:
+    """
+    v2.7 Archetype Transfer signal from soft-membership entropy.
+
+    High entropy indicates role transfer flexibility across adjacent archetypes.
+    """
+    if not PORTABILITY.use_soft_membership_in_transfer:
+        return pd.Series(0.5, index=df.index)
+
+    if "soft_archetype_entropy_norm" in df.columns:
+        entropy = df["soft_archetype_entropy_norm"].fillna(0.5).clip(0, 1)
+    else:
+        prob_cols = [c for c in df.columns if c.startswith("arch_prob_")]
+        if not prob_cols:
+            return pd.Series(0.5, index=df.index)
+        p = df[prob_cols].fillna(0.0).clip(lower=0.0)
+        p = p.div(p.sum(axis=1).replace(0, np.nan), axis=0).fillna(0.0)
+        entropy_raw = -(np.where(p.values > 0, p.values * np.log(p.values + 1e-9), 0.0).sum(axis=1))
+        entropy = pd.Series(entropy_raw / np.log(max(len(prob_cols), 2)), index=df.index).clip(0, 1)
+
+    if "role_confidence" in df.columns:
+        confidence = pd.to_numeric(df["role_confidence"], errors="coerce").fillna(0.5)
+        if confidence.max() > 1.0:
+            confidence = (confidence / 100.0).clip(0, 1)
+        confidence_term = 1.0 - confidence
+        return (0.7 * entropy + 0.3 * confidence_term).clip(0, 1)
+
+    return entropy.clip(0, 1)
+
+
 def _compute_scheme_independence(df: pd.DataFrame) -> pd.Series:
     """
     Component 4: Scheme Independence (20%).
@@ -375,14 +405,15 @@ def _compute_scheme_independence(df: pd.DataFrame) -> pd.Series:
             weight = 0.35 / n_signals
             result = (1 - weight) * result + weight * two_way.clip(0, 1)
 
-    return result.clip(0, 1)
+    transfer = _compute_archetype_transfer(df)
+    return (0.8 * result.clip(0, 1) + 0.2 * transfer).clip(0, 1)
 
 
 def compute_portability_index(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute the Structural Portability Index (v2.6).
+    Compute the Structural Portability Index (v2.7).
 
-    v2.6 measures structural skill portability across team contexts:
+    v2.7 measures structural skill portability across team contexts:
 
     Components:
       1. Dimensional Breadth (35%) — How many skills above average
@@ -408,6 +439,9 @@ def compute_portability_index(df: pd.DataFrame) -> pd.DataFrame:
     print("    Computing two-way balance...")
     two_way_balance = _compute_two_way_balance(result)
 
+    print("    Computing archetype transfer...")
+    archetype_transfer = _compute_archetype_transfer(result)
+
     print("    Computing scheme independence...")
     scheme_independence = _compute_scheme_independence(result)
 
@@ -416,11 +450,13 @@ def compute_portability_index(df: pd.DataFrame) -> pd.DataFrame:
     result["portability_universal_skill"] = np.nan
     result["portability_two_way_balance"] = np.nan
     result["portability_scheme_independence"] = np.nan
+    result["portability_archetype_transfer"] = np.nan
 
     result.loc[qualified_mask, "portability_dimensional_breadth"] = dimensional_breadth.loc[qualified_mask]
     result.loc[qualified_mask, "portability_universal_skill"] = universal_skill.loc[qualified_mask]
     result.loc[qualified_mask, "portability_two_way_balance"] = two_way_balance.loc[qualified_mask]
     result.loc[qualified_mask, "portability_scheme_independence"] = scheme_independence.loc[qualified_mask]
+    result.loc[qualified_mask, "portability_archetype_transfer"] = archetype_transfer.loc[qualified_mask]
 
     # Weighted composite
     portability_raw = pd.Series(np.nan, index=result.index)
@@ -602,12 +638,12 @@ def _safe_float(val) -> Optional[float]:
 
 def generate_report(df: pd.DataFrame) -> Dict:
     """
-    Generate a summary report of the v2.5 decomposition run.
+    Generate a summary report of the v2.7 decomposition run.
     """
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     report = {
-        "version": "3.0",
+        "version": "2.7",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_players": int(len(df)),
         "qualified_players": int(len(qualified)),
@@ -699,15 +735,14 @@ def run_full_decomposition(
     save_output: bool = True,
 ) -> pd.DataFrame:
     """
-    Run the complete v2.5 BKE Impact Decomposition Engine.
+    Run the complete v2.7 BKE Impact Decomposition Engine.
 
-    v2.5 enhancements over v2.0:
-      - Archetype-conditional neutralization in Layer 1C
-      - Three-level z-scores (league, positional, archetype)
-      - Playmaking creation + pressure split
-      - Enhanced turnover control & defensive playmaking
-      - elevation_z preserved through Layer 3
-      - portability_ratio removed from public outputs
+        v2.7 enhancements over v2.6:
+            - Soft archetype membership conditioning across role-dependent layers
+            - Full conditional neutralization in Layer 1C (location + scale)
+            - RUE optimal-source decoupling from RAPM by config
+            - Soft-membership archetype transfer in portability signal
+            - Dimension composite variance restoration hook
 
     Pipeline order:
       Layer 1: Portable Talent (8-dim model, z-score + neutralization)
@@ -729,7 +764,7 @@ def run_full_decomposition(
     seasons = seasons or SEASONS
 
     print("\n" + "=" * 70)
-    print("  BKE v2.6 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
+    print("  BKE v2.7 — PORTABLE TALENT vs ROLE-DEPENDENT IMPACT ENGINE")
     print("=" * 70)
     print(f"  Seasons: {seasons}")
     print(f"  Possession data: {'Yes' if use_possession_data else 'No (fast mode)'}")
@@ -767,7 +802,7 @@ def run_full_decomposition(
     print("  Computing total impact...")
     df = compute_total_impact(df)
 
-    print("  Computing portability index (v2.6 variance-based)...")
+    print("  Computing portability index (v2.7 structural)...")
     df = compute_portability_index(df)
 
     print("  Assigning impact tiers...")
@@ -783,7 +818,7 @@ def run_full_decomposition(
     qualified = df[df.get("qualified", True) == True] if "qualified" in df.columns else df
 
     print("\n" + "=" * 70)
-    print("  BKE v2.6 — DECOMPOSITION COMPLETE")
+    print("  BKE v2.7 — DECOMPOSITION COMPLETE")
     print("=" * 70)
     print(f"  Total players: {len(df)}")
     print(f"  Qualified players: {len(qualified)}")
@@ -834,7 +869,7 @@ def run_full_decomposition(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="BKE v2.6 Decomposition Engine")
+    parser = argparse.ArgumentParser(description="BKE v2.7 Decomposition Engine")
     parser.add_argument("--seasons", nargs="*", default=None,
                         help="Seasons to process (default: all)")
     parser.add_argument("--possession-data", action="store_true",

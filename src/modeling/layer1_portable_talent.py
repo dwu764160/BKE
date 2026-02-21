@@ -52,13 +52,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from src.modeling.model_config import (
     PORTABLE_TALENT,
     PORTABLE_DIMENSIONS,
+    DIMENSION_WEIGHT_TUNING,
     RAPM_PATH,
     MODELING_INPUTS_PATH,
     PLAYER_PROFILES_PATH,
     PLAYER_ARCHETYPES_PATH,
     DEFENSIVE_ARCHETYPES_PATH,
+    ARCHETYPE_EMBEDDINGS_PATH,
     POSITION_ESTIMATES_PATH,
     TRACKING_DIR,
+    ARCHETYPE_MEMBERSHIP,
     RAPM_PREFERRED_TYPE,
     RAPM_FALLBACK_TYPE,
     MIN_MINUTES,
@@ -322,6 +325,124 @@ def load_position_estimates() -> pd.DataFrame:
         keep.append("primary_position_estimate")
     available = [c for c in keep if c in df.columns]
     return df[available].drop_duplicates(subset=["season", "player_id"], keep="last")
+
+
+def load_archetype_embeddings() -> pd.DataFrame:
+    """Load precomputed archetype embedding vectors for soft membership."""
+    if not os.path.exists(ARCHETYPE_EMBEDDINGS_PATH):
+        print(f"  WARNING: {ARCHETYPE_EMBEDDINGS_PATH} not found")
+        return pd.DataFrame()
+
+    df = pd.read_parquet(ARCHETYPE_EMBEDDINGS_PATH)
+    id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+    season_col = "SEASON" if "SEASON" in df.columns else "season"
+
+    df["player_id"] = df[id_col].astype(str).apply(clean_id)
+    df["season"] = df[season_col].astype(str)
+
+    emb_cols = [c for c in df.columns if c.startswith("emb_") and c not in {"emb_entropy", "emb_entropy_norm", "emb_dominance"}]
+    keep = ["season", "player_id"] + emb_cols + [c for c in ["emb_entropy", "emb_entropy_norm", "emb_dominance"] if c in df.columns]
+    return df[keep].drop_duplicates(subset=["season", "player_id"], keep="last")
+
+
+def compute_soft_archetype_memberships(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    v2.7 soft archetype membership from embedding distance-to-centroid.
+
+    p_i = exp(-distance_i / tau) / sum_j exp(-distance_j / tau)
+    """
+    result = df.copy()
+
+    emb_to_archetype = {
+        "emb_ball_dominant_creator": "Ball Dominant Creator",
+        "emb_all_around_scorer": "All-Around Scorer",
+        "emb_ballhandler": "Ballhandler",
+        "emb_interior_scorer": "Interior Scorer",
+        "emb_perimeter_scorer": "Perimeter Scorer",
+        "emb_connector": "Connector",
+        "emb_pnr_rolling_big": "PnR Rolling Big",
+        "emb_pnr_popping_big": "PnR Popping Big",
+        "emb_off_ball_finisher": "Off-Ball Finisher",
+        "emb_off_ball_movement_shooter": "Off-Ball Movement Shooter",
+        "emb_off_ball_stationary_shooter": "Off-Ball Stationary Shooter",
+    }
+    emb_cols = [c for c in emb_to_archetype if c in result.columns]
+    if not emb_cols:
+        return result
+
+    tau = max(float(ARCHETYPE_MEMBERSHIP.temperature), 1e-6)
+    prob_floor = float(max(0.0, ARCHETYPE_MEMBERSHIP.min_probability_floor))
+    eps = 1e-9
+
+    # Build archetype centroids from hard labels when available.
+    centroids = {}
+    if "primary_archetype" in result.columns:
+        for season, season_df in result.groupby("season"):
+            centroids[season] = {}
+            for emb_col, arch_name in emb_to_archetype.items():
+                if emb_col not in emb_cols:
+                    continue
+                mask = season_df["primary_archetype"] == arch_name
+                cohort = season_df.loc[mask, emb_cols].dropna(how="all")
+                if len(cohort) >= 3:
+                    centroids[season][arch_name] = cohort.mean().values.astype(float)
+
+            # Fallback for missing centroids: one-hot basis vector in embedding space
+            for emb_col, arch_name in emb_to_archetype.items():
+                if emb_col not in emb_cols:
+                    continue
+                if arch_name not in centroids[season]:
+                    basis = np.zeros(len(emb_cols), dtype=float)
+                    basis[emb_cols.index(emb_col)] = 1.0
+                    centroids[season][arch_name] = basis
+
+    # Compute probabilities
+    archetypes = [emb_to_archetype[c] for c in emb_cols]
+    prob_cols = [f"arch_prob_{a.lower().replace('-', '_').replace(' ', '_')}" for a in archetypes]
+    for c in prob_cols:
+        result[c] = np.nan
+
+    for season, season_idx in result.groupby("season").groups.items():
+        if season not in centroids:
+            continue
+
+        season_vals = result.loc[season_idx, emb_cols].fillna(0.0).values.astype(float)
+        arch_names = archetypes
+        centroid_matrix = np.vstack([centroids[season][a] for a in arch_names])
+
+        # Euclidean distances to each centroid
+        dists = np.sqrt(((season_vals[:, None, :] - centroid_matrix[None, :, :]) ** 2).sum(axis=2))
+        logits = -dists / tau
+        logits = logits - logits.max(axis=1, keepdims=True)
+        probs = np.exp(logits)
+        probs = probs / (probs.sum(axis=1, keepdims=True) + eps)
+
+        if prob_floor > 0:
+            probs = np.maximum(probs, prob_floor)
+            probs = probs / (probs.sum(axis=1, keepdims=True) + eps)
+
+        result.loc[season_idx, prob_cols] = probs
+
+    # Fallback rows: no embeddings -> hard one-hot if archetype exists
+    if "primary_archetype" in result.columns:
+        nan_rows = result[prob_cols].isna().all(axis=1)
+        for arch_name, p_col in zip(archetypes, prob_cols):
+            mask = nan_rows & (result["primary_archetype"] == arch_name)
+            result.loc[mask, p_col] = 1.0
+
+    # Final normalization + entropy
+    probs = result[prob_cols].fillna(0.0).clip(lower=0.0)
+    sums = probs.sum(axis=1).replace(0, np.nan)
+    probs = probs.div(sums, axis=0).fillna(0.0)
+    result[prob_cols] = probs
+
+    pvals = probs.values
+    entropy = -(np.where(pvals > 0, pvals * np.log(pvals + eps), 0.0).sum(axis=1))
+    max_entropy = np.log(max(len(prob_cols), 2))
+    result["soft_archetype_entropy"] = entropy
+    result["soft_archetype_entropy_norm"] = np.clip(entropy / max_entropy, 0, 1)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +774,7 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
     z_components = {}
     shrinkage = BAYESIAN_SHRINKAGE.defensive_playmaking_shrinkage
     gp_series = result.get("GP") if "GP" in result.columns else None
+    group_labels = result.get("primary_archetype") if "primary_archetype" in result.columns else result.get("position_bucket")
 
     for col in ["STL_PER100_DEF_POSS", "BLK_PCT", "DEFLECTIONS",
                 "hustle_score", "engagement_score",
@@ -664,6 +786,7 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
                     x, prior=x.mean(), shrinkage_strength=shrinkage,
                     gp=gp_series.loc[x.index] if gp_series is not None else None,
                     min_gp_full=BAYESIAN_SHRINKAGE.min_gp_full_weight,
+                    group_labels=group_labels.loc[x.index] if group_labels is not None else None,
                 )
             )
             # v2.6: Use position-conditional z-scores for this dimension
@@ -764,9 +887,8 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
     else:
         result["dim_self_creation_z"] = 0.0
 
-    # ===== v2.6 ARCHETYPE-CONDITIONAL NEUTRALIZATION =====
-    # Only neutralize LEAGUE-z dimensions. Position-z dimensions already
-    # account for positional expectations via position-conditional z-scoring.
+    # ===== v2.7 SOFT MEMBERSHIP CONDITIONAL NEUTRALIZATION =====
+    # Applies full conditional standardization (mean + variance) when enabled.
     neutralize_cols = NEUTRALIZATION.neutralize_dimensions
     # Filter to only cols that exist
     neutralize_cols = [c for c in neutralize_cols if c in result.columns]
@@ -805,7 +927,25 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
         cfg.w_dim_self_creation,          # 0.14
     ]
 
+    # v2.7 centralized weight tuning hook
+    dim_weights = [w * DIMENSION_WEIGHT_TUNING.global_multiplier for w in dim_weights]
+    if DIMENSION_WEIGHT_TUNING.auto_normalize and sum(dim_weights) > 0:
+        s = sum(dim_weights)
+        dim_weights = [w / s for w in dim_weights]
+
     result = weighted_z_composite(result, dim_z_cols, dim_weights, "dimension_model_z")
+
+    # v2.7 variance restoration for Layer 1C composite
+    if PORTABLE_TALENT.enforce_target_variance and "season" in result.columns:
+        target_std = max(float(PORTABLE_TALENT.target_dimension_model_std), 1e-6)
+        result["dimension_model_scale_factor"] = 1.0
+        for season, idx in result.groupby("season").groups.items():
+            observed_std = float(result.loc[idx, "dimension_model_z"].std())
+            if np.isnan(observed_std) or observed_std < 1e-6:
+                continue
+            scale = target_std / observed_std
+            result.loc[idx, "dimension_model_z"] = result.loc[idx, "dimension_model_z"] * scale
+            result.loc[idx, "dimension_model_scale_factor"] = scale
 
     # ===== OFFENSIVE / DEFENSIVE SUB-COMPOSITES =====
     off_cols = ["dim_shooting_gravity_z", "dim_driving_gravity_z",
@@ -943,6 +1083,7 @@ def build_portable_talent(seasons: Optional[list] = None) -> pd.DataFrame:
     positions = load_position_estimates()
     hustle = load_hustle_stats(seasons)
     pullup = load_pullup_tracking(seasons)
+    archetype_embeddings = load_archetype_embeddings()
 
     if rapm.empty and profiles.empty:
         print("  ERROR: No RAPM or profile data available")
@@ -1012,6 +1153,17 @@ def build_portable_talent(seasons: Optional[list] = None) -> pd.DataFrame:
             if col.endswith("_pos"):
                 base = base.drop(columns=[col])
 
+    if not archetype_embeddings.empty:
+        base = base.merge(archetype_embeddings, on=["season", "player_id"], how="left", suffixes=("", "_emb"))
+        for col in list(base.columns):
+            if col.endswith("_emb"):
+                primary = col.replace("_emb", "")
+                if primary in base.columns:
+                    base[primary] = base[primary].fillna(base[col])
+                else:
+                    base[primary] = base[col]
+                base = base.drop(columns=[col])
+
     # v2.5: Merge hustle stats (CHARGES_DRAWN, DEF_LOOSE_BALLS_RECOVERED, etc.)
     if not hustle.empty:
         base = base.merge(hustle, on=["season", "player_id"], how="left", suffixes=("", "_hst"))
@@ -1041,6 +1193,10 @@ def build_portable_talent(seasons: Optional[list] = None) -> pd.DataFrame:
     # 3. Assign position buckets
     print("  Assigning position buckets...")
     base["position_bucket"] = base.apply(assign_position_bucket, axis=1)
+
+    # 3.5. v2.7 soft archetype memberships
+    print("  Computing soft archetype memberships (v2.7)...")
+    base = compute_soft_archetype_memberships(base)
 
     # 4. Qualify players
     print("  Qualifying players...")

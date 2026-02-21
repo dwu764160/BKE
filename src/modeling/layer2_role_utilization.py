@@ -307,13 +307,25 @@ def compute_archetype_optimal_distributions(df: pd.DataFrame) -> Dict[str, Dict[
     if "primary_archetype" not in df.columns:
         return optimal
 
+    source_pref = (cfg.rue_optimal_source or "portable_talent").lower()
+    source_candidates = {
+        "portable_talent": ["portable_talent_z_adj", "portable_talent_z", "dimension_model_z"],
+        "dimension_model": ["dimension_model_z", "portable_talent_z_adj", "portable_talent_z"],
+        "rapm": ["rapm", "portable_talent_z_adj", "dimension_model_z"],
+    }
+    source_col = None
+    for candidate in source_candidates.get(source_pref, source_candidates["portable_talent"]):
+        if candidate in df.columns:
+            source_col = candidate
+            break
+
     for archetype in df["primary_archetype"].dropna().unique():
         arch_df = df[df["primary_archetype"] == archetype]
 
-        # Use top-half players by RAPM (or surplus) as the "optimal" reference
-        if "rapm" in arch_df.columns:
-            median_rapm = arch_df["rapm"].median()
-            top_half = arch_df[arch_df["rapm"] >= median_rapm]
+        # v2.7: decouple from RAPM by config source
+        if source_col and source_col in arch_df.columns:
+            median_val = arch_df[source_col].median()
+            top_half = arch_df[arch_df[source_col] >= median_val]
         else:
             top_half = arch_df
 
@@ -351,23 +363,47 @@ def compute_role_utilization_efficiency(df: pd.DataFrame) -> pd.DataFrame:
 
     # Compute archetype optimal distributions
     optimal_dists = compute_archetype_optimal_distributions(df)
+    prob_cols = [c for c in result.columns if c.startswith("arch_prob_")]
+
+    def _arch_to_prob_col(arch: str) -> str:
+        return f"arch_prob_{str(arch).lower().replace('-', '_').replace(' ', '_')}"
 
     rue_scores = []
 
     for idx, row in result.iterrows():
         archetype = row.get("primary_archetype", None)
 
-        if pd.isna(archetype) or archetype not in optimal_dists:
-            rue_scores.append(np.nan)
-            continue
-
         # --- Component 1: Cosine similarity (role alignment) ---
         observed = []
         optimal = []
+
+        # v2.7: weighted optimal vector from soft memberships when available
+        weighted_opt = {p: 0.0 for p in cfg.playtypes}
+        weight_sum = 0.0
+        if prob_cols:
+            for arch_name, dist in optimal_dists.items():
+                p_col = _arch_to_prob_col(arch_name)
+                if p_col not in result.columns:
+                    continue
+                w = row.get(p_col, 0.0) or 0.0
+                if w <= 0:
+                    continue
+                weight_sum += w
+                for playtype in cfg.playtypes:
+                    weighted_opt[playtype] += w * (dist.get(playtype, 0.0) or 0.0)
+
+        if weight_sum <= 0:
+            if pd.isna(archetype) or archetype not in optimal_dists:
+                rue_scores.append(np.nan)
+                continue
+            base_opt = optimal_dists[archetype]
+        else:
+            base_opt = {k: v / weight_sum for k, v in weighted_opt.items()}
+
         for playtype in cfg.playtypes:
             poss_pct_col = f"{playtype}{cfg.poss_pct_suffix}"
             obs_val = row.get(poss_pct_col, 0) or 0
-            opt_val = optimal_dists[archetype].get(playtype, 0) or 0
+            opt_val = base_opt.get(playtype, 0) or 0
             observed.append(obs_val)
             optimal.append(opt_val)
 

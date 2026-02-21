@@ -1,3 +1,18 @@
+- 2026-02-20 — BKE v2.7 Statistical Maturity Pass Implemented
+	- Implemented v2.7 fixes in modeling stack (`src/modeling/*`):
+		- Soft archetype memberships from embeddings (distance→softmax with floor), producing `arch_prob_*` + entropy columns.
+		- Full conditional neutralization (mean + variance conditioning) integrated in `percentile_engine.py` and applied in Layer 1.
+		- Empirical-Bayes variance-component shrinkage path added in shared shrinkage utility and wired into defensive playmaking shrinkage.
+		- RUE optimal-source decoupled from RAPM via config (`rue_optimal_source`) and soft-membership weighted optimal vectors added.
+		- Layer 3 elevation baselines upgraded to support soft-membership weighted expectations.
+		- Portability transfer tightened with soft-membership entropy signal.
+		- Dimension model variance restoration added (target std default 0.42).
+	- Version/output naming moved to v2.7/v27:
+		- `bke_v27_decomposition.parquet`, `bke_v27_decomposition.csv`, `bke_v27_report.json`, `bke_v27_backtest.json`.
+	- Updated docs:
+		- `reference/BKE_metric_modelling_summary.md` rewritten for v2.7 behavior and math.
+		- `readme.md` pipeline/data-layout modeling outputs updated to v27 names.
+
 - 2026-07-17 — BKE v2.6 Session: Bayesian Shrinkage Fix + L4 Fix + Backtesting + System Audit
   - Fixed Bayesian shrinkage calibration in `src/modeling/bayesian_hierarchical.py`:
     - Bug: player_noise_var = within_var / reliability gave λ=0.5 for ALL players (50% shrinkage)

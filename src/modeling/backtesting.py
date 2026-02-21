@@ -1,7 +1,7 @@
 """
 src/modeling/backtesting.py
 =============================================================================
-BKE v2.6 — Backtesting Framework
+BKE v2.7 — Backtesting Framework
 
 Tests: Do BKE scores from season N predict performance in season N+1?
 
@@ -20,7 +20,7 @@ Integration:
 Outputs:
     - Prints summary to console
     - Returns a diagnostics DataFrame
-    - Optionally saves to data/processed/bke_v26_backtest.json
+    - Optionally saves to data/processed/bke_v27_backtest.json
 =============================================================================
 """
 
@@ -352,7 +352,7 @@ def run_backtest(
     """
     # Load data if not provided
     if df is None:
-        parquet_path = os.path.join(PROCESSED_DIR, "bke_v26_decomposition.parquet")
+        parquet_path = os.path.join(PROCESSED_DIR, "bke_v27_decomposition.parquet")
         if not os.path.exists(parquet_path):
             print(f"ERROR: {parquet_path} not found. Run decomposition first.")
             return {}
@@ -367,7 +367,7 @@ def run_backtest(
         df = df[df["qualified"] == True].copy()
 
     print("\n" + "=" * 70)
-    print("  BKE v2.6 — BACKTESTING FRAMEWORK")
+    print("  BKE v2.7 — BACKTESTING FRAMEWORK")
     print("=" * 70)
     print(f"  Train seasons: {train_seasons}")
     print(f"  Test season:   {test_season}")
@@ -483,7 +483,7 @@ def run_backtest(
 
     # Build output dict
     output = {
-        "version": "2.6",
+        "version": "2.7",
         "train_seasons": train_seasons,
         "test_season": test_season,
         "n_returning_players": len(merged),
@@ -503,7 +503,7 @@ def run_backtest(
     }
 
     if save_output:
-        out_path = os.path.join(PROCESSED_DIR, "bke_v26_backtest.json")
+        out_path = os.path.join(PROCESSED_DIR, "bke_v27_backtest.json")
         with open(out_path, "w") as f:
             json.dump(output, f, indent=2, default=lambda x: float(x) if isinstance(x, (np.floating, np.integer)) else str(x))
         print(f"\n  Saved: {out_path}")
@@ -527,7 +527,7 @@ def run_consecutive_season_backtest(
       - Combined: 2022-23 + 2023-24 → 2024-25
     """
     if df is None:
-        parquet_path = os.path.join(PROCESSED_DIR, "bke_v26_decomposition.parquet")
+        parquet_path = os.path.join(PROCESSED_DIR, "bke_v27_decomposition.parquet")
         if not os.path.exists(parquet_path):
             return {}
         df = pd.read_parquet(parquet_path)
@@ -564,7 +564,7 @@ def run_consecutive_season_backtest(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="BKE v2.6 Backtesting")
+    parser = argparse.ArgumentParser(description="BKE v2.7 Backtesting")
     parser.add_argument("--all-pairs", action="store_true",
                         help="Run all consecutive season pairs")
     args = parser.parse_args()

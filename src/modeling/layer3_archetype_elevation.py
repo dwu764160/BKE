@@ -101,8 +101,63 @@ def compute_archetype_baselines(df: pd.DataFrame) -> pd.DataFrame:
     if not agg_cols:
         return pd.DataFrame()
 
-    baselines = df.groupby(["season", "primary_archetype"]).agg(**agg_cols).reset_index()
-    return baselines
+    prob_cols = [c for c in df.columns if c.startswith("arch_prob_")]
+    if not prob_cols:
+        baselines = df.groupby(["season", "primary_archetype"]).agg(**agg_cols).reset_index()
+        return baselines
+
+    rows = []
+    archetype_names = [c.replace("arch_prob_", "").replace("_", " ").title() for c in prob_cols]
+    for season, season_df in df.groupby("season"):
+        for p_col, archetype in zip(prob_cols, archetype_names):
+            w = season_df[p_col].fillna(0.0).clip(lower=0.0)
+            w_sum = float(w.sum())
+            if w_sum <= 0:
+                continue
+
+            row = {
+                "season": season,
+                "primary_archetype": archetype,
+                "archetype_cohort_size": int((w > 0).sum()),
+            }
+
+            for metric in ["rapm", "orapm", "drapm"]:
+                if metric in season_df.columns:
+                    x = season_df[metric]
+                    valid = x.notna() & (w > 0)
+                    if valid.any():
+                        wx = w.loc[valid]
+                        xv = x.loc[valid]
+                        mean = float((wx * xv).sum() / wx.sum())
+                        var = float((wx * (xv - mean) ** 2).sum() / wx.sum())
+                        row[f"baseline_{metric}_mean"] = mean
+                        row[f"baseline_{metric}_median"] = mean
+                        row[f"baseline_{metric}_std"] = float(np.sqrt(max(var, 1e-9)))
+
+            if "playtype_surplus_total" in season_df.columns:
+                x = season_df["playtype_surplus_total"]
+                valid = x.notna() & (w > 0)
+                if valid.any():
+                    wx = w.loc[valid]
+                    xv = x.loc[valid]
+                    mean = float((wx * xv).sum() / wx.sum())
+                    row["baseline_surplus_mean"] = mean
+                    row["baseline_surplus_median"] = mean
+
+            ts_col = "TS_PCT_adj" if "TS_PCT_adj" in season_df.columns else (
+                "TS_PCT" if "TS_PCT" in season_df.columns else None
+            )
+            if ts_col:
+                x = season_df[ts_col]
+                valid = x.notna() & (w > 0)
+                if valid.any():
+                    wx = w.loc[valid]
+                    xv = x.loc[valid]
+                    row["baseline_ts_mean"] = float((wx * xv).sum() / wx.sum())
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
 def merge_archetype_baselines(df: pd.DataFrame, baselines: pd.DataFrame) -> pd.DataFrame:
@@ -148,6 +203,46 @@ def compute_elevation_scores(df: pd.DataFrame) -> pd.DataFrame:
     """
     cfg = ARCHETYPE_ELEVATION
     result = df.copy()
+    prob_cols = [c for c in result.columns if c.startswith("arch_prob_")]
+
+    if prob_cols:
+        archetype_labels = [c.replace("arch_prob_", "").replace("_", " ").title() for c in prob_cols]
+        base = compute_archetype_baselines(result)
+
+        def _weighted_expected(season: str, metric_col: str, row: pd.Series) -> float:
+            season_base = base[base["season"] == season]
+            if season_base.empty or metric_col not in season_base.columns:
+                return np.nan
+            expected = 0.0
+            wsum = 0.0
+            for p_col, arch in zip(prob_cols, archetype_labels):
+                p = row.get(p_col, 0.0) or 0.0
+                if p <= 0:
+                    continue
+                val_ser = season_base.loc[season_base["primary_archetype"] == arch, metric_col]
+                if val_ser.empty or pd.isna(val_ser.iloc[0]):
+                    continue
+                expected += p * float(val_ser.iloc[0])
+                wsum += p
+            if wsum <= 0:
+                return np.nan
+            return expected / wsum
+
+        result["baseline_rapm_mean"] = result.apply(
+            lambda r: _weighted_expected(r.get("season"), "baseline_rapm_mean", r), axis=1
+        )
+        result["baseline_orapm_mean"] = result.apply(
+            lambda r: _weighted_expected(r.get("season"), "baseline_orapm_mean", r), axis=1
+        )
+        result["baseline_drapm_mean"] = result.apply(
+            lambda r: _weighted_expected(r.get("season"), "baseline_drapm_mean", r), axis=1
+        )
+        result["baseline_surplus_mean"] = result.apply(
+            lambda r: _weighted_expected(r.get("season"), "baseline_surplus_mean", r), axis=1
+        )
+        result["baseline_ts_mean"] = result.apply(
+            lambda r: _weighted_expected(r.get("season"), "baseline_ts_mean", r), axis=1
+        )
 
     # RAPM elevation
     if "rapm" in result.columns and "baseline_rapm_mean" in result.columns:
