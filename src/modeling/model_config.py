@@ -71,6 +71,7 @@ BKE_BACKTEST_JSON = os.path.join(REPORTS_DIR, "bke_v27_backtest.json")
 
 # v2.9 Diagnostic suite output — reports/
 BKE_V29_DIAGNOSTIC_JSON = os.path.join(REPORTS_DIR, "bke_v29_diagnostic_master.json")
+BKE_V30_DEFENSE_SHRINKAGE_JSON = os.path.join(REPORTS_DIR, "dbke_v30_defense_shrinkage.json")
 
 # Hustle stats (raw tracking data for MF-4)
 TRACKING_DIR = "data/tracking"

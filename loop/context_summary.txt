@@ -1,3 +1,37 @@
+- 2026-02-22 — BKE v3.0 Phase B Structural Rewrite (Stable Geometry)
+	- Replaced prior Phase B path in `src/modeling/dbke_v30_defense_shrinkage.py`:
+		- removed hard archetype scale clipping and tanh tail saturation step
+		- added global standardization (`DBKE_norm_v30 = DBKE_raw_v30 / sigma_global`)
+		- added smooth negative-tail compression in z-space (`z/(1+gamma*|z|)` for z<0)
+		- added hierarchical within-archetype mean shrinkage (`eta*z + (1-eta)*mu_arch`)
+		- rescaled to raw defensive scale for `DBKE_final_v30`
+	- Rerun result (`reports/dbke_v30_defense_shrinkage.json`):
+		- Phase A: PASS
+		- Phase B: PASS
+			- `penalty_asymmetry_pre=0.339616` -> `post=0.252545` (improved)
+			- `archetype_spread_pre=0.102975` -> `post=0.089529` (improved)
+		- Phase C: FAIL (`status=stopped_after_phase_c`)
+			- failing gate: `def_specialist_dbke_yoy_corr=0.412499` (< min 0.45)
+	- `readme.md` modeling step note updated to describe new Phase B structure.
+
+- 2026-02-21 — BKE v3.0 Defense Reconstruction (Phase-Gated Script)
+	- Added `src/modeling/dbke_v30_defense_shrinkage.py` implementing plan phases:
+		- **Phase A:** DRAPM shrinkage to portable prior + 3-year smoothing + DBKE_raw reconstruction
+		- **Phase B:** within-archetype variance normalization + negative-tail compression + tanh geometry shaping
+		- **Phase C:** variance equalization check + offense/defense rebalance into final `BKE_v30`
+	- Added output path constant in `src/modeling/model_config.py`:
+		- `BKE_V30_DEFENSE_SHRINKAGE_JSON = reports/dbke_v30_defense_shrinkage.json`
+	- Validation behavior implemented per request:
+		- Gate checks run at end of each phase.
+		- If a phase fails, script stops immediately and writes single output JSON.
+	- First run result:
+		- Phase A: PASS (`corr_DBKEraw_DRAPM=0.856`)
+		- Phase B: FAIL (tail/asymmetry + archetype spread checks)
+		- Iteration stopped at Phase B (`status=stopped_after_phase_b`)
+	- Output artifact:
+		- `reports/dbke_v30_defense_shrinkage.json`
+	- Updated `readme.md` modeling step and reports layout to include v3.0 script/output.
+
 - 2026-02-21 — BKE v2.9 Diagnostic Suite + Pipeline Reorganization + Viewer Updates
 	- **Task 1 (Adjustment Script):** Rewired `scripts/BKE_model_config_adjustment.sh` verification section for new directory structure. Pipeline chain: model_rapm → ingest_darko → decomposition_engine → construct_bke_scores_v27 → player_data_viewer.
 	- **Task 2 (BKE Rank Display):** Added ordinal suffix helper (`ordSuffix`) and `fbkeCard(pct,rank)` JS function in `app/player_data_viewer.py`. Card now shows `BKE: 98.9% (11th)` format.

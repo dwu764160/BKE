@@ -128,6 +128,63 @@ def _safe_corr(a, b):
     return (_sf(r), _sf(p), n)
 
 
+def _ols_with_stats(X: np.ndarray, y: np.ndarray, feature_names):
+    """Lightweight OLS with approximate p-values from normal tail."""
+    if len(X) < 10:
+        return {"error": "insufficient_rows"}
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    good = np.isfinite(X).all(axis=1) & np.isfinite(y)
+    X = X[good]
+    y = y[good]
+    n = len(y)
+    if n < (X.shape[1] + 2):
+        return {"error": "insufficient_degrees_of_freedom", "n": int(n)}
+
+    X_aug = np.column_stack([X, np.ones(n)])
+    try:
+        beta, _, _, _ = np.linalg.lstsq(X_aug, y, rcond=None)
+    except Exception:
+        return {"error": "lstsq_failed"}
+
+    yhat = X_aug @ beta
+    resid = y - yhat
+    dof = n - X_aug.shape[1]
+    if dof <= 0:
+        return {"error": "non_positive_dof", "n": int(n)}
+    sigma2 = float((resid @ resid) / dof)
+    try:
+        cov = sigma2 * np.linalg.inv(X_aug.T @ X_aug)
+    except np.linalg.LinAlgError:
+        return {"error": "singular_matrix", "n": int(n)}
+    se = np.sqrt(np.diag(cov))
+
+    from math import erfc, sqrt
+    rows = []
+    for i, name in enumerate(feature_names):
+        b = float(beta[i])
+        s = float(se[i]) if i < len(se) else np.nan
+        if s < 1e-12 or np.isnan(s):
+            t = np.nan
+            p = np.nan
+        else:
+            t = b / s
+            p = erfc(abs(t) / sqrt(2.0))
+        rows.append({
+            "feature": str(name),
+            "coef": _sf(b),
+            "std_err": _sf(s),
+            "t_stat": _sf(t),
+            "p_approx": _sf(p),
+        })
+
+    return {
+        "n": int(n),
+        "features": rows,
+        "intercept": _sf(beta[-1]),
+    }
+
+
 # ---------------------------------------------------------------------------
 # OBKE/DBKE Reconstruction (mirrors construct_bke_scores_v27.py)
 # ---------------------------------------------------------------------------
@@ -814,6 +871,281 @@ def domain_8_rank_movement(df: pd.DataFrame) -> dict:
 
 
 # ===================================================================
+# Domain 9: v2.9.1 Defensive Expressiveness + Confidence Integrity
+# ===================================================================
+
+def domain_9_defensive_expressiveness_v291(df: pd.DataFrame) -> dict:
+    result = {}
+
+    drapm = pd.to_numeric(df["drapm"], errors="coerce")
+    dbke = pd.to_numeric(df["DBKE_raw"], errors="coerce")
+    def_elev = pd.to_numeric(df.get("elevation_drapm", pd.Series(dtype=float)), errors="coerce")
+
+    # 1) Expressiveness Amplification Ratio (EAR)
+    ear_rows = []
+    for season in sorted(df["season"].dropna().unique()):
+        sub = df[df["season"] == season]
+        s_drapm = pd.to_numeric(sub["drapm"], errors="coerce")
+        s_dbke = pd.to_numeric(sub["DBKE_raw"], errors="coerce")
+        s_elev = pd.to_numeric(sub.get("elevation_drapm", pd.Series(dtype=float)), errors="coerce")
+        var_drapm = s_drapm.var(ddof=0)
+        var_dbke = s_dbke.var(ddof=0)
+        var_elev = s_elev.var(ddof=0) if s_elev.notna().sum() > 0 else np.nan
+        corr_dbke_drapm = _safe_corr(s_dbke, s_drapm)[0]
+        ear_rows.append({
+            "season": str(season),
+            "n": int(len(sub)),
+            "var_DRAPM": _sf(var_drapm),
+            "var_DBKE": _sf(var_dbke),
+            "var_def_elevation": _sf(var_elev),
+            "EAR": _sf(var_dbke / var_drapm) if var_drapm and var_drapm > 0 else None,
+            "EAR_elevation": _sf(var_elev / var_drapm) if var_drapm and var_drapm > 0 else None,
+            "corr_DBKE_DRAPM": _sf(corr_dbke_drapm),
+            "interpretation": (
+                "AMPLIFICATION" if (var_drapm and var_drapm > 0 and (var_dbke / var_drapm) > 1.0)
+                else "COMPRESSION" if (var_drapm and var_drapm > 0 and (var_dbke / var_drapm) < 1.0)
+                else "PARITY"
+            ),
+        })
+
+    result["test_9_1_expressiveness_amplification_ratio"] = {
+        "per_season": ear_rows,
+        "median_EAR": _sf(pd.Series([x["EAR"] for x in ear_rows], dtype=float).median()),
+    }
+
+    # Build per-player volatility frame (used by several tests)
+    df["DRAPM_pct"] = df.groupby("season")["drapm"].rank(method="average", pct=True) * 100.0
+    df["DBKE_pct"] = df.groupby("season")["DBKE_raw"].rank(method="average", pct=True) * 100.0
+
+    entropy_source = "soft_archetype_entropy_norm" if "soft_archetype_entropy_norm" in df.columns else "soft_archetype_entropy"
+    fit_source = "defensive_fit" if "defensive_fit" in df.columns else "role_confidence"
+    df["_entropy_numeric"] = pd.to_numeric(df.get(entropy_source, pd.Series(dtype=float)), errors="coerce")
+    df["_def_fit_numeric"] = pd.to_numeric(df.get(fit_source, pd.Series(dtype=float)), errors="coerce")
+
+    vol = (
+        df.groupby("player_id")
+        .agg(
+            player_name=("player_name", "last"),
+            seasons=("season", "nunique"),
+            d_stability=("DBKE_raw", "std"),
+            o_stability=("OBKE_raw", "std"),
+            drapm_vol=("DRAPM_pct", "std"),
+            dbke_vol=("DBKE_pct", "std"),
+            offensive_portable_mean=("offensive_portable_z", "mean"),
+            defensive_portable_mean=("defensive_portable_z", "mean"),
+            def_elev_vol=("elevation_drapm", "std"),
+            entropy_mean=("_entropy_numeric", "mean"),
+            defensive_fit_mean=("_def_fit_numeric", "mean"),
+        )
+        .reset_index()
+    )
+    vol = vol[vol["seasons"] >= 2].copy()
+    vol["vol_ratio_dbke_to_drapm"] = vol["dbke_vol"] / vol["drapm_vol"].replace(0, np.nan)
+
+    # 2) Defensive Percentile Volatility Gap
+    off_q75 = vol["offensive_portable_mean"].quantile(0.75)
+    def_q25 = vol["defensive_portable_mean"].quantile(0.25)
+    specialists = vol[(vol["offensive_portable_mean"] >= off_q75) & (vol["defensive_portable_mean"] <= def_q25)]
+
+    result["test_9_2_defensive_percentile_volatility_gap"] = {
+        "n_players": int(len(vol)),
+        "median_vol_ratio": _sf(vol["vol_ratio_dbke_to_drapm"].median()),
+        "mean_vol_ratio": _sf(vol["vol_ratio_dbke_to_drapm"].mean()),
+        "median_ratio_gt_1_3": bool(vol["vol_ratio_dbke_to_drapm"].median() > 1.3),
+        "specialist_group_count": int(len(specialists)),
+        "specialist_median_vol_ratio": _sf(specialists["vol_ratio_dbke_to_drapm"].median()) if len(specialists) > 0 else None,
+    }
+
+    # 3) Defensive Elevation Amplification Test
+    var_elev = def_elev.var(ddof=0)
+    var_drapm = drapm.var(ddof=0)
+    corr_elev_drapm = _safe_corr(def_elev, drapm)[0]
+    result["test_9_3_defensive_elevation_amplification"] = {
+        "var_elevation": _sf(var_elev),
+        "var_DRAPM": _sf(var_drapm),
+        "variance_ratio_elevation_to_drapm": _sf(var_elev / var_drapm) if var_drapm and var_drapm > 0 else None,
+        "corr_elevation_DRAPM": _sf(corr_elev_drapm),
+        "noise_risk": "HIGH" if (var_drapm and var_drapm > 0 and (var_elev / var_drapm) > 1.2 and (corr_elev_drapm is not None and corr_elev_drapm < 0.8)) else "LOW",
+    }
+
+    # 4) Tail Skew and Penalty Asymmetry
+    dbke_p5 = dbke.quantile(0.05)
+    dbke_p95 = dbke.quantile(0.95)
+    drapm_p5 = drapm.quantile(0.05)
+    drapm_p95 = drapm.quantile(0.95)
+    dbke_asym = abs(dbke_p5) / dbke_p95 if dbke_p95 and dbke_p95 != 0 else np.nan
+    drapm_asym = abs(drapm_p5) / drapm_p95 if drapm_p95 and drapm_p95 != 0 else np.nan
+
+    result["test_9_4_tail_skew_penalty_asymmetry"] = {
+        "skew_DBKE": _sf(dbke.skew()),
+        "skew_DRAPM": _sf(drapm.skew()),
+        "kurtosis_DBKE": _sf(dbke.kurt()),
+        "kurtosis_DRAPM": _sf(drapm.kurt()),
+        "DBKE_p5": _sf(dbke_p5),
+        "DBKE_p95": _sf(dbke_p95),
+        "DRAPM_p5": _sf(drapm_p5),
+        "DRAPM_p95": _sf(drapm_p95),
+        "penalty_asymmetry_DBKE": _sf(dbke_asym),
+        "penalty_asymmetry_DRAPM": _sf(drapm_asym),
+        "structural_tail_exaggeration": bool(np.isfinite(dbke_asym) and np.isfinite(drapm_asym) and dbke_asym > drapm_asym),
+    }
+
+    # 5) Defensive Rank Movement Decomposition
+    df["rank_DBKE"] = df["DBKE_raw"].rank(ascending=False, method="min")
+    df["rank_DRAPM"] = df["drapm"].rank(ascending=False, method="min")
+    df["delta_rank_dbke_vs_drapm"] = df["rank_DBKE"] - df["rank_DRAPM"]
+
+    archetype_fit = pd.to_numeric(df.get("defensive_fit", df.get("role_confidence", pd.Series(dtype=float))), errors="coerce")
+    elev_mag = pd.to_numeric(df.get("elevation_drapm", pd.Series(dtype=float)), errors="coerce").abs()
+    portable_def = pd.to_numeric(df.get("defensive_portable_z", pd.Series(dtype=float)), errors="coerce")
+    scheme = pd.to_numeric(df.get("scheme_stability_z", pd.Series(dtype=float)), errors="coerce")
+    y = pd.to_numeric(df["delta_rank_dbke_vs_drapm"], errors="coerce")
+
+    reg_df = pd.DataFrame({
+        "y": y,
+        "archetype_fit": archetype_fit,
+        "elevation_magnitude": elev_mag,
+        "portable_def": portable_def,
+        "scheme": scheme,
+    }).dropna()
+
+    # Standardize predictors for comparable coefficients
+    for c in ["archetype_fit", "elevation_magnitude", "portable_def", "scheme", "y"]:
+        reg_df[c] = _zscore(reg_df[c])
+
+    reg = _ols_with_stats(
+        reg_df[["archetype_fit", "elevation_magnitude", "portable_def", "scheme"]].values,
+        reg_df["y"].values,
+        ["archetype_fit", "elevation_magnitude", "portable_def", "scheme"],
+    )
+
+    result["test_9_5_defensive_rank_movement_decomposition"] = reg
+
+    # 6) Specialist Stability Grid
+    off_spec_threshold = vol["offensive_portable_mean"].quantile(0.75)
+    def_spec_threshold = vol["defensive_portable_mean"].quantile(0.75)
+    off_ids = set(vol.loc[vol["offensive_portable_mean"] >= off_spec_threshold, "player_id"])
+    def_ids = set(vol.loc[vol["defensive_portable_mean"] >= def_spec_threshold, "player_id"])
+
+    def _group_yoy_corr(sub_df, metric):
+        seasons_sorted = sorted(sub_df["season"].dropna().unique())
+        vals = []
+        for i in range(len(seasons_sorted) - 1):
+            s1, s2 = seasons_sorted[i], seasons_sorted[i + 1]
+            a = sub_df[sub_df["season"] == s1][["player_id", metric]].rename(columns={metric: "m1"})
+            b = sub_df[sub_df["season"] == s2][["player_id", metric]].rename(columns={metric: "m2"})
+            m = a.merge(b, on="player_id", how="inner").dropna()
+            if len(m) >= 10:
+                vals.append(_pearsonr(m["m1"].values, m["m2"].values)[0])
+        return _sf(pd.Series(vals, dtype=float).mean()) if vals else None
+
+    off_spec_df = df[df["player_id"].isin(off_ids)]
+    def_spec_df = df[df["player_id"].isin(def_ids)]
+    non_spec_df = df[~df["player_id"].isin(off_ids.union(def_ids))]
+
+    result["test_9_6_specialist_stability_grid"] = {
+        "offensive_specialist_count": int(off_spec_df["player_id"].nunique()),
+        "defensive_specialist_count": int(def_spec_df["player_id"].nunique()),
+        "non_specialist_count": int(non_spec_df["player_id"].nunique()),
+        "off_spec_OBKE_yoy_corr": _group_yoy_corr(off_spec_df, "OBKE_raw"),
+        "off_spec_DBKE_yoy_corr": _group_yoy_corr(off_spec_df, "DBKE_raw"),
+        "def_spec_OBKE_yoy_corr": _group_yoy_corr(def_spec_df, "OBKE_raw"),
+        "def_spec_DBKE_yoy_corr": _group_yoy_corr(def_spec_df, "DBKE_raw"),
+        "non_spec_OBKE_yoy_corr": _group_yoy_corr(non_spec_df, "OBKE_raw"),
+        "non_spec_DBKE_yoy_corr": _group_yoy_corr(non_spec_df, "DBKE_raw"),
+    }
+
+    # 7) Weak-Side Amplification Test
+    vol2 = vol.copy()
+    vol2["offense_dominant"] = vol2["offensive_portable_mean"] > vol2["defensive_portable_mean"]
+    vol2["weak_side_volatility"] = np.where(vol2["offense_dominant"], vol2["d_stability"], vol2["o_stability"])
+    vol2["strong_side_volatility"] = np.where(vol2["offense_dominant"], vol2["o_stability"], vol2["d_stability"])
+    vol2["weak_to_strong_ratio"] = vol2["weak_side_volatility"] / vol2["strong_side_volatility"].replace(0, np.nan)
+
+    result["test_9_7_weak_side_amplification"] = {
+        "n_players": int(len(vol2)),
+        "median_weak_side_volatility": _sf(vol2["weak_side_volatility"].median()),
+        "median_strong_side_volatility": _sf(vol2["strong_side_volatility"].median()),
+        "median_weak_to_strong_ratio": _sf(vol2["weak_to_strong_ratio"].median()),
+        "weak_side_gt_strong_side": bool(vol2["weak_to_strong_ratio"].median() > 1.0),
+    }
+
+    # 8) Archetype Fit vs Stability Regression
+    fit_vol = vol[["d_stability", "defensive_fit_mean"]].dropna().copy()
+    fit_vol["d_stability"] = _zscore(fit_vol["d_stability"])
+    fit_vol["defensive_fit_mean"] = _zscore(fit_vol["defensive_fit_mean"])
+    reg_fit = _ols_with_stats(
+        fit_vol[["defensive_fit_mean"]].values,
+        fit_vol["d_stability"].values,
+        ["archetype_fit"],
+    )
+    result["test_9_8_archetype_fit_vs_stability_regression"] = reg_fit
+
+    # 9) Archetype Baseline Variance Spread
+    arch_col = "defensive_archetype"
+    if arch_col in df.columns:
+        spread = (
+            df.groupby(arch_col)
+            .agg(
+                n=("player_id", "count"),
+                drapm_mean=("drapm", "mean"),
+                drapm_std=("drapm", "std"),
+                elev_mean=("elevation_drapm", "mean"),
+                elev_std=("elevation_drapm", "std"),
+            )
+            .reset_index()
+            .sort_values("n", ascending=False)
+        )
+        rows = []
+        for _, r in spread.iterrows():
+            rows.append({
+                "defensive_archetype": str(r[arch_col]),
+                "n": int(r["n"]),
+                "mean_DRAPM": _sf(r["drapm_mean"]),
+                "std_DRAPM": _sf(r["drapm_std"]),
+                "mean_elevation": _sf(r["elev_mean"]),
+                "std_elevation": _sf(r["elev_std"]),
+            })
+    else:
+        rows = []
+    result["test_9_9_archetype_baseline_variance_spread"] = {
+        "archetypes": rows,
+    }
+
+    # 10) Soft Membership Entropy Test
+    ent_col = "entropy_mean"
+    ent_df = vol[["d_stability", ent_col]].dropna().copy()
+    ent_df["d_stability"] = _zscore(ent_df["d_stability"])
+    ent_df[ent_col] = _zscore(ent_df[ent_col])
+    reg_ent = _ols_with_stats(
+        ent_df[[ent_col]].values,
+        ent_df["d_stability"].values,
+        ["entropy"],
+    )
+    result["test_9_10_entropy_vs_defensive_volatility"] = reg_ent
+
+    # Expose per-player append fields for separate player report
+    player_append = vol[[
+        "player_id",
+        "player_name",
+        "seasons",
+        "d_stability",
+        "o_stability",
+        "drapm_vol",
+        "dbke_vol",
+        "vol_ratio_dbke_to_drapm",
+        "offensive_portable_mean",
+        "defensive_portable_mean",
+        "def_elev_vol",
+        "defensive_fit_mean",
+        "entropy_mean",
+    ]].copy()
+    result["player_level_append_rows"] = player_append.to_dict(orient="records")
+
+    return result
+
+
+# ===================================================================
 # Player-Level Diagnostic Table
 # ===================================================================
 
@@ -846,6 +1178,35 @@ def build_player_level_table(df: pd.DataFrame) -> list:
     return records
 
 
+def _merge_player_append(base_rows: list, append_rows: list) -> list:
+    if not append_rows:
+        return base_rows
+    by_id = {str(r.get("player_id", "")): r for r in append_rows}
+    merged = []
+    for row in base_rows:
+        out = dict(row)
+        pid = str(row.get("player_id", ""))
+        extra = by_id.get(pid)
+        if extra:
+            for k in [
+                "seasons",
+                "d_stability",
+                "o_stability",
+                "drapm_vol",
+                "dbke_vol",
+                "vol_ratio_dbke_to_drapm",
+                "offensive_portable_mean",
+                "defensive_portable_mean",
+                "def_elev_vol",
+                "defensive_fit_mean",
+                "entropy_mean",
+            ]:
+                v = extra.get(k)
+                out[k] = _sf(v) if isinstance(v, (int, float, np.floating, np.integer)) else v
+        merged.append(out)
+    return merged
+
+
 # ===================================================================
 # Main Entry
 # ===================================================================
@@ -853,9 +1214,12 @@ def build_player_level_table(df: pd.DataFrame) -> list:
 def run_diagnostics(
     parquet_path: str = BKE_V28_OUTPUT_PARQUET,
     output_path: str = None,
+    player_output_path: str = None,
 ) -> dict:
     if output_path is None:
         output_path = os.path.join(REPORTS_DIR, "bke_v29_diagnostic_master.json")
+    if player_output_path is None:
+        player_output_path = os.path.join(REPORTS_DIR, "bke_v29_player_diagnostic_report.json")
 
     print(f"[v2.9 Diagnostics] Loading: {parquet_path}")
     if not os.path.exists(parquet_path):
@@ -902,19 +1266,34 @@ def run_diagnostics(
     print("[v2.9 Diagnostics] Domain 8: Rank Movement Decomposition...")
     d8 = domain_8_rank_movement(df)
 
+    print("[v2.9 Diagnostics] Domain 9: Defensive Expressiveness v2.9.1...")
+    d9 = domain_9_defensive_expressiveness_v291(df)
+
     elapsed = time.time() - t0
 
     # Player-level table
     print("[v2.9 Diagnostics] Building player-level table...")
     player_table = build_player_level_table(df)
+    player_table = _merge_player_append(player_table, d9.pop("player_level_append_rows", []))
+
+    player_payload = {
+        "version": "2.9.1",
+        "type": "diagnostic_suite_player_report",
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "input_file": parquet_path,
+        "output_file": player_output_path,
+        "qualified_players": int(len(df)),
+        "player_level_metrics": player_table,
+    }
 
     # Assemble master diagnostic file
     master = {
-        "version": "2.9",
+        "version": "2.9.1",
         "type": "diagnostic_suite",
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "input_file": parquet_path,
         "output_file": output_path,
+        "player_output_file": player_output_path,
         "qualified_players": int(len(df)),
         "seasons": sorted(df["season"].unique().tolist()),
         "runtime_seconds": _sf(elapsed),
@@ -927,17 +1306,21 @@ def run_diagnostics(
             "6_archetype_coefficient_audit": d6,
             "7_portability_vs_role_drag": d7,
             "8_rank_movement_decomposition": d8,
+            "9_defensive_expressiveness_v2_9_1": d9,
         },
-        "player_level_metrics": player_table,
     }
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(player_output_path), exist_ok=True)
+    with open(player_output_path, "w", encoding="utf-8") as f:
+        json.dump(player_payload, f, indent=2)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(master, f, indent=2)
 
     print(f"\n[v2.9 Diagnostics] Complete in {elapsed:.1f}s")
     print(f"[v2.9 Diagnostics] Output: {output_path}")
-    print(f"[v2.9 Diagnostics] Domains: 8 / Players: {len(df)}")
+    print(f"[v2.9 Diagnostics] Player Output: {player_output_path}")
+    print(f"[v2.9 Diagnostics] Domains: 9 / Players: {len(df)}")
 
     return master
 

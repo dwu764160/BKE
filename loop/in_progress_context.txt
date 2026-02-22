@@ -1,4 +1,29 @@
 2026-02-21 — v2.9 diagnostic suite completed + pipeline reorganization
+- 2026-02-22 — v3.0 defense reconstruction Phase B structure replaced and rerun
+  - `src/modeling/dbke_v30_defense_shrinkage.py` Phase B rewritten to:
+    - standardize by global DBKE raw sigma
+    - apply smooth negative compression in z-space
+    - apply archetype mean shrinkage (eta blend)
+    - rescale to original defensive magnitude
+  - Removed tanh saturation and hard per-archetype clipping from active Phase B path.
+  - Rerun result:
+    - Phase A: PASS
+    - Phase B: PASS
+      - asymmetry improved: 0.339616 -> 0.252545
+      - archetype spread improved: 0.102975 -> 0.089529
+    - Phase C: FAIL (`status=stopped_after_phase_c`)
+      - failing gate: `def_specialist_dbke_yoy_corr=0.412499` vs required > 0.45
+
+- 2026-02-21 — v3.0 defense reconstruction script (phase-gated) implemented
+  - Added `src/modeling/dbke_v30_defense_shrinkage.py`
+  - Added output constant `BKE_V30_DEFENSE_SHRINKAGE_JSON` in `src/modeling/model_config.py`
+  - Script implements Phase A/B/C in order, with validation gates after each phase and stop-on-fail behavior
+  - Single output file: `reports/dbke_v30_defense_shrinkage.json`
+  - First run result:
+    - Phase A: PASS (`corr_DBKEraw_DRAPM=0.856`)
+    - Phase B: FAIL (tail/asymmetry + archetype spread checks failed)
+    - Iteration stopped at Phase B exactly as requested
+
 - All 4 tasks completed in this session:
   1. Adjustment script rewired for new directory structure
   2. BKE rank display added to player cards (percentile + ordinal rank)

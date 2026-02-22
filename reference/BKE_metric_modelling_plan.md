@@ -1,399 +1,396 @@
-🧪 V2.9 DIAGNOSTIC SUITE
+Excellent. Now we do this correctly.
 
-We’ll group tests into 8 major domains.
+Below is a **fully specified v3.0 Defense Reconstruction Plan** with explicit math and ordering.
 
-1️⃣ OBKE / DBKE VARIANCE ASYMMETRY AUDIT
+This version:
+
+* Does NOT explode portable variance early
+* Does NOT hardcode archetypes
+* Preserves Layer 1c importance
+* Controls variance geometry
+* Fixes penalty asymmetry
+* Introduces offense bias in a controlled way
+* Respects only 3 years of data
+
+We are rebuilding defense without breaking the system.
+
+---
+
+# OVERALL STRUCTURE
+
+We keep:
+
+* OBKE untouched (for now)
+* Existing offensive pipeline
+* Archetype definitions
+* Layer 1c dimensions intact
+
+We modify only:
+
+Defense computation from Layer 1 onward.
+
+---
+
+# PHASE A — Defensive Stability & Shrinkage
+
 Goal:
+Reduce defensive noise and DRAPM dominance without killing signal.
 
-Quantify exactly how defense dominates ranking movement.
+We stabilize before reshaping.
 
-Test 1.1 — Raw Variance Decomposition
+---
 
-Compute:
+## A1 — DRAPM Shrinkage Toward Portable Prior
 
-var(OBKE_raw)
-var(DBKE_raw)
-var(BKE_raw)
-cov(OBKE_raw, DBKE_raw)
+Problem:
+DBKE overrelies on DRAPM elevation component.
 
-Then compute contribution to total variance:
+Fix:
+Shrink DRAPM toward portable defensive composite.
 
-𝑉
-𝑎
-𝑟
-(
-𝐵
-𝐾
-𝐸
-)
-=
-𝑉
-𝑎
-𝑟
-(
-𝑂
-)
-+
-𝑉
-𝑎
-𝑟
-(
-𝐷
-)
-+
-2
-𝐶
-𝑜
-𝑣
-(
-𝑂
-,
-𝐷
-)
-Var(BKE)=Var(O)+Var(D)+2Cov(O,D)
+Let:
 
-Output:
+* ( D_{rapm} )
+* ( D_{port} ) = portable defensive prior (Layer 1 composite)
+* ( n ) = possessions (or minutes)
+* ( k ) = shrink constant (tune via CV; start ~2000 possessions equivalent)
 
-off_variance_share
-def_variance_share
-covariance_share
+Define weight:
 
-If defense > 60% of variance share → asymmetry confirmed.
-
-Test 1.2 — Z-Standardized Symmetry Simulation
-
-Simulate:
-
-OBKE_z = zscore(OBKE_raw)
-DBKE_z = zscore(DBKE_raw)
-BKE_equal_var = OBKE_z + DBKE_z
+[
+\lambda = \frac{n}{n + k}
+]
 
 Then:
 
-Rank delta vs actual BKE
+[
+D_{rapm}^{shrunk} = \lambda D_{rapm} + (1-\lambda) D_{port}
+]
 
-Top 20 rank shifts
+This is empirical Bayes shrinkage.
 
-Offensive specialist shifts
+High minute players → minimal shrink
+Low minute players → heavy shrink
 
-Output:
+---
 
-rank_shift_equalized
-mean_shift_off_specialists
+## A2 — Year-to-Year Prior Smoothing (Only 3 Years Available)
 
-This tells you how much asymmetry alone is driving distortion.
+We use simple exponential smoothing.
 
-Test 1.3 — Tail Sensitivity
+For player i:
 
-Measure:
+[
+D^{prior}*{i,t} = \alpha D*{i,t-1} + (1-\alpha) D_{i,t-2}
+]
 
-Top 5% DBKE variance
-Top 5% OBKE variance
-Bottom 5% DBKE penalty magnitude
+If only 1 prior year exists, use that.
 
-Defense often drives tail penalties harder than offense.
+Choose:
 
-2️⃣ DEFENSIVE SIGNAL QUALITY AUDIT
+[
+\alpha = 0.65
+]
 
-You want to test:
+Then blend:
 
-Does DBKE correlate with true defensive impact?
+[
+D^{stabilized}*{i,t} = w D*{i,t} + (1-w) D^{prior}_{i,t}
+]
 
-Test 2.1 — DBKE vs Ground Truth Signals
+Set:
 
-Compute correlations:
+[
+w = 0.70
+]
 
-corr(DBKE_raw, DRAPM)
-corr(DBKE_raw, on_off_DRTG)
-corr(DBKE_raw, opponent_FG%)
-corr(DBKE_raw, defensive_EPM_if_available)
+This reduces volatility while preserving responsiveness.
 
-Also compare:
+---
 
-corr(def_playmaking, DRAPM)
-corr(def_impact, DRAPM)
+## A3 — Recompose Defensive BKE (Pre-Geometry)
+
+Let weights:
+
+* Portable (Layer 1): ( w_p )
+* Shrunk RAPM: ( w_r )
+
+Start with:
+
+[
+w_p = 0.55,\quad w_r = 0.45
+]
+
+Then:
+
+[
+DBKE_{raw} = w_p D_{port} + w_r D_{rapm}^{shrunk}
+]
+
+Important:
+No convex scaling here.
+No archetype adjustment yet.
+
+Phase A Output:
+**DBKE_raw**
+
+---
+
+# PHASE B — Defensive Geometry Calibration
+
+This is where previous version failed.
+
+We reshape distribution AFTER stabilization.
+
+---
+
+## B1 — Within-Archetype Variance Normalization
+
+Problem:
+DBKE variance inside archetypes is 2–3x OBKE.
+
+We reduce relative noise without killing separation.
+
+For each archetype ( a ):
+
+Compute:
+
+[
+\sigma_a = std(DBKE_{raw} \mid archetype=a)
+]
+
+Let:
+
+[
+\sigma_{target} = median(\sigma_a)
+]
+
+Define scaling factor:
+
+[
+s_a = \frac{\sigma_{target}}{\sigma_a}
+]
+
+Then:
+
+[
+DBKE_{norm} = DBKE_{raw} \cdot s_a
+]
+
+This compresses overly noisy archetypes
+and slightly expands overly compressed ones.
+
+No hardcoding BLK% or STL%.
+Pure distributional correction.
+
+---
+
+## B2 — Negative Tail Compression (Penalty Asymmetry Fix)
+
+We observed:
+
+Bad defense hurts more than elite defense helps.
+
+We apply asymmetric compression.
+
+Define:
+
+[
+\gamma = 0.15
+]
+
+Then:
+
+[
+DBKE_{asym} =
+\begin{cases}
+DBKE_{norm} & \text{if } DBKE_{norm} \ge 0 \
+DBKE_{norm}(1-\gamma) & \text{if } DBKE_{norm} < 0
+\end{cases}
+]
+
+This reduces weak-side drag.
+
+Important:
+We do NOT expand positive side yet.
+
+---
+
+## B3 — Mild Global Bounded Expansion
+
+Now that noise is controlled,
+we allow limited expressiveness.
+
+Use smooth bounded function:
+
+[
+DBKE_{final} = \tanh(\beta DBKE_{asym})
+]
+
+Choose:
+
+[
+\beta = 0.9
+]
+
+Why tanh?
+
+* Prevents explosion
+* Preserves order
+* Expands mid-range separation
+* Compresses extreme tails
+
+This creates controlled expressiveness.
+
+---
+
+# PHASE C — Offense/Defense Global Weighting
+
+Now we address variance asymmetry at composite level.
+
+---
+
+## C1 — Variance Equalization Check
+
+Compute:
+
+[
+Var(OBKE),\quad Var(DBKE_{final})
+]
 
 If:
 
-def_playmaking correlates similarly to def_impact → counting noise risk.
+[
+Var(DBKE) > 1.5 \times Var(OBKE)
+]
 
-Test 2.2 — Partial Correlation Test
+Apply scaling:
 
-Control for steals/blocks:
+[
+DBKE_{scaled} = DBKE_{final} \cdot \sqrt{\frac{Var(OBKE)}{Var(DBKE_{final})}}
+]
 
-partial_corr(DBKE_raw, DRAPM | steals, blocks)
+This equalizes variance without changing relative ordering.
 
-If correlation rises after controlling → counting stats are diluting true signal.
+---
 
-Test 2.3 — Defensive Component Variance Contribution
+## C2 — Controlled Offense Bias
 
-Break DBKE into:
+Instead of hard 57/43, do this mathematically:
 
-def_portable
-def_elevation
-scheme_bonus
+Define:
 
-Then break def_portable into:
+[
+\delta = 0.10
+]
 
-def_impact
-def_playmaking
-def_versatility
-extra_possession_def
+Final composite:
 
-Compute:
+[
+BKE = (0.5 + \delta) OBKE + (0.5 - \delta) DBKE_{scaled}
+]
 
-variance_share_per_component
+So:
 
-If Defensive Playmaking variance > Defensive Impact variance:
-→ structural misalignment.
+60% offense
+40% defense
 
-3️⃣ COUNTING STATS VS ON/OFF DOMINANCE
+Why acceptable?
 
-You want:
+Because NBA value systems overweight offense.
+But we do it modestly.
 
-On defense, on-off > counting stats
-On offense, volume scoring matters meaningfully
+We do NOT go 65/35.
 
-Test 3.1 — Offensive Decomposition
+---
 
-Correlate OBKE_raw with:
+# What Happens to Layer 1c?
 
-points_per_100
-points_per_36
-raw_points_total
-offensive_RAPM
-on_off_ORTG
-true_shooting
-usage_rate
+Layer 1c remains fully intact.
 
-Key comparison:
+It feeds:
 
-corr(OBKE, raw_points_total)
-corr(OBKE, points_per_100)
+[
+D_{port}
+]
 
-If OBKE is dominated by rate stats → volume underweighted.
+We did NOT change its internal dimension importance.
 
-Test 3.2 — Replace Rate With Volume Simulation
+We changed:
 
-Diagnostic simulation only:
+* How its output is stabilized
+* How it interacts with RAPM
+* How variance is geometrically shaped afterward
 
-self_creation_volume = points_total * efficiency_adjustment
-Replace self_creation dimension temporarily
-Recompute OBKE
-Compare rank shift
+Layer 1c importance is preserved.
 
-Measure:
+We simply prevented it from being volatility amplifier.
 
-volume_sensitivity_index
-Test 3.3 — Counting Stats Sensitivity Index (Defense)
+---
 
-Run regression:
+# What This Fixes
 
-DBKE_raw ~ steals + blocks + DRAPM + on_off_DRTG
+Extreme defensive variance compression
+→ Archetype normalization + bounded expansion
 
-Extract standardized betas.
+Overreliance on DRAPM
+→ Empirical Bayes shrinkage
 
-If steals coefficient comparable to DRAPM coefficient → overreliance.
+Defensive specialist instability
+→ Prior smoothing + archetype variance scaling
 
-4️⃣ VARIANCE ANCHOR STRESS TEST
+Ceiling suppression
+→ Mild tanh expansion (mid-range boost)
 
-You anchored seasonwise variance.
+Weak archetype confidence
+→ Reduced within-archetype noise ratio
 
-Now test:
+Penalty asymmetry
+→ Negative tail compression
 
-Test 4.1 — Per-Season OBKE vs DBKE Std
+---
 
-For each season:
+# Target Post-v3.0 Metrics
 
-std_OBKE
-std_DBKE
-ratio
+After implementation:
 
-If one season spikes → anchor leakage.
+* def_driver_share < 0.65
+* DBKE YoY corr > 0.50
+* Defensive specialist DBKE YoY corr > 0.45
+* penalty_asymmetry_DBKE materially reduced
+* std_DBKE / std_OBKE within archetypes < 1.6x
 
-Test 4.2 — Cross-Season Stability
+If these are not met → we stop and reassess.
 
-Track:
+---
 
-player_year_to_year_OBKE_corr
-player_year_to_year_DBKE_corr
+# Important: What We Are NOT Doing
 
-Defense tends to be noisier year-to-year.
+* No counting stat domination
+* No positional stat weight boosts
+* No archetype-specific feature boosts
+* No expanding portable layer
+* No hardcoding centers vs guards
+* No removing RAPM entirely
+* No rewriting OBKE
 
-If DBKE stability < 0.5 and OBKE > 0.7 → noise asymmetry confirmed.
+---
 
-5️⃣ OFFENSE WEIGHT BIAS EXPERIMENT
+# Structural Philosophy of v3.0
 
-NBA structurally values offense more.
+Phase A: Stabilize signal
+Phase B: Shape geometry
+Phase C: Balance value
 
-But do not change system — simulate.
+In that order.
 
-Test 5.1 — Offense-Biased Composite
+Your previous attempt skipped geometry discipline.
 
-Simulate:
+This version respects modeling order.
 
-BKE_55_45 = 0.55*OBKE_raw + 0.45*DBKE_raw
-BKE_60_40 = 0.60*OBKE_raw + 0.40*DBKE_raw
+---
 
-Measure:
+If you want next, I can:
 
-Top 10 stability
-
-Offensive specialist movement
-
-Two-way player drop magnitude
-
-Output:
-
-bias_sensitivity_curve
-6️⃣ ARCHETYPE COEFFICIENT AUDIT
-
-Critical.
-
-You must ensure there are no hidden archetype-weight biases.
-
-Test 6.1 — Archetype Mean Component Values
-
-For each archetype:
-
-Compute mean:
-
-mean_OBKE
-mean_DBKE
-mean_def_playmaking
-mean_def_impact
-mean_self_creation
-
-If archetypes structurally skew toward defensive inflation → bias.
-
-Test 6.2 — Hardcoded Weight Detection
-
-Search codebase for:
-
-if archetype == ...
-multiplier
-manual weight
-
-Output a parsed coefficient table:
-
-archetype_weight_table
-
-Confirm all are probabilistic, not discrete boosts.
-
-Test 6.3 — Archetype Conditional Variance
-
-Within each archetype:
-
-std_OBKE
-std_DBKE
-
-If defensive archetypes have 2x DBKE variance → structural artifact.
-
-7️⃣ PORTABILITY VS ROLE DEPENDENT DRAG
-
-Test whether offensive stars are being over-dragged by role component.
-
-Test 7.1 — Delta Between Portable Rank and Total Rank
-
-Compute:
-
-rank_delta = rank(portable_talent) - rank(total_impact)
-
-Is defensive penalty the driver?
-
-Break delta into:
-
-off_drag
-def_drag
-role_drag
-8️⃣ RANK MOVEMENT DRIVER DECOMPOSITION
-
-This is the most revealing test.
-
-For each player:
-
-Decompose final BKE rank movement into contributions from:
-
-OBKE variance component
-DBKE variance component
-role compression
-scheme adjustment
-
-Output:
-
-rank_movement_decomposition
-
-This shows which component moves players most.
-
-📦 MASTER DIAGNOSTIC FILE STRUCTURE
-
-Your unified file should include:
-
-Player-Level Metrics
-OBKE_raw
-DBKE_raw
-OBKE_z
-DBKE_z
-BKE_raw
-BKE_equal_var
-BKE_55_45
-BKE_60_40
-rank_actual
-rank_equal_var
-rank_shift_equal_var
-rank_shift_55_45
-rank_shift_60_40
-Variance Contributions
-off_variance_share
-def_variance_share
-def_portable_variance_share
-def_playmaking_variance_share
-def_impact_variance_share
-Correlations
-corr_DBKE_DRAPM
-corr_DBKE_onoff
-corr_def_playmaking_DRAPM
-corr_def_impact_DRAPM
-corr_OBKE_points_total
-corr_OBKE_points_per_100
-Stability
-year_to_year_OBKE_corr
-year_to_year_DBKE_corr
-Archetype Diagnostics
-archetype
-archetype_OBKE_mean
-archetype_DBKE_mean
-archetype_DBKE_std
-
-Everything exported into:
-
-bke_v29_diagnostic_master.json
-🔬 What This Will Reveal
-
-By running this suite, you will know:
-
-Whether defense is variance-dominant (not overweighted)
-
-Whether steals are diluting DRAPM alignment
-
-Whether offense is under-weighting scoring volume
-
-Whether archetypes are implicitly biasing defense
-
-Whether small offense bias (55/45) materially improves realism
-
-Whether DBKE is noisier year-to-year
-
-🎯 What We Are NOT Doing
-
-No weight changes
-
-No structural redesign
-
-No defensive collapse
-
-No archetype redefinition
-
-We are measuring everything.
-
-If you'd like, next I can:
+1. Simulate how this mathematically shifts variance using your observed stats, OR
+2. Translate this into implementation-ready pseudocode for your diagnostics script.

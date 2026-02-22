@@ -965,6 +965,50 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
                    cfg.w_dim_extra_possession * cfg.extra_poss_defensive_share]
     result = weighted_z_composite(result, def_cols, def_weights, "defensive_portable_z")
 
+    # v3.0b: defensive structural blend + controlled expressiveness restoration
+    if cfg.enable_defensive_phase_b and "defensive_portable_z" in result.columns and "season" in result.columns:
+        result["defensive_portable_global_z"] = pd.to_numeric(
+            result["defensive_portable_z"], errors="coerce"
+        ).fillna(0.0)
+
+        arch_rel = pd.Series(0.0, index=result.index)
+        if "primary_archetype" in result.columns:
+            for (season, archetype), idx in result.groupby(["season", "primary_archetype"]).groups.items():
+                vals = result.loc[idx, "defensive_portable_global_z"]
+                if len(vals) < int(cfg.defensive_archetype_min_cohort):
+                    continue
+                std = float(vals.std())
+                if np.isnan(std) or std < 1e-9:
+                    continue
+                arch_rel.loc[idx] = (vals - float(vals.mean())) / (std + 1e-9)
+        result["defensive_portable_arch_relative_z"] = arch_rel
+
+        blended = (
+            float(cfg.defensive_global_weight) * result["defensive_portable_global_z"]
+            + float(cfg.defensive_archetype_weight) * result["defensive_portable_arch_relative_z"]
+        )
+
+        # Standardize and apply bounded convex expansion per season
+        struct_z = pd.Series(0.0, index=result.index)
+        for season, idx in result.groupby("season").groups.items():
+            vals = pd.to_numeric(blended.loc[idx], errors="coerce").fillna(0.0)
+            std = float(vals.std())
+            if np.isnan(std) or std < 1e-9:
+                z = pd.Series(0.0, index=idx)
+            else:
+                z = (vals - float(vals.mean())) / (std + 1e-9)
+
+            alpha = max(float(cfg.defensive_convex_alpha), 1.0)
+            z_convex = np.sign(z) * (np.abs(z) ** alpha)
+            z_scaled = z_convex * float(cfg.defensive_portable_phase_b_scale)
+            struct_z.loc[idx] = z_scaled.clip(
+                lower=-float(cfg.defensive_portable_clip),
+                upper=float(cfg.defensive_portable_clip),
+            )
+
+        result["defensive_portable_structural_z"] = struct_z
+        result["defensive_portable_z"] = result["defensive_portable_structural_z"]
+
     # Clean up internal temp columns
     temp_cols = [c for c in result.columns if c.startswith("_shrunk_") or c == "_assignment_difficulty_num"]
     if temp_cols:

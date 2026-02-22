@@ -600,6 +600,7 @@ input,select{{padding:10px 15px;border:1px solid #333;border-radius:8px;backgrou
 input{{width:300px}}select{{min-width:180px}}
 .sort-btn{{padding:8px 14px;border:1px solid #444;border-radius:8px;background:#16213e;color:#aaa;cursor:pointer;font-size:13px}}
 .sort-btn.active{{border-color:#00d9ff;color:#00d9ff}}
+.sort-hint{{color:#6174a8;font-size:12px}}
 .chip-row{{display:flex;gap:8px;flex-wrap:wrap;margin:-6px 0 16px 0}}
 .chip-btn{{padding:6px 12px;border:1px solid #2d3e70;border-radius:999px;background:#16213e;color:#8aa0d6;cursor:pointer;font-size:12px}}
 .chip-btn.active{{border-color:#00d9ff;color:#00d9ff}}
@@ -697,6 +698,7 @@ input{{width:300px}}select{{min-width:180px}}
     <span class="sort-btn" data-sort="transformed_dbke" onclick="setSort(this)">tDBKE</span>
   <span class="sort-btn" data-sort="ts" onclick="setSort(this)">TS%</span>
   <span class="sort-btn" data-sort="usg" onclick="setSort(this)">USG%</span>
+    <span class="sort-hint">Click active sort to toggle direction</span>
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
 </div>
 
@@ -735,10 +737,12 @@ input{{width:300px}}select{{min-width:180px}}
 /* ---- card index (small, parsed immediately) ---- */
 var cards=__CARDS_JSON__;
 var curSort='ppg';
+var curSortDir='desc';
 var curPos='';
 var CHUNK=80;
 var fData=[],rendered=0,gen=0;
 var _detailCache=null;  /* lazy-parsed on first modal open */
+var _sortBaseLabels={};
 
 /* populate defensive filter from card data */
 var dSel=document.getElementById('defFilter');
@@ -800,6 +804,28 @@ function fbkeCard(pct,rank){
     var txt=n.toFixed(1)+'%';
     if(rank!==null&&rank!==undefined){var o=ordSuffix(rank);if(o)txt+=' <span style="color:#7c8bb5;font-size:11px">('+o+')</span>';}
     return txt;
+}
+
+function initSortUI(){
+    document.querySelectorAll('.sort-btn[data-sort]').forEach(function(btn){
+        var key=btn.dataset.sort;
+        if(!_sortBaseLabels[key])_sortBaseLabels[key]=btn.textContent.trim();
+    });
+    refreshSortUI();
+}
+
+function refreshSortUI(){
+    document.querySelectorAll('.sort-btn[data-sort]').forEach(function(btn){
+        var key=btn.dataset.sort;
+        var base=_sortBaseLabels[key]||btn.textContent.trim();
+        if(key===curSort){
+            btn.classList.add('active');
+            btn.textContent=base+(curSortDir==='desc'?' ↓':' ↑');
+        }else{
+            btn.classList.remove('active');
+            btn.textContent=base;
+        }
+    });
 }
 
 /* ---- progress ---- */
@@ -1042,8 +1068,15 @@ document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal(n
 
 /* ---- filter / sort ---- */
 function setSort(el){
-  document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});
-  el.classList.add('active');curSort=el.dataset.sort;filterPlayers();
+    var nextSort=el.dataset.sort;
+    if(nextSort===curSort){
+        curSortDir=(curSortDir==='desc')?'asc':'desc';
+    }else{
+        curSort=nextSort;
+        curSortDir='desc';
+    }
+    refreshSortUI();
+    filterPlayers();
 }
 function setPositionChip(el){
     document.querySelectorAll('.chip-btn').forEach(function(b){b.classList.remove('active');});
@@ -1060,9 +1093,10 @@ function resetFilters(){
     document.querySelectorAll('.chip-btn').forEach(function(b){b.classList.remove('active');});
     var defaultChip=document.querySelector('.chip-btn[data-pos=""]');
     if(defaultChip)defaultChip.classList.add('active');
-  document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});
-  document.querySelector('.sort-btn[data-sort="ppg"]').classList.add('active');
-  curSort='ppg';filterPlayers();
+    curSort='ppg';
+    curSortDir='desc';
+    refreshSortUI();
+    filterPlayers();
 }
 function filterPlayers(){
   showLoad();
@@ -1079,11 +1113,21 @@ function filterPlayers(){
             if(curPos&&p.position_primary!==curPos)return false;
       return true;
     });
-    f.sort(function(a,b){return(b[curSort]!=null?b[curSort]:-999)-(a[curSort]!=null?a[curSort]:-999);});
+        f.sort(function(a,b){
+            var av=(a[curSort]!==null&&a[curSort]!==undefined)?Number(a[curSort]):null;
+            var bv=(b[curSort]!==null&&b[curSort]!==undefined)?Number(b[curSort]):null;
+            av=isFinite(av)?av:null;
+            bv=isFinite(bv)?bv:null;
+            if(av===null&&bv===null)return 0;
+            if(av===null)return 1;
+            if(bv===null)return -1;
+            return curSortDir==='desc' ? (bv-av) : (av-bv);
+        });
     renderPlayers(f);
   },0);
 }
 
+initSortUI();
 filterPlayers();
 </script>
 </body>
