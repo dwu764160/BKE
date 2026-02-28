@@ -157,10 +157,19 @@ def load_bke_v28_scores():
         if r["bke_composite"] is not None:
             by_season[r["season"]].append(r)
     for _, players in by_season.items():
+        n = len(players)
         players.sort(key=lambda x: x["bke_composite"], reverse=True)
         for i, p in enumerate(players):
             p["rank"] = i + 1
             p["pct"] = p["bke_composite"]  # already on 0-100 percentile-like scale
+        # OBKE percentile
+        players.sort(key=lambda x: (x["obke_transformed"] or 0), reverse=True)
+        for i, p in enumerate(players):
+            p["obke_pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
+        # DBKE percentile
+        players.sort(key=lambda x: (x["dbke_transformed"] or 0), reverse=True)
+        for i, p in enumerate(players):
+            p["dbke_pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
 
     # Merge layer scores
     layer_idx = {}
@@ -640,6 +649,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
                 'bke': card['transformed_bke'],
                 'obke': card['transformed_obke'],
                 'dbke': card['transformed_dbke'],
+                'obke_pct': clean_value(bke_rec.get('final_OBKE_percentile')),
+                'dbke_pct': clean_value(bke_rec.get('final_DBKE_percentile')),
             },
         }
         if v28_rec:
@@ -649,6 +660,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
                 'bke': clean_value(v28_rec.get('bke_composite')),
                 'obke': clean_value(v28_rec.get('obke_transformed')),
                 'dbke': clean_value(v28_rec.get('dbke_transformed')),
+                'obke_pct': clean_value(v28_rec.get('obke_pct')),
+                'dbke_pct': clean_value(v28_rec.get('dbke_pct')),
             }
         if v30_rec:
             card['bke_versions']['v30'] = {
@@ -657,6 +670,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
                 'bke': clean_value(v30_rec.get('BKE_v30')),
                 'obke': clean_value(v30_rec.get('OBKE_v30_reference')),
                 'dbke': clean_value(v30_rec.get('DBKE_scaled_v30')),
+                'obke_pct': clean_value(v30_rec.get('obke_pct')),
+                'dbke_pct': clean_value(v30_rec.get('dbke_pct')),
             }
 
         cards.append(card)
@@ -897,6 +912,47 @@ input{{width:300px}}select{{min-width:180px}}
 .pt-bar{{flex:1;height:18px;background:#0a1428;border-radius:4px;overflow:hidden}}
 .pt-fill{{height:100%;border-radius:3px;min-width:2px}}
 .pt-val{{width:50px;color:#888;font-size:14px}}
+
+/* lean bar */
+.lean-wrap{{display:flex;align-items:center;justify-content:center;margin:2px 0 4px}}
+.lean-bar{{width:44px;height:4px;border-radius:2px;overflow:hidden;display:flex}}
+.lean-o{{height:100%;background:#ff6b6b}}
+.lean-d{{height:100%;background:#4ecdc4}}
+
+/* modal nav arrows */
+.modal-nav{{position:absolute;top:50%;transform:translateY(-50%);background:rgba(15,23,48,.9);border:1px solid #2a3b70;color:#8aa0d6;width:44px;height:44px;border-radius:50%;cursor:pointer;font-size:22px;display:flex;align-items:center;justify-content:center;z-index:1001;transition:background .2s}}
+.modal-nav:hover{{background:rgba(30,42,80,.95);color:#fff}}
+.modal-nav.prev{{left:max(1vw,8px)}}
+.modal-nav.next{{right:max(1vw,8px)}}
+.modal-nav:disabled{{opacity:.25;cursor:default}}
+
+/* comparison overlay */
+.cmp-overlay{{position:fixed;inset:0;background:rgba(4,8,20,.9);display:none;align-items:center;justify-content:center;z-index:1000}}
+.cmp-overlay.open{{display:flex}}
+.cmp-panel{{width:min(920px,92vw);max-height:90vh;overflow:auto;background:#0f1730;border:1px solid #1e2a50;border-radius:18px;padding:28px;box-shadow:0 40px 120px rgba(0,0,0,.55)}}
+.cmp-hdr{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}}
+.cmp-title{{font-size:22px;font-weight:700;color:#fff}}
+.cmp-search-row{{display:flex;gap:12px;margin-bottom:18px;align-items:center}}
+.cmp-input{{flex:1;position:relative}}
+.cmp-input input{{width:100%;padding:8px 12px;background:#142246;border:1px solid #2b4475;border-radius:8px;color:#e6f0ff;font-size:14px;outline:none;box-sizing:border-box}}
+.cmp-input input:focus{{border-color:#4e7cc9}}
+.cmp-dd{{position:absolute;top:100%;left:0;right:0;background:#142246;border:1px solid #2b4475;border-radius:0 0 8px 8px;max-height:200px;overflow:auto;z-index:10;display:none}}
+.cmp-dd.open{{display:block}}
+.cmp-dd-item{{padding:6px 12px;cursor:pointer;font-size:13px;color:#aaa}}
+.cmp-dd-item:hover{{background:#1e3260;color:#fff}}
+.cmp-dd-season{{color:#666;font-size:11px;margin-left:6px}}
+.cmp-hdr-row{{display:grid;grid-template-columns:1fr 100px 1fr;gap:0;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #263a66}}
+.cmp-player-hdr{{font-size:16px;font-weight:600;color:#fff;text-align:center;padding:8px 0}}
+.cmp-stats-row{{display:grid;grid-template-columns:1fr 100px 1fr;gap:0;margin-bottom:2px;font-size:14px;color:#bac7e6;align-items:center}}
+.cmp-val{{padding:4px 8px;text-align:center}}
+.cmp-val.left{{text-align:right}}
+.cmp-val.right{{text-align:left}}
+.cmp-val.better{{color:#4ecdc4;font-weight:600}}
+.cmp-label{{padding:4px 8px;text-align:center;color:#7c8bb5;font-size:12px;text-transform:uppercase;min-width:80px}}
+.radar-wrap{{display:flex;justify-content:center;margin:20px 0}}
+.radar-legend{{display:flex;gap:16px;justify-content:center;margin-bottom:12px;font-size:13px;color:#bac7e6}}
+.radar-legend span{{display:flex;align-items:center;gap:4px}}
+.radar-dot{{width:10px;height:10px;border-radius:50%;display:inline-block}}
 </style>
 </head>
 <body>
@@ -931,6 +987,7 @@ input{{width:300px}}select{{min-width:180px}}
     <span class="ver-btn" data-ver="v28" onclick="switchBkeVersion(this)">v28</span>
     <span class="ver-btn" data-ver="v30" onclick="switchBkeVersion(this)">v3.0</span>
   </div>
+  <span class="sort-btn" onclick="openCmp()" style="background:#1e3260;margin-left:8px">&#128200; Compare</span>
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
 </div>
 
@@ -953,12 +1010,29 @@ input{{width:300px}}select{{min-width:180px}}
 <div id="grid" class="grid"></div>
 
 <div id="modal" class="mo" onclick="closeModal(event)">
+  <button class="modal-nav prev" id="modalPrev" onclick="event.stopPropagation();navigateModal(-1)" title="Previous season">&#9664;</button>
   <div class="mc" role="dialog" aria-modal="true">
     <div class="mh">
       <div><div id="mTitle" class="mt"></div><div id="mSub" class="ms"></div></div>
       <button class="mx" onclick="closeModal(event,true)">&times;</button>
     </div>
     <div id="mBody"></div>
+  </div>
+  <button class="modal-nav next" id="modalNext" onclick="event.stopPropagation();navigateModal(1)" title="Next season">&#9654;</button>
+</div>
+
+<div id="cmpModal" class="cmp-overlay" onclick="if(event.target===this)closeCmp()">
+  <div class="cmp-panel">
+    <div class="cmp-hdr">
+      <span class="cmp-title">&#128200; Player Comparison</span>
+      <button class="mx" onclick="closeCmp()">&times;</button>
+    </div>
+    <div class="cmp-search-row">
+      <div class="cmp-input"><input id="cmpSearch1" placeholder="Search player 1..." oninput="cmpAutocomplete(1)" onfocus="cmpAutocomplete(1)"><div class="cmp-dd" id="cmpDd1"></div></div>
+      <div style="color:#555;align-self:center;font-size:22px;font-weight:700">vs</div>
+      <div class="cmp-input"><input id="cmpSearch2" placeholder="Search player 2..." oninput="cmpAutocomplete(2)" onfocus="cmpAutocomplete(2)"><div class="cmp-dd" id="cmpDd2"></div></div>
+    </div>
+    <div id="cmpBody"></div>
   </div>
 </div>
 
@@ -976,6 +1050,8 @@ var fData=[],rendered=0,gen=0;
 var _detailCache=null;  /* lazy-parsed on first modal open */
 var _sortBaseLabels={};
 var curBkeVersion='v27';
+var curModalKey=null;
+var cmpSel={1:null,2:null};
 
 /* ---- BKE version helpers ---- */
 function getBkeField(card, field) {
@@ -1090,6 +1166,8 @@ function hideLoad(){setTimeout(function(){document.getElementById('loadBar').cla
 
 /* ---- card ---- */
 function cardHTML(p){
+  var op=getBkeField(p,'obke_pct'),dp=getBkeField(p,'dbke_pct');var lean='';
+  if(op!=null&&dp!=null&&(op+dp)>0){var ow=op/(op+dp)*100;lean='<div class="lean-wrap" title="O/D Lean: Off '+op.toFixed(0)+'% | Def '+dp.toFixed(0)+'%"><div class="lean-bar"><div class="lean-o" style="width:'+ow.toFixed(1)+'%"></div><div class="lean-d" style="width:'+(100-ow).toFixed(1)+'%"></div></div></div>';}
   return '<div class="card" onclick="openModal(\\''+p.key+'\\')">'
         +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG</div></div>'
     +'<div class="srow">'
@@ -1100,6 +1178,7 @@ function cardHTML(p){
     +'<div class="st"><div class="sv">'+fs(p.ts,'%')+'</div><div class="sl">TS%</div></div>'
     +'<div class="st"><div class="sv">'+fbkeCard(getBkeField(p,"pct"),getBkeField(p,"rank"))+'</div><div class="sl">BKE'+(curBkeVersion!=='v27'?' <span style="color:#f4a261;font-size:8px">'+curBkeVersion.toUpperCase()+'</span>':'')+'</div></div>'
     +'</div>'
+    +lean
     +'<div class="arow">'
     +'<div class="abox"><div class="albl">Offense</div><div class="aname off">'+p.off_archetype+eBadge(p.eff_tier)+'</div><div class="conf">Fit: '+p.off_confidence+'%'+(p.off_secondary?' &middot; '+p.off_secondary:'')+'</div></div>'
     +'<div class="abox"><div class="albl">Defense</div><div class="aname def">'+(p.def_archetype||'Unknown')+'</div><div class="conf">'+p.def_confidence+'%</div></div>'
@@ -1253,6 +1332,7 @@ function renderPositionEstimate(pr){
 }
 
 function openModal(key){
+  curModalKey=key;
   /* find the card record for basic info */
   var p=null;for(var i=0;i<cards.length;i++){if(cards[i].key===key){p=cards[i];break;}}
   if(!p)return;
@@ -1336,6 +1416,7 @@ function openModal(key){
     h3.addEventListener('click',function(){sec.classList.toggle('collapsed');});
   });
 
+  updateNavArrows();
   document.getElementById('modal').classList.add('open');
   document.body.style.overflow='hidden';
 }
@@ -1416,6 +1497,172 @@ function filterPlayers(){
         });
     renderPlayers(f);
   },0);
+}
+
+/* ---- season navigation ---- */
+function getPlayerSeasonKeys(key){
+    var pid=key.split('::')[0];
+    var keys=[];
+    for(var i=0;i<cards.length;i++){if(cards[i].key.split('::')[0]===pid)keys.push(cards[i].key);}
+    keys.sort();
+    return keys;
+}
+function updateNavArrows(){
+    if(!curModalKey)return;
+    var keys=getPlayerSeasonKeys(curModalKey);
+    var idx=keys.indexOf(curModalKey);
+    var prev=document.getElementById('modalPrev'),next=document.getElementById('modalNext');
+    if(prev)prev.disabled=(idx<=0);
+    if(next)next.disabled=(idx>=keys.length-1);
+}
+function navigateModal(dir){
+    if(!curModalKey)return;
+    var keys=getPlayerSeasonKeys(curModalKey);
+    var idx=keys.indexOf(curModalKey);
+    if(idx===-1)return;
+    var ni=idx+dir;
+    if(ni<0||ni>=keys.length)return;
+    openModal(keys[ni]);
+}
+
+/* ---- comparison feature ---- */
+/* precompute league max for radar chart normalization */
+var leagueMax={ppg:1,apg:1,rpg:1};
+for(var _i=0;_i<cards.length;_i++){
+    if(cards[_i].ppg>leagueMax.ppg)leagueMax.ppg=cards[_i].ppg;
+    if(cards[_i].apg>leagueMax.apg)leagueMax.apg=cards[_i].apg;
+    if(cards[_i].rpg>leagueMax.rpg)leagueMax.rpg=cards[_i].rpg;
+}
+var radarDims=[
+    {label:'PPG',fn:function(c){return c.ppg/leagueMax.ppg*100;}},
+    {label:'APG',fn:function(c){return c.apg/leagueMax.apg*100;}},
+    {label:'RPG',fn:function(c){return c.rpg/leagueMax.rpg*100;}},
+    {label:'USG%',fn:function(c){var v=Number(c.usg);return isFinite(v)?v/45*100:0;}},
+    {label:'TS%',fn:function(c){var v=Number(c.ts);return isFinite(v)?v/75*100:0;}},
+    {label:'BKE',fn:function(c){var v=getBkeField(c,'pct');return v!=null?Number(v):0;}},
+    {label:'Off Fit',fn:function(c){return c.off_confidence||0;}},
+    {label:'Def Fit',fn:function(c){return c.def_confidence||0;}}
+];
+
+function openCmp(){
+    cmpSel={1:null,2:null};
+    document.getElementById('cmpSearch1').value='';
+    document.getElementById('cmpSearch2').value='';
+    document.getElementById('cmpBody').innerHTML='<p style="color:#666;text-align:center">Select two players to compare</p>';
+    document.querySelectorAll('.cmp-dd').forEach(function(d){d.classList.remove('open');});
+    document.getElementById('cmpModal').classList.add('open');
+    document.body.style.overflow='hidden';
+}
+function closeCmp(){
+    document.getElementById('cmpModal').classList.remove('open');
+    document.body.style.overflow='';
+}
+function cmpAutocomplete(slot){
+    var inp=document.getElementById('cmpSearch'+slot);
+    var dd=document.getElementById('cmpDd'+slot);
+    var q=inp.value.toLowerCase().trim();
+    if(q.length<2){dd.classList.remove('open');return;}
+    var matches=[];
+    for(var i=0;i<cards.length&&matches.length<20;i++){
+        if(cards[i].name.toLowerCase().indexOf(q)!==-1)matches.push(cards[i]);
+    }
+    if(!matches.length){dd.innerHTML='<div class="cmp-dd-item" style="color:#555">No results</div>';dd.classList.add('open');return;}
+    var html='';
+    for(var i=0;i<matches.length;i++){
+        html+='<div class="cmp-dd-item" onclick="cmpSelect('+slot+',\\''+matches[i].key+'\\')">'+matches[i].name+'<span class="cmp-dd-season">'+matches[i].season+(matches[i].team?' \u00b7 '+matches[i].team:'')+'</span></div>';
+    }
+    dd.innerHTML=html;dd.classList.add('open');
+}
+function cmpSelect(slot,key){
+    var card=null;for(var i=0;i<cards.length;i++){if(cards[i].key===key){card=cards[i];break;}}
+    if(!card)return;
+    cmpSel[slot]=card;
+    document.getElementById('cmpSearch'+slot).value=card.name+' ('+card.season+')';
+    document.getElementById('cmpDd'+slot).classList.remove('open');
+    if(cmpSel[1]&&cmpSel[2])runComparison();
+}
+document.addEventListener('click',function(e){if(!e.target.closest('.cmp-input'))document.querySelectorAll('.cmp-dd').forEach(function(d){d.classList.remove('open');});});
+
+function runComparison(){
+    var p1=cmpSel[1],p2=cmpSel[2];
+    if(!p1||!p2)return;
+    var stats=[
+        {label:'PPG',v1:p1.ppg,v2:p2.ppg,higher:true},
+        {label:'APG',v1:p1.apg,v2:p2.apg,higher:true},
+        {label:'RPG',v1:p1.rpg,v2:p2.rpg,higher:true},
+        {label:'MPG',v1:p1.mpg,v2:p2.mpg,higher:true},
+        {label:'USG%',v1:p1.usg,v2:p2.usg,higher:true},
+        {label:'TS%',v1:p1.ts,v2:p2.ts,higher:true},
+        {label:'BKE',v1:getBkeField(p1,'pct'),v2:getBkeField(p2,'pct'),higher:true},
+        {label:'OBKE',v1:getBkeField(p1,'obke_pct'),v2:getBkeField(p2,'obke_pct'),higher:true},
+        {label:'DBKE',v1:getBkeField(p1,'dbke_pct'),v2:getBkeField(p2,'dbke_pct'),higher:true},
+        {label:'Off Fit',v1:p1.off_confidence,v2:p2.off_confidence,higher:true},
+        {label:'Off Eff',v1:p1.off_effectiveness,v2:p2.off_effectiveness,higher:true},
+        {label:'Def Fit',v1:p1.def_confidence,v2:p2.def_confidence,higher:true}
+    ];
+
+    var hdr='<div class="cmp-hdr-row"><div class="cmp-player-hdr" style="color:#ff6b6b">'+p1.name+'<br><span style="font-size:12px;color:#888">'+p1.season+(p1.team?' \u00b7 '+p1.team:'')+'</span></div><div class="cmp-label" style="font-size:10px;color:#555">STAT</div><div class="cmp-player-hdr" style="color:#4ecdc4">'+p2.name+'<br><span style="font-size:12px;color:#888">'+p2.season+(p2.team?' \u00b7 '+p2.team:'')+'</span></div></div>';
+
+    var rows='';
+    for(var i=0;i<stats.length;i++){
+        var s=stats[i];
+        var n1=(s.v1!==null&&s.v1!==undefined)?Number(s.v1):null;
+        var n2=(s.v2!==null&&s.v2!==undefined)?Number(s.v2):null;
+        var b1='',b2='';
+        if(n1!==null&&n2!==null&&isFinite(n1)&&isFinite(n2)){
+            if(s.higher){if(n1>n2)b1='better';else if(n2>n1)b2='better';}
+            else{if(n1<n2)b1='better';else if(n2<n1)b2='better';}
+        }
+        rows+='<div class="cmp-stats-row"><div class="cmp-val left '+b1+'">'+fv(n1)+'</div><div class="cmp-label">'+s.label+'</div><div class="cmp-val right '+b2+'">'+fv(n2)+'</div></div>';
+    }
+
+    /* archetype rows (non-numeric) */
+    rows+='<div class="cmp-stats-row"><div class="cmp-val left">'+p1.off_archetype+'</div><div class="cmp-label">Off Arch</div><div class="cmp-val right">'+p2.off_archetype+'</div></div>';
+    rows+='<div class="cmp-stats-row"><div class="cmp-val left">'+(p1.def_archetype||'Unknown')+'</div><div class="cmp-label">Def Arch</div><div class="cmp-val right">'+(p2.def_archetype||'Unknown')+'</div></div>';
+
+    document.getElementById('cmpBody').innerHTML=hdr+rows+'<div class="radar-legend"><span><span class="radar-dot" style="background:#ff6b6b"></span>'+p1.name+'</span><span><span class="radar-dot" style="background:#4ecdc4"></span>'+p2.name+'</span></div><div class="radar-wrap"><div id="radarSvg"></div></div>';
+    drawRadar(p1,p2);
+}
+
+function drawRadar(p1,p2){
+    var cx=160,cy=160,r=120,n=radarDims.length;
+    var as=2*Math.PI/n;
+    var svg='<svg width="320" height="320" viewBox="0 0 320 320">';
+    /* reference circles */
+    [0.25,0.5,0.75,1.0].forEach(function(pct){
+        var cr=r*pct;
+        svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+cr+'" fill="none" stroke="#2b4475" stroke-width="0.5" />';
+    });
+    /* axis lines + labels */
+    for(var i=0;i<n;i++){
+        var a=-Math.PI/2+i*as;
+        var ex=cx+r*Math.cos(a),ey=cy+r*Math.sin(a);
+        svg+='<line x1="'+cx+'" y1="'+cy+'" x2="'+ex.toFixed(1)+'" y2="'+ey.toFixed(1)+'" stroke="#1e2a50" stroke-width="1" />';
+        var lx=cx+(r+22)*Math.cos(a),ly=cy+(r+22)*Math.sin(a);
+        svg+='<text x="'+lx.toFixed(1)+'" y="'+ly.toFixed(1)+'" fill="#7c8bb5" font-size="10" text-anchor="middle" dominant-baseline="central">'+radarDims[i].label+'</text>';
+    }
+    /* polygon helper */
+    function poly(card,color,op){
+        var pts=[];
+        for(var i=0;i<n;i++){
+            var a=-Math.PI/2+i*as;
+            var v=Math.min(Math.max(radarDims[i].fn(card),0),100)/100;
+            pts.push((cx+r*v*Math.cos(a)).toFixed(1)+','+(cy+r*v*Math.sin(a)).toFixed(1));
+        }
+        return '<polygon points="'+pts.join(' ')+'" fill="'+color+'" fill-opacity="'+op+'" stroke="'+color+'" stroke-width="2" />';
+    }
+    svg+=poly(p2,'#4ecdc4',0.15);
+    svg+=poly(p1,'#ff6b6b',0.15);
+    /* dots */
+    for(var i=0;i<n;i++){
+        var a=-Math.PI/2+i*as;
+        var v1=Math.min(Math.max(radarDims[i].fn(p1),0),100)/100;
+        var v2=Math.min(Math.max(radarDims[i].fn(p2),0),100)/100;
+        svg+='<circle cx="'+(cx+r*v1*Math.cos(a)).toFixed(1)+'" cy="'+(cy+r*v1*Math.sin(a)).toFixed(1)+'" r="3" fill="#ff6b6b" />';
+        svg+='<circle cx="'+(cx+r*v2*Math.cos(a)).toFixed(1)+'" cy="'+(cy+r*v2*Math.sin(a)).toFixed(1)+'" r="3" fill="#4ecdc4" />';
+    }
+    svg+='</svg>';
+    document.getElementById('radarSvg').innerHTML=svg;
 }
 
 initSortUI();

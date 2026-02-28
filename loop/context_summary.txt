@@ -1,3 +1,28 @@
+- 2026-02-27 — BKE v3.0 Standard Applied Across Repo + Viewer Enhancements
+	- **Model change: v27 60/40 blend**
+		- `src/modeling/construct_bke_scores_v27.py` line 286: `raw_BKE = raw_OBKE + raw_DBKE` → `raw_BKE = 0.60 * raw_OBKE + 0.40 * raw_DBKE`
+		- Matches v3.0's offense-biased blend (offense_delta=0.10)
+		- Method doc updated: `"BKE_raw": "0.60*OBKE_raw + 0.40*DBKE_raw  [v3.0 60/40 offense/defense blend]"`
+		- v27 JSON regenerated (950 players, verified: SGA BKE=1.0335 = 0.60*1.3766 + 0.40*0.5189)
+	- **Viewer: O/D Lean Indicator**
+		- Cards now show a 44px split bar (red=offense, teal=defense) below stats row
+		- Width proportional to OBKE%/(OBKE%+DBKE%), title tooltip shows exact percentiles
+		- Requires `obke_pct` and `dbke_pct` in each BKE version's card data
+		- v28 loader enhanced to compute per-season OBKE/DBKE rank percentiles
+	- **Viewer: Season Navigation Arrows**
+		- Left/right chevron buttons outside modal card (absolutely positioned in overlay)
+		- Finds all card keys for same player_id, sorts by season, navigates prev/next
+		- Disabled at boundaries (first/last season)
+	- **Viewer: Two-Player Comparison**
+		- "Compare" button in controls bar opens full comparison overlay
+		- Two search inputs with autocomplete dropdown (first 20 matches, shows name+season+team)
+		- Head-to-head stats grid: PPG, APG, RPG, MPG, USG%, TS%, BKE, OBKE, DBKE, Off Fit, Off Eff, Def Fit
+		- Better value highlighted in teal; archetype rows shown without highlighting
+		- SVG radar chart with 8 normalized dimensions (PPG, APG, RPG, USG%, TS%, BKE, Off Fit, Def Fit)
+		- Concentric reference circles (25/50/75/100%), axis labels, two overlapping semi-transparent polygons
+		- Legend shows player colors (red/teal)
+	- HTML regenerated: 11.6MB, 953 cards
+
 - 2026-02-27 — BKE Version Toggle in Player Data Viewer
 	- Added seamless BKE version switching (v27 / v28 / v3.0) to `app/player_data_viewer.py`:
 		- New loaders: `load_bke_v28_scores()` (obke_dbke, layers, dimensions), `load_bke_v30_scores()` (defense shrinkage)

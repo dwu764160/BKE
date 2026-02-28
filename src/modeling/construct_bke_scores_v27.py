@@ -283,7 +283,7 @@ def construct_bke_scores_v27(
 
     eligible["raw_OBKE"] = obke_num
     eligible["raw_DBKE"] = dbke_num
-    eligible["raw_BKE"] = eligible["raw_OBKE"] + eligible["raw_DBKE"]
+    eligible["raw_BKE"] = 0.60 * eligible["raw_OBKE"] + 0.40 * eligible["raw_DBKE"]
 
     # Monotonic transforms.
     eligible["transformed_OBKE"] = _signed_log1p(eligible["raw_OBKE"])
@@ -379,9 +379,9 @@ def construct_bke_scores_v27(
         "output_file": output_json,
         "eligible_players": int(len(eligible)),
         "method": {
-            "OBKE_raw": "0.55*layer1_offensive_raw + 0.25*layer2_rue_raw + 0.20*layer3_off_elevation_raw",
-            "DBKE_raw": "0.60*layer1_defensive_raw + 0.25*layer3_def_elevation_raw + 0.15*layer4_scheme_bonus_raw",
-            "BKE_raw": "OBKE_raw + DBKE_raw",
+            "OBKE_raw": "0.55*offensive_portable_z + 0.25*role_utilization_z + 0.20*off_elevation_z  [v3.0 proxy standard]",
+            "DBKE_raw": "0.60*defensive_portable_z + 0.25*def_elevation_z + 0.15*scheme_bonus_z",
+            "BKE_raw": "0.60*OBKE_raw + 0.40*DBKE_raw  [v3.0 60/40 offense/defense blend]",
             "transform": "signed_log1p(x) = sign(x)*log(1+abs(x))",
             "terminal_percentile": "league-wide rank percentile over eligible players only",
         },

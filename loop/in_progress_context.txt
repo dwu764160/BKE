@@ -1,4 +1,13 @@
 2026-02-21 — v2.9 diagnostic suite completed + pipeline reorganization
+- 2026-02-27 — BKE v3.0 standard applied + viewer enhancements
+  - v27 constructor now uses 60/40 offense/defense blend (matching v3.0): `raw_BKE = 0.60*OBKE + 0.40*DBKE`
+  - v28 loader computes per-season OBKE/DBKE percentiles
+  - Card data includes `obke_pct`/`dbke_pct` for all versions
+  - New features in viewer:
+    - O/D lean indicator bar on each card
+    - Season navigation arrows on modal (prev/next season for same player)
+    - Two-player comparison with head-to-head stats + SVG radar chart
+  - HTML regenerated: 11.6MB, 953 cards
 - 2026-02-27 — BKE version toggle wired into player data viewer
   - `app/player_data_viewer.py` now loads v27 + v28 + v30 BKE data
   - HTML viewer has toggle buttons (v27 / v28 / v3.0) that switch card BKE badges, sort, and modal sections
