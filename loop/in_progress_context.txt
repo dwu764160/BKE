@@ -1,4 +1,11 @@
 2026-02-21 — v2.9 diagnostic suite completed + pipeline reorganization
+- 2026-02-27 — BKE version toggle wired into player data viewer
+  - `app/player_data_viewer.py` now loads v27 + v28 + v30 BKE data
+  - HTML viewer has toggle buttons (v27 / v28 / v3.0) that switch card BKE badges, sort, and modal sections
+  - Payload: 11.6 MB (from 10.2 MB, +14%)
+  - 953 cards, 947 with all 3 BKE versions
+  - Default remains v27; no production data changed
+
 - 2026-02-22 — v3.0 defense reconstruction Phase B structure replaced and rerun
   - `src/modeling/dbke_v30_defense_shrinkage.py` Phase B rewritten to:
     - standardize by global DBKE raw sigma
@@ -13,6 +20,29 @@
       - archetype spread improved: 0.102975 -> 0.089529
     - Phase C: FAIL (`status=stopped_after_phase_c`)
       - failing gate: `def_specialist_dbke_yoy_corr=0.412499` vs required > 0.45
+
+- 2026-02-22 — v3.0 Phase C reliability-weighted scaling implemented and tested
+  - Phase C scaling changed from global uniform shrink to reliability-weighted scaling using `lambda_shrink` around `DBKE_final` mean.
+  - Current best rerun (with `prior_blend_w=0.70`):
+    - `def_specialist_dbke_yoy_corr=0.420951` (improved but still below >0.45 gate)
+    - `dbke_yoy_corr=0.709442`
+    - `def_driver_share=0.363125`
+    - status remains `stopped_after_phase_c`
+  - Tested fallback `prior_blend_w=0.75` per suggestion; specialist YoY decreased to `0.383258`, so reverted to `0.70`.
+
+- 2026-02-22 — Added and ran specialist rank-stability diagnostics in Phase C
+  - New metrics now emitted to `reports/dbke_v30_defense_shrinkage.json` under `phase_results.phase_c`:
+    - Spearman YoY rank stability
+    - Top-10% retention YoY
+    - Top-20% retention YoY
+  - Two specialist definitions tested:
+    - top-25% by mean `D_port`: avg Spearman `0.322051`, Top10 `0.5625`, Top20 `0.433334`
+    - top-25% by baseline `DBKE_scaled_v30`: avg Spearman `0.379722`, Top10 `0.571429`, Top20 `0.428571`
+  - Latest key Phase C values unchanged:
+    - `def_specialist_dbke_yoy_corr=0.420951`
+    - `dbke_yoy_corr=0.709442`
+    - `def_driver_share=0.363125`
+    - status remains `stopped_after_phase_c`.
 
 - 2026-02-21 — v3.0 defense reconstruction script (phase-gated) implemented
   - Added `src/modeling/dbke_v30_defense_shrinkage.py`

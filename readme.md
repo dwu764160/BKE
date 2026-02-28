@@ -74,7 +74,7 @@ python3 src/modeling/construct_bke_scores_v27.py            # Build final OBKE/D
 python3 -m src.modeling.backtesting                          # Run year-over-year prediction backtest
 python3 -m src.modeling.backtesting --all-pairs              # Run all season-pair backtests
 python3 tests/bke_v29_diagnostics.py                         # Run v2.9 diagnostic suite (8 domains → JSON report)
-python3 src/modeling/dbke_v30_defense_shrinkage.py          # Run v3.0 defense reconstruction phases (A/B/C) with stop-on-fail gates (Phase B: standardize -> smooth negative compression -> archetype mean-shrink -> rescale)
+python3 src/modeling/dbke_v30_defense_shrinkage.py          # Run v3.0 defense reconstruction phases (A/B/C) with stop-on-fail gates (Phase B stable geometry + Phase C reliability-weighted scaling + specialist rank-stability diagnostics)
 ```
 
 ## Visualization / Export

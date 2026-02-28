@@ -1,3 +1,20 @@
+- 2026-02-27 — BKE Version Toggle in Player Data Viewer
+	- Added seamless BKE version switching (v27 / v28 / v3.0) to `app/player_data_viewer.py`:
+		- New loaders: `load_bke_v28_scores()` (obke_dbke, layers, dimensions), `load_bke_v30_scores()` (defense shrinkage)
+		- Cards embed `bke_versions` dict with per-version pct/rank/bke/obke/dbke
+		- Details store includes `bke_v28` and `bke_v30` sections (layer z-scores, dimension z-scores, defense pipeline fields)
+		- v28: composite BKE = 60% obke_transformed + 40% dbke_transformed, ranked per season
+		- v30: percentiles computed from raw BKE_v30 / DBKE_scaled_v30 / OBKE_v30_reference per season
+	- Frontend changes:
+		- Version toggle buttons (v27 / v28 / v3.0) with orange active indicator in controls bar
+		- `getBkeField()` helper routes card BKE display through active version
+		- Sort by tBKE / tOBKE / tDBKE uses active version values
+		- Modal BKE Highlights renders version-specific fields (v27 percentiles, v28 decomposition, v30 defense shrinkage)
+		- Modal BKE Details KV shows version-specific raw data
+		- Reset button restores version to v27
+	- Payload impact: 10.2MB → 11.6MB (+14%), 953 cards, 947 with all 3 versions
+	- All v27 behavior preserved as default; no production data changed
+
 - 2026-02-22 — BKE v3.0 Phase B Structural Rewrite (Stable Geometry)
 	- Replaced prior Phase B path in `src/modeling/dbke_v30_defense_shrinkage.py`:
 		- removed hard archetype scale clipping and tanh tail saturation step
@@ -13,6 +30,31 @@
 		- Phase C: FAIL (`status=stopped_after_phase_c`)
 			- failing gate: `def_specialist_dbke_yoy_corr=0.412499` (< min 0.45)
 	- `readme.md` modeling step note updated to describe new Phase B structure.
+
+- 2026-02-22 — BKE v3.0 Phase C Reliability-Weighted Scaling
+	- Updated Phase C in `src/modeling/dbke_v30_defense_shrinkage.py` to replace uniform DBKE scaling with reliability-aware scaling:
+		- old: `DBKE_scaled = DBKE_final * scale_applied`
+		- new: `DBKE_scaled_i = mu + scale_applied * lambda_shrink_i * (DBKE_final_i - mu)`
+	- Validation rerun results (with `prior_blend_w=0.70`):
+		- `def_specialist_dbke_yoy_corr = 0.420951` (improved vs pre-change 0.412499, still below gate 0.45)
+		- `dbke_yoy_corr = 0.709442`
+		- `def_driver_share = 0.363125`
+		- status remains `stopped_after_phase_c`
+	- Tested fallback suggestion `prior_blend_w: 0.70 -> 0.75`; outcome worsened specialist stability (`0.383258`) and was reverted to `0.70`.
+	- `readme.md` updated to reflect Phase C reliability-weighted scaling behavior.
+
+- 2026-02-22 — Added missing specialist rank-stability diagnostics (Phase C)
+	- Extended `src/modeling/dbke_v30_defense_shrinkage.py` Phase C metrics to include:
+		- Spearman rank YoY for specialists
+		- Top-10% retention YoY
+		- Top-20% retention YoY
+	- Added both specialist definitions:
+		1) top-25% by global mean `D_port`
+		2) top-25% by baseline-season `DBKE_scaled_v30` (pairwise)
+	- Latest run (`status=stopped_after_phase_c`) diagnostics:
+		- Definition 1 avg: Spearman `0.322051`, Top10 retention `0.5625`, Top20 retention `0.433334`
+		- Definition 2 avg: Spearman `0.379722`, Top10 retention `0.571429`, Top20 retention `0.428571`
+	- Interpretation from run: baseline-DBKE specialist definition improves rank stability vs D_port-defined specialist cohort while retention is broadly similar.
 
 - 2026-02-21 — BKE v3.0 Defense Reconstruction (Phase-Gated Script)
 	- Added `src/modeling/dbke_v30_defense_shrinkage.py` implementing plan phases:

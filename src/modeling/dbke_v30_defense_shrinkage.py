@@ -113,6 +113,81 @@ def _compute_yoy_corr(df: pd.DataFrame, value_col: str) -> float:
     return float(np.mean(corr_vals))
 
 
+def _compute_rank_stability_yoy(
+    df: pd.DataFrame,
+    value_col: str,
+    specialist_mode: str,
+    specialist_ids: set | None = None,
+    specialist_q: float = 0.75,
+) -> Dict:
+    seasons = sorted(df["season"].dropna().unique(), key=_season_sort_key)
+    pair_rows = []
+
+    for i in range(len(seasons) - 1):
+        s1, s2 = seasons[i], seasons[i + 1]
+        a = df[df["season"] == s1][["player_id", value_col]].rename(columns={value_col: "v1"})
+        b = df[df["season"] == s2][["player_id", value_col]].rename(columns={value_col: "v2"})
+        merged = a.merge(b, on="player_id", how="inner")
+
+        if specialist_mode == "global_ids":
+            ids = specialist_ids if specialist_ids is not None else set()
+        elif specialist_mode == "baseline_value_q":
+            qv = float(a["v1"].quantile(specialist_q)) if len(a) else np.nan
+            ids = set(a[a["v1"] >= qv]["player_id"].tolist()) if np.isfinite(qv) else set()
+        else:
+            ids = set()
+
+        merged = merged[merged["player_id"].isin(ids)].copy()
+        n = int(len(merged))
+
+        if n < 10:
+            pair_rows.append(
+                {
+                    "pair": f"{s1}->{s2}",
+                    "n": n,
+                    "spearman": None,
+                    "top10_retention": None,
+                    "top20_retention": None,
+                }
+            )
+            continue
+
+        spearman = float(merged["v1"].rank(method="average").corr(merged["v2"].rank(method="average")))
+
+        q10_1 = float(merged["v1"].quantile(0.90))
+        q10_2 = float(merged["v2"].quantile(0.90))
+        top10_1 = set(merged[merged["v1"] >= q10_1]["player_id"].tolist())
+        top10_2 = set(merged[merged["v2"] >= q10_2]["player_id"].tolist())
+        top10_ret = float(len(top10_1 & top10_2) / len(top10_1)) if len(top10_1) else np.nan
+
+        q20_1 = float(merged["v1"].quantile(0.80))
+        q20_2 = float(merged["v2"].quantile(0.80))
+        top20_1 = set(merged[merged["v1"] >= q20_1]["player_id"].tolist())
+        top20_2 = set(merged[merged["v2"] >= q20_2]["player_id"].tolist())
+        top20_ret = float(len(top20_1 & top20_2) / len(top20_1)) if len(top20_1) else np.nan
+
+        pair_rows.append(
+            {
+                "pair": f"{s1}->{s2}",
+                "n": n,
+                "spearman": _sf(spearman),
+                "top10_retention": _sf(top10_ret),
+                "top20_retention": _sf(top20_ret),
+            }
+        )
+
+    vals_s = [r["spearman"] for r in pair_rows if r["spearman"] is not None]
+    vals_r10 = [r["top10_retention"] for r in pair_rows if r["top10_retention"] is not None]
+    vals_r20 = [r["top20_retention"] for r in pair_rows if r["top20_retention"] is not None]
+
+    return {
+        "avg_spearman": _sf(np.mean(vals_s)) if vals_s else None,
+        "avg_top10_retention": _sf(np.mean(vals_r10)) if vals_r10 else None,
+        "avg_top20_retention": _sf(np.mean(vals_r20)) if vals_r20 else None,
+        "pairs": pair_rows,
+    }
+
+
 def _build_obke(df: pd.DataFrame) -> pd.Series:
     off_port = pd.to_numeric(df.get("offensive_portable_z", 0.0), errors="coerce").fillna(0.0)
     if "role_utilization_raw_z" in df.columns:
@@ -237,7 +312,9 @@ def run_phase_c(df: pd.DataFrame, cfg: V30DefenseConfig) -> Tuple[pd.DataFrame, 
     scale_applied = 1.0
     if var_obke > 0 and var_dbke > 0 and (var_dbke > cfg.var_equalize_ratio_threshold * var_obke):
         scale_applied = float(np.sqrt(var_obke / var_dbke))
-    out["DBKE_scaled_v30"] = out["DBKE_final_v30"] * scale_applied
+    mu_dbke = float(out["DBKE_final_v30"].mean())
+    reliability = pd.to_numeric(out.get("lambda_shrink", 1.0), errors="coerce").fillna(1.0).clip(lower=0.0, upper=1.0)
+    out["DBKE_scaled_v30"] = mu_dbke + scale_applied * reliability * (out["DBKE_final_v30"] - mu_dbke)
 
     out["BKE_v30"] = (0.5 + cfg.offense_delta) * out["OBKE_v30_reference"] + (0.5 - cfg.offense_delta) * out["DBKE_scaled_v30"]
 
@@ -251,6 +328,19 @@ def run_phase_c(df: pd.DataFrame, cfg: V30DefenseConfig) -> Tuple[pd.DataFrame, 
     spec_ids = set(player_port[player_port >= q75].index.tolist()) if np.isfinite(q75) else set()
     spec_df = out[out["player_id"].isin(spec_ids)]
     spec_yoy = _compute_yoy_corr(spec_df, "DBKE_scaled_v30") if len(spec_df) else np.nan
+
+    rank_diag_port = _compute_rank_stability_yoy(
+        out,
+        "DBKE_scaled_v30",
+        specialist_mode="global_ids",
+        specialist_ids=spec_ids,
+    )
+    rank_diag_baseline_dbke = _compute_rank_stability_yoy(
+        out,
+        "DBKE_scaled_v30",
+        specialist_mode="baseline_value_q",
+        specialist_q=0.75,
+    )
 
     arch_col = "defensive_archetype" if "defensive_archetype" in out.columns else "primary_archetype"
     arch_ratio = []
@@ -275,6 +365,8 @@ def run_phase_c(df: pd.DataFrame, cfg: V30DefenseConfig) -> Tuple[pd.DataFrame, 
         "penalty_asymmetry_pre": _sf(asym_pre),
         "penalty_asymmetry_post": _sf(asym_post),
         "max_std_ratio_dbke_to_obke_within_archetype": _sf(arch_ratio_max),
+        "specialist_rank_stability_top25_by_mean_D_port": rank_diag_port,
+        "specialist_rank_stability_top25_by_baseline_DBKE_scaled": rank_diag_baseline_dbke,
         "phase_pass": bool(
             np.isfinite(def_driver_share) and def_driver_share < cfg.phase_c_max_def_driver_share and
             np.isfinite(dbke_yoy) and dbke_yoy > cfg.phase_c_min_dbke_yoy_corr and

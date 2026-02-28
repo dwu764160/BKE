@@ -110,6 +110,152 @@ def load_bke_scores():
         index[(pid, season)] = rec
     return index
 
+def load_bke_v28_scores():
+    """Load v28 OBKE/DBKE scores, layer scores, and dimension scores.
+
+    Returns dict keyed by (player_id, season) with composite BKE,
+    transformed OBKE/DBKE, rank, and all layer/dimension z-scores.
+    """
+    from collections import defaultdict
+
+    def _load_json(path):
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    obke_dbke = _load_json(f"{PROCESSED_DIR}/bke/obke_dbke_scores_v28.json")
+    layers    = _load_json(f"{PROCESSED_DIR}/bke/layer_scores_v28.json")
+    dims      = _load_json(f"{PROCESSED_DIR}/bke/dimension_scores_v28.json")
+
+    records = []
+    for _, rec in obke_dbke.get("players", {}).items():
+        if not isinstance(rec, dict):
+            continue
+        pid = normalize_player_id(rec.get("player_id"))
+        season = str(rec.get("season", "")).strip()
+        if not pid or not season:
+            continue
+        obke_t = rec.get("obke_transformed")
+        dbke_t = rec.get("dbke_transformed")
+        bke = round(0.60 * obke_t + 0.40 * dbke_t, 2) if obke_t is not None and dbke_t is not None else None
+        records.append({
+            "player_id": pid, "season": season,
+            "obke_transformed": obke_t, "dbke_transformed": dbke_t,
+            "bke_composite": bke,
+            "portable_talent_z_adj": rec.get("portable_talent_z_adj"),
+            "offensive_portable_z": rec.get("offensive_portable_z"),
+            "defensive_portable_z": rec.get("defensive_portable_z"),
+        })
+
+    # Rank per season
+    by_season = defaultdict(list)
+    for r in records:
+        if r["bke_composite"] is not None:
+            by_season[r["season"]].append(r)
+    for _, players in by_season.items():
+        players.sort(key=lambda x: x["bke_composite"], reverse=True)
+        for i, p in enumerate(players):
+            p["rank"] = i + 1
+            p["pct"] = p["bke_composite"]  # already on 0-100 percentile-like scale
+
+    # Merge layer scores
+    layer_idx = {}
+    for _, rec in layers.get("players", {}).items():
+        if not isinstance(rec, dict):
+            continue
+        pid = normalize_player_id(rec.get("player_id"))
+        season = str(rec.get("season", "")).strip()
+        if pid and season:
+            layer_idx[(pid, season)] = {k: v for k, v in rec.items() if k not in ("player_id", "season")}
+
+    # Merge dimension scores
+    dim_idx = {}
+    for _, rec in dims.get("players", {}).items():
+        if not isinstance(rec, dict):
+            continue
+        pid = normalize_player_id(rec.get("player_id"))
+        season = str(rec.get("season", "")).strip()
+        if pid and season:
+            dim_idx[(pid, season)] = {k: v for k, v in rec.items() if k not in ("player_id", "season")}
+
+    index = {}
+    for r in records:
+        key = (r["player_id"], r["season"])
+        r["layer_scores"] = layer_idx.get(key, {})
+        r["dimension_scores"] = dim_idx.get(key, {})
+        index[key] = r
+    return index
+
+def load_bke_v30_scores():
+    """Load v3.0 defense shrinkage scores and compute percentiles.
+
+    Returns dict keyed by (player_id, season) with BKE_v30, DBKE_scaled_v30,
+    OBKE_v30_reference, intermediate fields, and computed percentiles/ranks.
+    """
+    from collections import defaultdict
+
+    path = "reports/dbke_v30_defense_shrinkage.json"
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return {}
+
+    player_outputs = payload.get("player_outputs", [])
+    records = []
+    for rec in player_outputs:
+        pid = normalize_player_id(rec.get("player_id"))
+        season = str(rec.get("season", "")).strip()
+        if not pid or not season:
+            continue
+        records.append({
+            "player_id": pid, "season": season,
+            "player_name": rec.get("player_name"),
+            "BKE_v30": rec.get("BKE_v30"),
+            "DBKE_scaled_v30": rec.get("DBKE_scaled_v30"),
+            "OBKE_v30_reference": rec.get("OBKE_v30_reference"),
+            "DBKE_raw_v30": rec.get("DBKE_raw_v30"),
+            "DBKE_final_v30": rec.get("DBKE_final_v30"),
+            "DBKE_asym_v30": rec.get("DBKE_asym_v30"),
+            "DBKE_norm_v30": rec.get("DBKE_norm_v30"),
+            "D_port": rec.get("D_port"),
+            "D_rapm_shrunk": rec.get("D_rapm_shrunk"),
+            "D_stabilized": rec.get("D_stabilized"),
+            "lambda_shrink": rec.get("lambda_shrink"),
+        })
+
+    # Compute percentile ranks per season
+    by_season = defaultdict(list)
+    for r in records:
+        if r["BKE_v30"] is not None:
+            by_season[r["season"]].append(r)
+    for _, players in by_season.items():
+        n = len(players)
+        # BKE rank + percentile
+        players.sort(key=lambda x: x["BKE_v30"], reverse=True)
+        for i, p in enumerate(players):
+            p["rank"] = i + 1
+            p["bke_pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
+        # DBKE percentile
+        players.sort(key=lambda x: (x["DBKE_scaled_v30"] or 0), reverse=True)
+        for i, p in enumerate(players):
+            p["dbke_pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
+        # OBKE percentile
+        players.sort(key=lambda x: (x["OBKE_v30_reference"] or 0), reverse=True)
+        for i, p in enumerate(players):
+            p["obke_pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
+
+    index = {}
+    for r in records:
+        index[(r["player_id"], r["season"])] = r
+    return index
+
 def load_player_season_stats():
     path = f"{HISTORICAL_DIR}/complete_player_season_stats.parquet"
     if not os.path.exists(path):
@@ -384,8 +530,10 @@ def get_playtype_rankings(row):
 # HTML generation
 # ---------------------------------------------------------------------------
 
-def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map, bke_map):
+def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map, bke_map, bke_v28_map=None, bke_v30_map=None):
     """Generate optimised HTML viewer with lazy-loaded detail data."""
+    bke_v28_map = bke_v28_map or {}
+    bke_v30_map = bke_v30_map or {}
 
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
                 'defensive_confidence', 'assignment_difficulty',
@@ -480,6 +628,37 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             'transformed_obke': clean_value(bke_rec.get('transformed_OBKE')),
             'transformed_dbke': clean_value(bke_rec.get('transformed_DBKE')),
         }
+
+        # ---- Version-specific BKE card data for toggle ----
+        v28_rec = bke_v28_map.get((pid, season), {})
+        v30_rec = bke_v30_map.get((pid, season), {})
+
+        card['bke_versions'] = {
+            'v27': {
+                'pct': card['bke_pct'],
+                'rank': card['bke_rank'],
+                'bke': card['transformed_bke'],
+                'obke': card['transformed_obke'],
+                'dbke': card['transformed_dbke'],
+            },
+        }
+        if v28_rec:
+            card['bke_versions']['v28'] = {
+                'pct': clean_value(v28_rec.get('pct')),
+                'rank': clean_value(v28_rec.get('rank')),
+                'bke': clean_value(v28_rec.get('bke_composite')),
+                'obke': clean_value(v28_rec.get('obke_transformed')),
+                'dbke': clean_value(v28_rec.get('dbke_transformed')),
+            }
+        if v30_rec:
+            card['bke_versions']['v30'] = {
+                'pct': clean_value(v30_rec.get('bke_pct')),
+                'rank': clean_value(v30_rec.get('rank')),
+                'bke': clean_value(v30_rec.get('BKE_v30')),
+                'obke': clean_value(v30_rec.get('OBKE_v30_reference')),
+                'dbke': clean_value(v30_rec.get('DBKE_scaled_v30')),
+            }
+
         cards.append(card)
         profile = dict(bios_map.get(pid, {}))
         profile["position"] = (
@@ -560,6 +739,48 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
                 'layer4_scheme_bonus_raw': clean_value((bke_rec.get('layer_scores') or {}).get('layer4_scheme_bonus_raw')),
             },
         }
+
+        # ---- v28 detail data ----
+        if v28_rec:
+            v28_detail = {
+                'obke_transformed': clean_value(v28_rec.get('obke_transformed')),
+                'dbke_transformed': clean_value(v28_rec.get('dbke_transformed')),
+                'bke_composite': clean_value(v28_rec.get('bke_composite')),
+                'rank': clean_value(v28_rec.get('rank')),
+                'portable_talent_z_adj': clean_value(v28_rec.get('portable_talent_z_adj')),
+                'offensive_portable_z': clean_value(v28_rec.get('offensive_portable_z')),
+                'defensive_portable_z': clean_value(v28_rec.get('defensive_portable_z')),
+            }
+            for k, v in v28_rec.get('layer_scores', {}).items():
+                v28_detail[f'layer_{k}'] = clean_value(v)
+            for k, v in v28_rec.get('dimension_scores', {}).items():
+                v28_detail[f'dim_{k}'] = clean_value(v)
+            detail['bke_v28'] = v28_detail
+        else:
+            detail['bke_v28'] = {}
+
+        # ---- v30 detail data ----
+        if v30_rec:
+            detail['bke_v30'] = {
+                'BKE_v30': clean_value(v30_rec.get('BKE_v30')),
+                'DBKE_scaled_v30': clean_value(v30_rec.get('DBKE_scaled_v30')),
+                'OBKE_v30_reference': clean_value(v30_rec.get('OBKE_v30_reference')),
+                'DBKE_raw_v30': clean_value(v30_rec.get('DBKE_raw_v30')),
+                'DBKE_final_v30': clean_value(v30_rec.get('DBKE_final_v30')),
+                'DBKE_asym_v30': clean_value(v30_rec.get('DBKE_asym_v30')),
+                'DBKE_norm_v30': clean_value(v30_rec.get('DBKE_norm_v30')),
+                'D_port': clean_value(v30_rec.get('D_port')),
+                'D_rapm_shrunk': clean_value(v30_rec.get('D_rapm_shrunk')),
+                'D_stabilized': clean_value(v30_rec.get('D_stabilized')),
+                'lambda_shrink': clean_value(v30_rec.get('lambda_shrink')),
+                'rank': clean_value(v30_rec.get('rank')),
+                'bke_pct': clean_value(v30_rec.get('bke_pct')),
+                'dbke_pct': clean_value(v30_rec.get('dbke_pct')),
+                'obke_pct': clean_value(v30_rec.get('obke_pct')),
+            }
+        else:
+            detail['bke_v30'] = {}
+
         details[key] = detail
 
     # Deduplicate cards by key (traded players can appear twice)
@@ -608,6 +829,11 @@ input{{width:300px}}select{{min-width:180px}}
 .reset-btn:hover{{background:#e63946;color:#fff}}
 .stats-bar{{display:flex;gap:20px;margin-bottom:20px;color:#888}}
 .stats-bar span{{background:#16213e;padding:8px 15px;border-radius:6px}}
+.ver-group{{display:flex;gap:4px;align-items:center}}
+.ver-btn{{padding:6px 12px;border:1px solid #3d5a80;border-radius:6px;background:#16213e;color:#7c8bb5;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s}}
+.ver-btn.active{{border-color:#f4a261;color:#f4a261;background:#1e2a4a}}
+.ver-btn:hover{{border-color:#f4a261;color:#f4a261}}
+.ver-label{{color:#666;font-size:12px;margin-right:2px}}
 
 .load-wrap{{background:#101a33;border:1px solid #1f2a4f;border-radius:8px;padding:10px 12px;margin-bottom:16px;display:none}}
 .load-wrap.active{{display:block}}
@@ -699,6 +925,12 @@ input{{width:300px}}select{{min-width:180px}}
   <span class="sort-btn" data-sort="ts" onclick="setSort(this)">TS%</span>
   <span class="sort-btn" data-sort="usg" onclick="setSort(this)">USG%</span>
     <span class="sort-hint">Click active sort to toggle direction</span>
+  <div class="ver-group">
+    <span class="ver-label">BKE:</span>
+    <span class="ver-btn active" data-ver="v27" onclick="switchBkeVersion(this)">v27</span>
+    <span class="ver-btn" data-ver="v28" onclick="switchBkeVersion(this)">v28</span>
+    <span class="ver-btn" data-ver="v30" onclick="switchBkeVersion(this)">v3.0</span>
+  </div>
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
 </div>
 
@@ -743,6 +975,23 @@ var CHUNK=80;
 var fData=[],rendered=0,gen=0;
 var _detailCache=null;  /* lazy-parsed on first modal open */
 var _sortBaseLabels={};
+var curBkeVersion='v27';
+
+/* ---- BKE version helpers ---- */
+function getBkeField(card, field) {
+    var v = (card.bke_versions || {})[curBkeVersion];
+    if (!v) v = (card.bke_versions || {})['v27'] || {};
+    return v[field] !== undefined ? v[field] : null;
+}
+function switchBkeVersion(el) {
+    var ver = el.dataset.ver;
+    if (ver === curBkeVersion) return;
+    curBkeVersion = ver;
+    document.querySelectorAll('.ver-btn').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.ver === ver);
+    });
+    filterPlayers();
+}
 
 /* populate defensive filter from card data */
 var dSel=document.getElementById('defFilter');
@@ -849,7 +1098,7 @@ function cardHTML(p){
     +'<div class="st"><div class="sv">'+p.rpg+'</div><div class="sl">RPG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.usg,'%')+'</div><div class="sl">USG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.ts,'%')+'</div><div class="sl">TS%</div></div>'
-    +'<div class="st"><div class="sv">'+fbkeCard(p.bke_pct,p.bke_rank)+'</div><div class="sl">BKE</div></div>'
+    +'<div class="st"><div class="sv">'+fbkeCard(getBkeField(p,"pct"),getBkeField(p,"rank"))+'</div><div class="sl">BKE'+(curBkeVersion!=='v27'?' <span style="color:#f4a261;font-size:8px">'+curBkeVersion.toUpperCase()+'</span>':'')+'</div></div>'
     +'</div>'
     +'<div class="arow">'
     +'<div class="abox"><div class="albl">Offense</div><div class="aname off">'+p.off_archetype+eBadge(p.eff_tier)+'</div><div class="conf">Fit: '+p.off_confidence+'%'+(p.off_secondary?' &middot; '+p.off_secondary:'')+'</div></div>'
@@ -919,32 +1168,60 @@ function renderReasons(off,def){
   return h;
 }
 
-function renderBKEHighlights(bke){
+function renderBKEHighlights(bke, version){
     if(!bke)return '';
+    version = version || 'v27';
     var cards=[];
     function push(label,val){if(val!==null&&val!==undefined&&val!=='')cards.push({label:label,value:val});}
     function pct(v){return v!=null?Number(v).toFixed(1)+'%':null;}
-    push('BKE Rank',bke.rank);
-    push('BKE Percentile',pct(bke.final_BKE_percentile));
-    push('OBKE Percentile',pct(bke.final_OBKE_percentile));
-    push('DBKE Percentile',pct(bke.final_DBKE_percentile));
-    push('Pos-Band BKE %ile',pct(bke.position_band_BKE_percentile));
-    push('Pos-Band OBKE %ile',pct(bke.position_band_OBKE_percentile));
-    push('Pos-Band DBKE %ile',pct(bke.position_band_DBKE_percentile));
-    push('Off-Arch BKE %ile',pct(bke.off_archetype_BKE_percentile));
-    push('Off-Arch OBKE %ile',pct(bke.off_archetype_OBKE_percentile));
-    push('Off-Arch DBKE %ile',pct(bke.off_archetype_DBKE_percentile));
-    push('Def-Arch BKE %ile',pct(bke.def_archetype_BKE_percentile));
-    push('Def-Arch OBKE %ile',pct(bke.def_archetype_OBKE_percentile));
-    push('Def-Arch DBKE %ile',pct(bke.def_archetype_DBKE_percentile));
-    push('Transformed BKE',bke.transformed_BKE);
-    push('Transformed OBKE',bke.transformed_OBKE);
-    push('Transformed DBKE',bke.transformed_DBKE);
-    push('Position Band',bke.position_bucket);
-    push('Off Archetype',bke.primary_archetype);
-    push('Def Archetype',bke.defensive_archetype);
-    if(!cards.length)return '';
-    return '<div class="msec msec-bke"><h3>BKE Highlights</h3>'+renderSG(cards)+'</div>';
+
+    if(version==='v27'){
+        push('BKE Rank',bke.rank);
+        push('BKE Percentile',pct(bke.final_BKE_percentile));
+        push('OBKE Percentile',pct(bke.final_OBKE_percentile));
+        push('DBKE Percentile',pct(bke.final_DBKE_percentile));
+        push('Pos-Band BKE %ile',pct(bke.position_band_BKE_percentile));
+        push('Pos-Band OBKE %ile',pct(bke.position_band_OBKE_percentile));
+        push('Pos-Band DBKE %ile',pct(bke.position_band_DBKE_percentile));
+        push('Off-Arch BKE %ile',pct(bke.off_archetype_BKE_percentile));
+        push('Off-Arch OBKE %ile',pct(bke.off_archetype_OBKE_percentile));
+        push('Off-Arch DBKE %ile',pct(bke.off_archetype_DBKE_percentile));
+        push('Def-Arch BKE %ile',pct(bke.def_archetype_BKE_percentile));
+        push('Def-Arch OBKE %ile',pct(bke.def_archetype_OBKE_percentile));
+        push('Def-Arch DBKE %ile',pct(bke.def_archetype_DBKE_percentile));
+        push('Transformed BKE',bke.transformed_BKE);
+        push('Transformed OBKE',bke.transformed_OBKE);
+        push('Transformed DBKE',bke.transformed_DBKE);
+        push('Position Band',bke.position_bucket);
+        push('Off Archetype',bke.primary_archetype);
+        push('Def Archetype',bke.defensive_archetype);
+    } else if(version==='v28'){
+        push('BKE Composite',bke.bke_composite);
+        push('OBKE Transformed',bke.obke_transformed);
+        push('DBKE Transformed',bke.dbke_transformed);
+        push('Rank',bke.rank);
+        push('Portable Talent Z',bke.portable_talent_z_adj);
+        push('Off Portable Z',bke.offensive_portable_z);
+        push('Def Portable Z',bke.defensive_portable_z);
+        for(var k in bke){if(k.indexOf('layer_')===0)push(k.replace('layer_','L: '),bke[k]);}
+        for(var k in bke){if(k.indexOf('dim_')===0)push(k.replace('dim_','D: '),bke[k]);}
+    } else if(version==='v30'){
+        push('BKE v3.0',bke.BKE_v30);
+        push('DBKE Scaled v3.0',bke.DBKE_scaled_v30);
+        push('OBKE v3.0 Ref',bke.OBKE_v30_reference);
+        push('Rank',bke.rank);
+        push('BKE Percentile',pct(bke.bke_pct));
+        push('DBKE Percentile',pct(bke.dbke_pct));
+        push('OBKE Percentile',pct(bke.obke_pct));
+        push('DBKE Raw v3.0',bke.DBKE_raw_v30);
+        push('DBKE Final v3.0',bke.DBKE_final_v30);
+        push('D Portable',bke.D_port);
+        push('D RAPM Shrunk',bke.D_rapm_shrunk);
+        push('\u03BB Shrink',bke.lambda_shrink);
+    }
+
+    if(!cards.length)return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+')</h3><p style="color:#666;font-size:14px">No data for this version</p></div>';
+    return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+')</h3>'+renderSG(cards)+'</div>';
 }
 
 function renderPositionEstimate(pr){
@@ -999,7 +1276,11 @@ function openModal(key){
   var ln=d.linear||{};
     var ss=d.season_stats||{};
     var am=d.archetype_model||{};
-    var bk=d.bke||{};
+    var bk;
+    var bkDetails;
+    if(curBkeVersion==='v28'){bk=d.bke_v28||{};bkDetails=d.bke_v28||{};}
+    else if(curBkeVersion==='v30'){bk=d.bke_v30||{};bkDetails=d.bke_v30||{};}
+    else{bk=d.bke||{};bkDetails=d.bke_details||{};}
     var gp=ps.GP||ss.GP||null;
   function add(l,v){if(v!==null&&v!==undefined&&v!=='')hl.push({label:l,value:v});}
     add('MPG',p.mpg);add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);
@@ -1030,7 +1311,7 @@ function openModal(key){
 
   document.getElementById('mBody').innerHTML=
     (hl.length?'<div class="msec"><h3>Season Highlights</h3><h4 class="msec-sub">General Box Score</h4>'+renderSG(hl)+(adv.length?'<h4 class="msec-sub">Advanced Statistics</h4>'+renderSG(adv):'')+'</div>':'')
-        +renderBKEHighlights(bk)
+        +renderBKEHighlights(bk, curBkeVersion)
     +arch
         +renderPositionEstimate(pr)
     +renderPT(d.playtypes)
@@ -1042,7 +1323,7 @@ function openModal(key){
     +renderKV('xRAPM',d.xrapm||{})
     +renderKV('xRAPM v2',d.xrapm_v2||{})
     +renderKV('Linear Metrics (BKE-computed)',d.linear||{})
-    +renderKV('BKE Details',d.bke_details||{});
+    +renderKV('BKE Details ('+curBkeVersion.toUpperCase()+')',bkDetails);
 
   /* add collapsible toggles to each section */
   document.querySelectorAll('#mBody .msec').forEach(function(sec){
@@ -1095,6 +1376,8 @@ function resetFilters(){
     if(defaultChip)defaultChip.classList.add('active');
     curSort='ppg';
     curSortDir='desc';
+    curBkeVersion='v27';
+    document.querySelectorAll('.ver-btn').forEach(function(b){b.classList.toggle('active',b.dataset.ver==='v27');});
     refreshSortUI();
     filterPlayers();
 }
@@ -1114,8 +1397,16 @@ function filterPlayers(){
       return true;
     });
         f.sort(function(a,b){
-            var av=(a[curSort]!==null&&a[curSort]!==undefined)?Number(a[curSort]):null;
-            var bv=(b[curSort]!==null&&b[curSort]!==undefined)?Number(b[curSort]):null;
+            var av,bv;
+            if(curSort==='transformed_bke'||curSort==='transformed_obke'||curSort==='transformed_dbke'){
+                var fld=curSort==='transformed_bke'?'bke':curSort==='transformed_obke'?'obke':'dbke';
+                av=getBkeField(a,fld);bv=getBkeField(b,fld);
+                av=(av!==null&&av!==undefined)?Number(av):null;
+                bv=(bv!==null&&bv!==undefined)?Number(bv):null;
+            }else{
+                av=(a[curSort]!==null&&a[curSort]!==undefined)?Number(a[curSort]):null;
+                bv=(b[curSort]!==null&&b[curSort]!==undefined)?Number(b[curSort]):null;
+            }
             av=isFinite(av)?av:null;
             bv=isFinite(bv)?bv:null;
             if(av===null&&bv===null)return 0;
@@ -1160,6 +1451,8 @@ def main():
     xrapm_v2_df = load_xrapm_v2()
     linear_df   = load_linear_metrics()
     bke_map     = load_bke_scores()
+    bke_v28_map = load_bke_v28_scores()
+    bke_v30_map = load_bke_v30_scores()
     season_stats_df = load_player_season_stats()
     salaries_df = load_player_salaries()
 
@@ -1167,13 +1460,16 @@ def main():
     print(f"  Defensive archetypes: {len(def_df)}")
     print(f"  Position estimates: {len(pos_est_df)}")
     print(f"  Linear metrics: {len(linear_df)}")
-    print(f"  BKE scores: {len(bke_map)}")
+    print(f"  BKE v27 scores: {len(bke_map)}")
+    print(f"  BKE v28 scores: {len(bke_v28_map)}")
+    print(f"  BKE v30 scores: {len(bke_v30_map)}")
     print(f"  Season stats: {len(season_stats_df)}")
     print(f"  Salaries: {len(salaries_df)}")
 
     html = generate_html(
         off_df, def_df, profiles_df, bios_df, pos_est_df,
         rapm_df, xrapm_df, xrapm_v2_df, linear_df, season_stats_df, salaries_df, team_map, bke_map,
+        bke_v28_map=bke_v28_map, bke_v30_map=bke_v30_map,
     )
 
     os.makedirs("app", exist_ok=True)
