@@ -1,3 +1,62 @@
+- 2026-03-01 — Experiment 2 rerun (expanded production proxy, 15 lambdas) + next-phase prep
+	- Added reproducible script: `src/modeling/experiment2_production_tilt.py`
+		- output: `reports/bke_v31_experiment2_production_tilt.json`
+		- base profile: Layer3+Layer6 (`layer3_exponent=1.08`, `layer6_k=0.20`, `60/40`)
+		- expanded production proxy includes ORAPM + TS_PCT + raw offensive box score stats (`PTS`, `AST`, `FGM`, `FGA`, `FG3M`, `FG3A`, `FTM`, `FTA`)
+		- 15-lambda sweep (`0.01`..`0.15`) completed
+		- recommended small-change lambda: `0.03` (predictive rho improvement with controlled rank shift)
+	- Added helper scripts:
+		- `scripts/run_experiment2_production_tilt.sh`
+		- `scripts/backup_data_snapshot.sh`
+	- Added next phase scaffold:
+		- `src/player_eval/README.md`
+	- Reorganized references into contribution-based subfolders under `reference/` and added:
+		- `reference/README.md`
+		- `reference/BKE_gen1_summary_2026-03-01.md`
+	- Updated docs/scripts for path and pipeline alignment:
+		- `readme.md`
+		- `scripts/compute_data.sh` (fixed archetype viewer path)
+		- `scripts/compare_data_batches.py` (reference path comment)
+
+- 2026-02-28 — v3.1 dual split policy + Layer 3+6 second-pass promotion
+	- Updated `src/modeling/bke_v31_experimental_layers.py` to co-produce v3.1 split outputs:
+		- `data/processed/bke/BKE_Scores_v31_60_40.json`
+		- `data/processed/bke/BKE_Scores_v31_55_45.json`
+	- Added dedicated second-pass evaluation (Layer 3 + Layer 6 only, no Layer 1 weight shift):
+		- report: `reports/bke_v31_layer36_second_pass.json`
+		- additive gate result: **PASS**
+		- promoted outputs:
+			- `data/processed/bke/BKE_Scores_v31_60_40_layer36.json`
+			- `data/processed/bke/BKE_Scores_v31_55_45_layer36.json`
+	- Updated player viewer to support split toggle (`60/40`, `55/45`) alongside version toggle:
+		- file: `app/player_data_viewer.py`
+		- regenerated: `app/player_data.html`
+	- Updated docs for persistence across future sessions:
+		- `readme.md`
+		- `reference/BKE_metric_modelling_summary.md`
+		- `reference/BKE_metric_modelling_plan.md`
+
+- 2026-02-28 — Phase 2 v3.1 experimental layer framework implemented
+	- Added new experimental runner: `src/modeling/bke_v31_experimental_layers.py`.
+	- Runner behavior:
+		- Loads `data/processed/bke/bke_v28_decomposition.parquet` (qualified only).
+		- Computes fixed baseline metrics and evaluates each v3.1 layer independently:
+			1) O/D weight grid
+			2) Specialty-aware dampening
+			3) Defensive tail micro-convex scaling
+			4) Confidence-weighted defensive blend
+			5) Defensive dimensional cleanup (orthogonal PCA confidence probe)
+			6) Historical axis volatility scaling
+		- Exports full layer-by-layer report to `reports/bke_v31_experimental_layers.json`.
+		- Applies constrained combined-model selection (max 3 structural changes, guardrails to block unstable candidates).
+	- Phase 2 run completed successfully (`generated_at: 2026-02-28 21:59:31`, 950 qualified players).
+	- Combined model selected by guardrails:
+		- `layer1_weight_grid` + `layer6_axis_volatility_scaling` + `layer3_def_tail_scaling`
+		- Layer 4 was tested independently but excluded from combined model due instability/retention guardrail failures.
+	- Documentation updates:
+		- `readme.md`: added v3.1 experiment runner command + report artifact entry.
+		- `reference/BKE_metric_modelling_summary.md`: appended full v3.1 experimental section with independent layer results and controlled combined evaluation.
+
 - 2026-02-28 — Phase 1 balanced defensive tuning + BKE output rerun
 	- Updated `src/data_compute/compute_defensive_archetypes_v2.py` to balanced policy:
 		- Margin fallback gate: `MARGIN_RULE_GAP = 0.03` (from 0.05).

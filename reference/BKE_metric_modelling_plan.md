@@ -1,396 +1,372 @@
-Excellent. Now we do this correctly.
+Excellent.
 
-Below is a **fully specified v3.0 Defense Reconstruction Plan** with explicit math and ordering.
+We now have clear constraints:
 
-This version:
+* ✅ Lower overall rank volatility (small, layered changes)
+* ✅ Optimize for predictive power + stability
+* ✅ Do not over-optimize or distort distributions
+* ✅ Accept defense is inherently noisier
+* ✅ Improve archetype confidence carefully
+* ✅ Preserve geometry integrity
 
-* Does NOT explode portable variance early
-* Does NOT hardcode archetypes
-* Preserves Layer 1c importance
-* Controls variance geometry
-* Fixes penalty asymmetry
-* Introduces offense bias in a controlled way
-* Respects only 3 years of data
+This is a disciplined modeling objective.
 
-We are rebuilding defense without breaking the system.
-
----
-
-# OVERALL STRUCTURE
-
-We keep:
-
-* OBKE untouched (for now)
-* Existing offensive pipeline
-* Archetype definitions
-* Layer 1c dimensions intact
-
-We modify only:
-
-Defense computation from Layer 1 onward.
+Below is the full v3.1 experimental architecture plan.
 
 ---
 
-# PHASE A — Defensive Stability & Shrinkage
+# 🔵 BKE v3.1 – Stability & Expressiveness Optimization Plan
 
-Goal:
-Reduce defensive noise and DRAPM dominance without killing signal.
+v3.1 is not a redesign.
+It is a layered variance-control and geometry refinement update.
 
-We stabilize before reshaping.
+We will move along the **stability ↔ expressiveness frontier** carefully.
 
----
-
-## A1 — DRAPM Shrinkage Toward Portable Prior
-
-Problem:
-DBKE overrelies on DRAPM elevation component.
-
-Fix:
-Shrink DRAPM toward portable defensive composite.
-
-Let:
-
-* ( D_{rapm} )
-* ( D_{port} ) = portable defensive prior (Layer 1 composite)
-* ( n ) = possessions (or minutes)
-* ( k ) = shrink constant (tune via CV; start ~2000 possessions equivalent)
-
-Define weight:
-
-[
-\lambda = \frac{n}{n + k}
-]
-
-Then:
-
-[
-D_{rapm}^{shrunk} = \lambda D_{rapm} + (1-\lambda) D_{port}
-]
-
-This is empirical Bayes shrinkage.
-
-High minute players → minimal shrink
-Low minute players → heavy shrink
+Each layer will be implemented independently, benchmarked, and reported.
 
 ---
 
-## A2 — Year-to-Year Prior Smoothing (Only 3 Years Available)
+# 📊 Baseline (v3.0 Reference Snapshot)
 
-We use simple exponential smoothing.
+Key anchors:
 
-For player i:
+* OBKE/DBKE weight: 0.60 / 0.40
+* dbke_yoy_corr = 0.709
+* def_specialist_dbke_yoy_corr = 0.421
+* def_driver_share = 0.363
+* Defensive archetype stability ≈ 0.536
+* Center next-season rho ≈ 0.409 (weakest position)
+* Portable rho > Total Impact rho
 
-[
-D^{prior}*{i,t} = \alpha D*{i,t-1} + (1-\alpha) D_{i,t-2}
-]
-
-If only 1 prior year exists, use that.
-
-Choose:
-
-[
-\alpha = 0.65
-]
-
-Then blend:
-
-[
-D^{stabilized}*{i,t} = w D*{i,t} + (1-w) D^{prior}_{i,t}
-]
-
-Set:
-
-[
-w = 0.70
-]
-
-This reduces volatility while preserving responsiveness.
+These are our fixed comparison anchors.
 
 ---
 
-## A3 — Recompose Defensive BKE (Pre-Geometry)
+# 🧪 Experimental Framework Rules
 
-Let weights:
+For every experiment we record:
 
-* Portable (Layer 1): ( w_p )
-* Shrunk RAPM: ( w_r )
+1. Global YoY rank correlation
+2. Specialist YoY (Pearson + Spearman)
+3. Top-10 & Top-20 retention
+4. Predictive rho (holdout)
+5. Position-split rho
+6. Archetype confidence
+7. Std(DBKE_final)
+8. Penalty asymmetry
+9. Rank volatility distribution (mean absolute rank shift)
 
-Start with:
+We generate delta vs v3.0.
 
-[
-w_p = 0.55,\quad w_r = 0.45
-]
-
-Then:
-
-[
-DBKE_{raw} = w_p D_{port} + w_r D_{rapm}^{shrunk}
-]
-
-Important:
-No convex scaling here.
-No archetype adjustment yet.
-
-Phase A Output:
-**DBKE_raw**
+No silent geometry shifts allowed.
 
 ---
 
-# PHASE B — Defensive Geometry Calibration
+# 🟢 LAYER 1 — Offense / Defense Weight Grid
 
-This is where previous version failed.
+### Purpose:
 
-We reshape distribution AFTER stabilization.
+Test macro stability sensitivity.
 
----
+### Grid:
 
-## B1 — Within-Archetype Variance Normalization
+* 50/50
+* 53/47
+* 55/45
+* 57/43
+* 60/40
 
-Problem:
-DBKE variance inside archetypes is 2–3x OBKE.
+### What we expect:
 
-We reduce relative noise without killing separation.
+* Increasing offense weight → higher global YoY
+* Minor effect on defensive specialist YoY
+* Slight improvement in predictive rho
+* Reduced overall rank variance
 
-For each archetype ( a ):
+### Selection Criteria:
 
-Compute:
+Choose weight where:
 
-[
-\sigma_a = std(DBKE_{raw} \mid archetype=a)
-]
+* Predictive rho peaks or plateaus
+* Global YoY improves
+* Defensive identity not suppressed
+* def_driver_share stays within 0.32–0.38
 
-Let:
+We expect likely winner:
+53/47 or 55/45.
 
-[
-\sigma_{target} = median(\sigma_a)
-]
-
-Define scaling factor:
-
-[
-s_a = \frac{\sigma_{target}}{\sigma_a}
-]
-
-Then:
-
-[
-DBKE_{norm} = DBKE_{raw} \cdot s_a
-]
-
-This compresses overly noisy archetypes
-and slightly expands overly compressed ones.
-
-No hardcoding BLK% or STL%.
-Pure distributional correction.
+This becomes the new base weight.
 
 ---
 
-## B2 — Negative Tail Compression (Penalty Asymmetry Fix)
+# 🟢 LAYER 2 — Specialty-Aware Variance Dampening (Continuous)
 
-We observed:
+### Purpose:
 
-Bad defense hurts more than elite defense helps.
+Reduce cross-axis volatility amplification.
 
-We apply asymmetric compression.
+### Core idea:
 
-Define:
+If a player has a demonstrated specialty,
+non-specialty axis fluctuations should move rank slightly less.
+
+### Implementation:
+
+Define specialization index:
 
 [
-\gamma = 0.15
+S = \frac{|O - D|}{|O| + |D|}
 ]
 
-Then:
+Weight adjustment:
 
 [
-DBKE_{asym} =
-\begin{cases}
-DBKE_{norm} & \text{if } DBKE_{norm} \ge 0 \
-DBKE_{norm}(1-\gamma) & \text{if } DBKE_{norm} < 0
-\end{cases}
+w_O' = w_O \cdot (1 + \alpha S \cdot sign(O-D))
+]
+[
+w_D' = w_D \cdot (1 - \alpha S \cdot sign(O-D))
 ]
 
-This reduces weak-side drag.
+Where:
 
-Important:
-We do NOT expand positive side yet.
+* α = small constant (0.03–0.07 test range)
+* Continuous, no thresholds
+
+Normalize weights to sum to 1.
+
+### Expected Effect:
+
+* Lower mean absolute rank shift
+* Reduced star volatility
+* Minimal predictive impact
+
+We test α = 0.03, 0.05, 0.07.
 
 ---
 
-## B3 — Mild Global Bounded Expansion
+# 🟢 LAYER 3 — Defensive Tail Micro-Convex Scaling
 
-Now that noise is controlled,
-we allow limited expressiveness.
+### Purpose:
 
-Use smooth bounded function:
+Improve elite separation without increasing noise.
 
-[
-DBKE_{final} = \tanh(\beta DBKE_{asym})
-]
-
-Choose:
+### Implementation:
 
 [
-\beta = 0.9
+D_{new} = \mu + sign(D-\mu)\cdot |D-\mu|^{1.05}
 ]
 
-Why tanh?
+Test exponents:
 
-* Prevents explosion
-* Preserves order
-* Expands mid-range separation
-* Compresses extreme tails
+* 1.03
+* 1.05
+* 1.08
 
-This creates controlled expressiveness.
+Constraints:
+
+* std(DBKE) increase < 5%
+* No collapse in YoY
+
+Expected outcomes:
+
+* Improved Spearman specialist
+* Improved top-10 retention
+* Reduced clustering-induced rank churn
 
 ---
 
-# PHASE C — Offense/Defense Global Weighting
+# 🟢 LAYER 4 — Confidence-Weighted Defensive Blend
 
-Now we address variance asymmetry at composite level.
+### Purpose:
 
----
+Reduce RAPM over-reliance when archetype confidence is low.
 
-## C1 — Variance Equalization Check
+Current:
+D = 0.55 D_port + 0.45 D_stabilized
 
-Compute:
+New:
 
 [
-Var(OBKE),\quad Var(DBKE_{final})
+w_{rapm} = 0.45 \cdot (0.9 + 0.2 \cdot conf)
 ]
 
-If:
+Where:
+
+* conf ∈ [0,1] normalized archetype confidence
+* Low confidence → slight reduction in RAPM weight
+* High confidence → slight increase
+
+Range:
+RAPM weight varies 0.40–0.50 max.
+
+This is small, smooth, data-driven.
+
+Expected:
+
+* Slight improvement in specialist YoY
+* Improved center stability
+* Higher predictive rho
+
+---
+
+# 🟢 LAYER 5 — Defensive Archetype Dimensional Cleanup
+
+### Purpose:
+
+Increase archetype confidence without affecting ratings.
+
+### Steps:
+
+1. Run PCA on defensive dimensions.
+2. Remove collinear axes (|r| > 0.85).
+3. Reconstruct archetypes in orthogonal space.
+4. Recalculate fit scores.
+
+Constraints:
+
+* Do not change player ratings.
+* Only improve cluster geometry.
+
+Expected:
+
+* Archetype confidence ↑
+* Defensive archetype stability ↑
+* No change in rank volatility
+
+This is low risk and likely high reward.
+
+---
+
+# 🟢 LAYER 6 — Historical Axis Volatility Scaling
+
+### Purpose:
+
+Reduce noise from historically volatile dimensions.
+
+For each axis:
 
 [
-Var(DBKE) > 1.5 \times Var(OBKE)
+AxisScale = \frac{1}{1 + k \cdot historical_variance}
 ]
 
-Apply scaling:
+Small k (0.1–0.2 test range).
 
-[
-DBKE_{scaled} = DBKE_{final} \cdot \sqrt{\frac{Var(OBKE)}{Var(DBKE_{final})}}
-]
+Apply scaling only to deviation component (not mean).
 
-This equalizes variance without changing relative ordering.
+Expected:
 
----
+* Reduced rank churn
+* Increased YoY
+* Slightly smoother transitions
 
-## C2 — Controlled Offense Bias
-
-Instead of hard 57/43, do this mathematically:
-
-Define:
-
-[
-\delta = 0.10
-]
-
-Final composite:
-
-[
-BKE = (0.5 + \delta) OBKE + (0.5 - \delta) DBKE_{scaled}
-]
-
-So:
-
-60% offense
-40% defense
-
-Why acceptable?
-
-Because NBA value systems overweight offense.
-But we do it modestly.
-
-We do NOT go 65/35.
+Must confirm predictive rho does not drop.
 
 ---
 
-# What Happens to Layer 1c?
+# 🟢 LAYER 7 — Combined Model Evaluation
 
-Layer 1c remains fully intact.
+After testing individually:
 
-It feeds:
+Combine winning versions of:
 
-[
-D_{port}
-]
+* Weight selection
+* Specialty dampening
+* Tail scaling
+* Confidence blend
+* Dimensional cleanup
 
-We did NOT change its internal dimension importance.
+Then re-run:
 
-We changed:
+* Full backtest
+* Stability diagnostics
+* Position splits
+* Distribution checks
 
-* How its output is stabilized
-* How it interacts with RAPM
-* How variance is geometrically shaped afterward
-
-Layer 1c importance is preserved.
-
-We simply prevented it from being volatility amplifier.
-
----
-
-# What This Fixes
-
-Extreme defensive variance compression
-→ Archetype normalization + bounded expansion
-
-Overreliance on DRAPM
-→ Empirical Bayes shrinkage
-
-Defensive specialist instability
-→ Prior smoothing + archetype variance scaling
-
-Ceiling suppression
-→ Mild tanh expansion (mid-range boost)
-
-Weak archetype confidence
-→ Reduced within-archetype noise ratio
-
-Penalty asymmetry
-→ Negative tail compression
+No more than 3 structural changes combined at once.
 
 ---
 
-# Target Post-v3.0 Metrics
+# 📈 Evaluation Priorities (Ranked)
 
-After implementation:
+1. Predictive rho
+2. Global YoY
+3. Mean absolute rank shift
+4. Defensive specialist stability
+5. Archetype confidence
+6. Distribution integrity
 
-* def_driver_share < 0.65
-* DBKE YoY corr > 0.50
-* Defensive specialist DBKE YoY corr > 0.45
-* penalty_asymmetry_DBKE materially reduced
-* std_DBKE / std_OBKE within archetypes < 1.6x
-
-If these are not met → we stop and reassess.
-
----
-
-# Important: What We Are NOT Doing
-
-* No counting stat domination
-* No positional stat weight boosts
-* No archetype-specific feature boosts
-* No expanding portable layer
-* No hardcoding centers vs guards
-* No removing RAPM entirely
-* No rewriting OBKE
+We will not sacrifice 1 or 2 for 4.
 
 ---
 
-# Structural Philosophy of v3.0
+# 🎯 Success Criteria for v3.1
 
-Phase A: Stabilize signal
-Phase B: Shape geometry
-Phase C: Balance value
-
-In that order.
-
-Your previous attempt skipped geometry discipline.
-
-This version respects modeling order.
+* Global YoY ↑ modestly (target ~0.72–0.74)
+* Specialist YoY ≥ 0.42 maintained or slightly improved
+* Center rho improves from 0.409 → ≥0.45
+* Mean rank shift ↓
+* Archetype confidence +5–10%
+* No collapse in defensive separation
 
 ---
 
-If you want next, I can:
+# 🔬 What We Are NOT Doing
 
-1. Simulate how this mathematically shifts variance using your observed stats, OR
-2. Translate this into implementation-ready pseudocode for your diagnostics script.
+* No drastic shrinkage increases
+* No hard-coded positional weights
+* No heavy prior expansion
+* No defensive compression
+
+v3.1 is refinement, not reconstruction.
+
+---
+
+# 🧠 Strategic Philosophy of v3.1
+
+We are not trying to eliminate defensive noise.
+
+We are trying to:
+
+* Prevent noise from distorting rank
+* Improve defensive clarity
+* Preserve expressive ceiling
+
+This is about intelligent variance management.
+
+---
+
+If you’d like next, I can:
+
+1. Convert this into an implementation checklist script plan, or
+2. Help you decide the exact order we execute the layers in code, or
+3. Simulate expected metric movement before we run experiments
+
+Your call.
+
+---
+
+# Execution Addendum (2026-02-28)
+
+This plan is now accompanied by an implementation policy used in active runs:
+
+1. **Dual split policy is persistent**
+	- Co-produce both `60/40` and `55/45` BKE outputs in v3.1 artifacts.
+	- Treat `60/40` as default stability anchor and `55/45` as predictive companion split.
+
+2. **Second-pass Layer 3 + Layer 6 profile is approved when additive checks pass**
+	- Run with no Layer 1 weight shift (keep `60/40`).
+	- Apply Layer 6 axis-volatility scaling and Layer 3 defensive-tail scaling.
+	- Promote to output JSON only if additive checks confirm non-canceling stability gains.
+
+3. **Viewer requirement**
+	- Player viewer should expose split toggle (`60/40`, `55/45`) alongside version toggle so comparisons remain seamless.
+
+4. **Experiment 2 rerun requirement (2026-03-01)**
+	- Re-run production-importance tilt with expanded production proxy, not just TS% + ORAPM.
+	- Include raw offensive box-score stats in the proxy: `PTS`, `AST`, `FGM`, `FGA`, `FG3M`, `FG3A`, `FTM`, `FTA`.
+	- Sweep exactly 15 lambda values (`0.01` to `0.15` in 0.01 increments).
+	- Report both low-production top-100 reduction and high-production top-100 increase to distinguish penalty-vs-reward effects.
+
+5. **Phase transition prep**
+	- Add `src/player_eval/` as dedicated next-phase script root for player evaluation engine work.
+	- Keep `readme.md` and loop docs synchronized with new reports/outputs and folder conventions.

@@ -518,6 +518,52 @@ New: `reports/bke_v29_diagnostic_master.json` — includes domain-level audit re
 
 ---
 
+## V3.1 Experiment 2 Rerun (2026-03-01) — Expanded Production Proxy + 15 Lambda Sweep
+
+### Scope
+Experiment 2 was rerun with an expanded production proxy to explicitly include raw offensive box-score signal in addition to efficiency/impact proxies.
+
+### Script and Output
+- Script: `src/modeling/experiment2_production_tilt.py`
+- Output: `reports/bke_v31_experiment2_production_tilt.json`
+- Input: `data/processed/bke/bke_v28_decomposition.parquet` (qualified players only)
+
+### Baseline Profile Used
+- Base profile: v3.1 Layer 3 + Layer 6 (`60/40` blend)
+- Config loaded from second-pass report:
+  - `layer3_exponent = 1.08`
+  - `layer6_k = 0.20`
+
+### Expanded Production Proxy
+Season-normalized weighted proxy over available columns:
+- `orapm` (0.22)
+- `TS_PCT` (0.14)
+- `PTS` (0.18)
+- `AST` (0.12)
+- `FGM` (0.08)
+- `FGA` (0.08)
+- `FG3M` (0.06)
+- `FG3A` (0.04)
+- `FTM` (0.04)
+- `FTA` (0.04)
+
+### Lambda Sweep
+- Evaluated 15 lambdas: `0.01` through `0.15`.
+- Recommendation rule: maximize predictive rho with `mean_abs_rank_shift_vs_base <= 3.5`.
+
+### Key Results
+- Base predictive rho: `0.31523`
+- Recommended lambda: `0.03`
+  - predictive rho: `0.317888` (`+0.002658` vs base)
+  - mean abs rank shift: `3.250526`
+  - low-prod top100 count: `16 -> 11` (`-5`)
+  - high-prod top100 count: `165 -> 174` (`+9`)
+
+### Interpretation
+The rerun indicates both effects are present, but the dominant behavior is **rewarding higher-production profiles**, with a secondary reduction in low-production top-100 exposure. Larger lambdas continue improving predictive rho but introduce progressively larger rank movement.
+
+---
+
 ## Changes from v2.7 → v2.8
 
 ### 1) Terminal Transform Before Percentile Rank
@@ -666,3 +712,228 @@ Turnover-control expansion, defensive playmaking expansion, and playmaking creat
 2. Stability-weighted dimension scaling is still a future calibration track
 3. Extended backtesting slices (team-changers, playoff transfer, aging curves) are pending
 4. Some planned metrics remain unavailable in source data (live-ball TO subtype details, richer spacing/on-off decomposition, disruption micro-events)
+
+---
+
+## V3.1 — Experimental Layer Suite (Phase 2, Independent Tests)
+
+v3.1 is implemented as an experimental runner (non-destructive to production artifacts):
+
+- Script: `src/modeling/bke_v31_experimental_layers.py`
+- Input: `data/processed/bke/bke_v28_decomposition.parquet`
+- Output: `reports/bke_v31_experimental_layers.json`
+- Population: 950 qualified player-seasons (2022-23, 2023-24, 2024-25)
+
+Each layer is tested independently against a fixed baseline, then a constrained combined model is evaluated with max 3 structural changes.
+
+### Baseline Snapshot (v3.1 experiment baseline)
+
+Baseline uses OBKE/DBKE blend `0.60 / 0.40` and current decomposition internals.
+
+| Metric | Baseline |
+|--------|----------|
+| Global YoY rank corr | 0.5816 |
+| Specialist YoY (Pearson / Spearman) | 0.3133 / 0.2487 |
+| Top-10 retention | 0.5242 |
+| Top-20 retention | 0.5684 |
+| Predictive rho (next-season RAPM) | 0.3296 |
+| Center next-season rho | 0.3292 |
+| Archetype confidence mean | 0.7594 |
+| Std(DBKE final) | 0.4891 |
+| Penalty asymmetry (|p5|/p95) | 0.8609 |
+| Mean absolute rank shift | 63.9991 |
+| Defensive driver share | 0.4986 |
+
+### Layer 1 — Offense/Defense Weight Grid (Independent)
+
+Grid evaluated: 50/50, 53/47, 55/45, 57/43, 60/40.
+
+Observed behavior:
+- Offense-heavier settings increased predictive rho but reduced global YoY in this data pass.
+- Best weighted candidate under the script objective: **55/45**.
+
+Winner (55/45) vs baseline deltas:
+- Predictive rho: **+0.0170**
+- Global YoY rank corr: **-0.0115**
+- Top-20 retention: **+0.0082**
+- Mean absolute rank shift: **+0.9154** (worse)
+
+Interpretation: improves short-horizon predictive fit but does not improve stability metrics in isolation on this snapshot.
+
+### Layer 2 — Specialty-Aware Continuous Dampening (Independent)
+
+Alpha grid evaluated: 0.03, 0.05, 0.07.
+
+Winner: **alpha = 0.07**.
+
+Winner deltas vs baseline:
+- Predictive rho: **+0.0044**
+- Global YoY rank corr: **-0.0005** (near-flat)
+- Center next-season rho: **+0.0009**
+- Top-20 retention: **-0.0238**
+
+Interpretation: very small changes; mild predictive benefit, modest retention cost.
+
+### Layer 3 — Defensive Tail Micro-Convex Scaling (Independent)
+
+Exponents evaluated: 1.03, 1.05, 1.08 with:
+
+$$
+D_{new}=\mu+\operatorname{sign}(D-\mu)\cdot |D-\mu|^{\gamma}
+$$
+
+Winner: **gamma = 1.08**.
+
+Winner deltas vs baseline:
+- Global YoY rank corr: **+0.0017**
+- Specialist YoY Pearson: **+0.0160**
+- Center next-season rho: **+0.0031**
+- Std(DBKE final): **-0.0133**
+- Mean absolute rank shift: **-0.3629** (improves)
+
+Interpretation: best stability-oriented single layer in this run; modestly improves defensive specialist persistence while keeping variance controlled.
+
+### Layer 4 — Confidence-Weighted Defensive Blend (Independent)
+
+Implemented as:
+
+$$
+w_{rapm}=0.45\cdot(0.9+0.2\cdot conf),\quad w_{rapm}\in[0.40,0.50]
+$$
+
+and blended between defensive portable signal and stabilized defensive RAPM.
+
+Observed deltas vs baseline:
+- Global YoY: **+0.0400**
+- Specialist YoY Pearson: **+0.2811**
+- Top-10 retention: **-0.3367**
+- Top-20 retention: **-0.3938**
+- Std(DBKE final): **+0.5236**
+- Defensive driver share: **+0.3114**
+
+Interpretation: materially destabilizes distribution geometry and overwhelms defensive share despite strong YoY improvement; **flagged as non-viable for combined deployment** under guardrails.
+
+### Layer 5 — Defensive Dimensional Cleanup (Independent)
+
+Procedure:
+1) Identify high-correlation defensive axes (|r| > 0.85)
+2) Drop collinear axis from each pair
+3) Project remaining defensive axes to whitened PCA space
+4) Recompute archetype confidence proxy in orthogonal space
+
+Findings:
+- Rating metrics unchanged by design.
+- Orthogonal confidence proxy dropped from 0.7594 to 0.3533 in this implementation.
+
+Interpretation: this first-pass confidence proxy is too conservative; keep as experimental geometry probe only (no production use yet).
+
+### Layer 6 — Historical Axis Volatility Scaling (Independent)
+
+Grid evaluated: `k = 0.10, 0.15, 0.20`, with axis scaling:
+
+$$
+AxisScale=\frac{1}{1+k\cdot \sigma^2_{historical}},\quad
+x_{new}=\mu + AxisScale\cdot(x-\mu)
+$$
+
+Winner: **k = 0.20**.
+
+Winner deltas vs baseline:
+- Global YoY: **+0.0098**
+- Specialist YoY Pearson: **+0.0010**
+- Center next-season rho: **+0.0017**
+- Std(DBKE final): **-0.0479**
+- Mean absolute rank shift: **-0.7208**
+- Predictive rho: **-0.0104**
+
+Interpretation: strongest rank-stability improvement among variance controls; small predictive tradeoff.
+
+### Combined Model Evaluation (Constrained, Max 3 Structural Changes)
+
+Guardrail selection now excludes non-viable layers (notably Layer 4 in this run).
+
+Applied layers:
+- Layer 1 winner: **55/45**
+- Layer 6 winner: **k=0.20**
+- Layer 3 winner: **gamma=1.08**
+
+Combined model metrics:
+- Global YoY rank corr: **0.5719**
+- Specialist YoY (Pearson / Spearman): **0.3293 / 0.2487**
+- Top-10 retention: **0.5086**
+- Top-20 retention: **0.5765**
+- Predictive rho: **0.3436**
+- Center next-season rho: **0.3275**
+- Std(DBKE final): **0.4758**
+- Penalty asymmetry: **0.8585**
+- Mean absolute rank shift: **64.6450**
+
+Combined deltas vs baseline:
+- Predictive rho: **+0.0140**
+- Specialist YoY Pearson: **+0.0160**
+- Top-20 retention: **+0.0082**
+- Global YoY rank corr: **-0.0097**
+- Center next-season rho: **-0.0017**
+
+Interpretation:
+- The constrained stack improves predictive signal and specialist persistence.
+- Global rank stability remains a tradeoff in this pass (YoY dip), so this should stay in experimental mode pending further calibration.
+
+### v3.1 Experimental Conclusion (Current Pass)
+
+Recommended next implementation path:
+1) Keep Layer 3 (gamma=1.08) and Layer 6 (k=0.20) as primary stability tools.
+2) Keep Layer 1 as a tunable switch between predictive gain (55/45) and stability anchor (60/40).
+3) Rework Layer 4 before any production inclusion (it currently causes severe retention and variance distortion).
+4) Revisit Layer 5 confidence reconstruction method before using it as a confidence replacement.
+
+This preserves controlled-impact experimentation and keeps v3.1 aligned with the “refinement, not reconstruction” objective.
+
+### V3.1 Policy Update — Dual Split Co-Production (60/40 + 55/45)
+
+As of the latest v3.1 run, split policy is now explicit and persistent:
+
+- `60/40` remains the default stability anchor split.
+- `55/45` remains the predictive-tilted companion split.
+- Both are now co-produced in dedicated v3.1 score files so future sessions do not need to infer or re-derive this policy.
+
+Generated baseline score artifacts:
+- `data/processed/bke/BKE_Scores_v31_60_40.json`
+- `data/processed/bke/BKE_Scores_v31_55_45.json`
+
+This formalizes the Layer 1 interpretation: `55/45` is a predictive lever, while `60/40` is the stability baseline.
+
+### Second-Pass Experiment — Layer 3 + Layer 6 Only (No Weight Shift)
+
+Requested second-pass was run with only:
+- Layer 6 axis volatility scaling (`k=0.20`)
+- Layer 3 defensive tail scaling (`gamma=1.08`)
+- No Layer 1 weight shift (kept at `60/40`)
+
+Run timestamp: `2026-02-28 23:15:58`.
+
+Second-pass metrics:
+- Global YoY rank corr: **0.5937** (delta **+0.0120**)
+- Specialist YoY Pearson: **0.3308** (delta **+0.0175**)
+- Top-10 retention: **0.5565** (delta **+0.0323**)
+- Predictive rho: **0.3152** (delta **-0.0144**)
+- Center next-season rho: **0.3336** (delta **+0.0043**)
+- Std(DBKE final): **0.4257** (delta **-0.0634**)
+- Mean absolute rank shift: **63.1297** (delta **-0.8693**)
+- Defensive driver share: **0.4297** (delta **-0.0690**)
+
+Additivity gate outcome:
+- `global_yoy_not_canceled`: pass
+- `rank_shift_not_canceled`: pass
+- `dbke_std_not_canceled`: pass
+- Baseline-relative stability checks: pass
+- **Decision: additive benefits confirmed; promoted to v3.1 output artifacts**
+
+Promoted second-pass artifacts:
+- `data/processed/bke/BKE_Scores_v31_60_40_layer36.json`
+- `data/processed/bke/BKE_Scores_v31_55_45_layer36.json`
+- `reports/bke_v31_layer36_second_pass.json`
+
+Interpretation:
+- Layer 3 and Layer 6 are additive on volatility-control targets (YoY/stability/variance), even without Layer 1 reweighting.
+- Predictive rho is lower than baseline in this stack, so this should be treated as a stability-first profile.

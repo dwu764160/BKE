@@ -28,7 +28,7 @@ import numpy as np
 from scipy import stats
 
 # ---------------------------------------------------------------------------
-# COMPARISON MANIFEST — derived from reference/data_reproduction.md §4
+# COMPARISON MANIFEST — derived from reference/pipeline/data_reproduction.md §4
 # ---------------------------------------------------------------------------
 
 SEASONS = ["2022-23", "2023-24", "2024-25"]

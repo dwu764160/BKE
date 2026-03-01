@@ -1,0 +1,93 @@
+{
+  "manifest_version": "2026-03-01",
+  "purpose": "Compact machine-readable manifest describing files to ingest and key statistics to compute for BKE and archetype validation.",
+  "sample_report_values": {
+    "report_file": "reports/bke_v31_experiment2_production_tilt.json",
+    "version": "v3.1-experiment2-rerun",
+    "generated_at": "2026-03-01 00:35:43",
+    "qualified_players": 950,
+    "base_profile": {
+      "predictive_rho": 0.31523
+    },
+    "recommended": {
+      "lambda": 0.03,
+      "predictive_rho": 0.317888,
+      "mean_abs_rank_shift_vs_base": 3.250526,
+      "top100_mean_prod_proxy_z": 0.625252
+    },
+    "production_proxy_top_weights": {
+      "orapm": 0.22,
+      "PTS": 0.18,
+      "TS_PCT": 0.14,
+      "AST": 0.12
+    }
+  },
+  "important_files": [
+    {"path": "data/processed/bke/bke_v28_decomposition.parquet", "role": "primary decomposition input used by v31 experiment"},
+    {"path": "data/processed/", "role": "processed player-level outputs (archetypes + BKE tables)"},
+    {"path": "data/features/", "role": "feature tables used for archetype gating and modeling"},
+    {"path": "reports/bke_v*_report.json", "role": "versioned BKE reports (stability & backtests)"},
+    {"path": "reports/*_backtest.json", "role": "backtest metrics used to evaluate predictive utility"},
+    {"path": "reports/rapm_validation_report.json", "role": "RAPM model diagnostics and baselines"},
+    {"path": "reports/modeling_inputs_report.json", "role": "input distributions used by models"},
+    {"path": "reference/archetypes/", "role": "archetype definitions and narrative gating rules"},
+    {"path": "src/data_compute/compute_player_archetypes.py", "role": "centralized archetype gating logic (expected location)"},
+    {"path": "loop/context_summary.txt", "role": "live context and phase notes; must be consulted before any change"}
+  ],
+  "reports_to_parse": {
+    "bke_report": {
+      "path_pattern": "reports/bke_v*_*.json",
+      "keys_of_interest": ["version","generated_at","qualified_players","base_profile","production_proxy","lambda_sweep","recommended"]
+    },
+    "rapm_validation": {
+      "path": "reports/rapm_validation_report.json",
+      "keys_of_interest": ["rmse","mae","correlation_matrix","holdout_performance"]
+    },
+    "modeling_inputs": {
+      "path": "reports/modeling_inputs_report.json",
+      "keys_of_interest": ["input_distributions","missing_rate","seasonal_shifts"]
+    }
+  },
+  "stats_to_compute": [
+    {
+      "name": "seasonal_test_retest_correlation",
+      "description": "Pearson correlation of per-player BKE between adjacent seasons (or multi-season windows)",
+      "inputs": ["data/processed/*bke*.parquet"],
+      "output_key": "seasonal_correlation"
+    },
+    {
+      "name": "backtest_topN_enrichment",
+      "description": "Enrichment or future-impact lift for top-N players by BKE versus baseline; compute precision@N and mean_abs_rank_shift",
+      "inputs": ["reports/*_backtest.json","data/processed/bke/*"],
+      "output_key": "backtest_topN_metrics"
+    },
+    {
+      "name": "rmse_vs_benchmarks",
+      "description": "RMSE/MAE of BKE predictions versus realized outcomes or RAPM baselines",
+      "inputs": ["reports/rapm_validation_report.json","data/processed/*"],
+      "output_key": "rmse_mae"
+    },
+    {
+      "name": "variance_explained_and_compression",
+      "description": "Component-wise variance explained and compression ratio from compression/variance reports",
+      "inputs": ["reports/bke_v28_variance_report.json","reports/bke_v28_compression_report.json"],
+      "output_key": "variance_compression"
+    },
+    {
+      "name": "archetype_prevalence",
+      "description": "Per-season prevalence (%) of each archetype at defined minute/possession thresholds",
+      "inputs": ["data/processed/*archetypes*.parquet","reference/archetypes/"],
+      "output_key": "archetype_prevalence"
+    }
+  ],
+  "parsing_instructions": {
+    "notes": "Prefer latest versioned bke report; when parsing lambda sweeps, report recommended lambda that maximizes predictive_rho subject to mean_abs_rank_shift_vs_base <= 3.5 (this heuristic used in v31 experiment).",
+    "production_proxy_columns": "When available, read production_proxy.available_columns and production_proxy.effective_weights to reconstruct production proxy scoring for top-N checks."
+  },
+  "recommended_next_steps": [
+    "Load the most recent reports/bke_v*_*.json and compute the stats in `stats_to_compute`.",
+    "Compare computed seasonal correlations to values in reports (backtest & validation) and log differences to `loop/in_progress_context.txt`.",
+    "Compute archetype prevalence and verify rarity gates; if prevalence deviates from expectations, record thresholds and consider re-tuning in `src/data_compute`.",
+    "Keep `reference/bke_repo_context_summary_for_ai.md` and this manifest under version control and update when pipeline logic or report schemas change."
+  ]
+}

@@ -44,8 +44,8 @@ echo "[COMPUTE] compute_defensive_archetypes_v2.py"
 python3 src/data_compute/compute_defensive_archetypes_v2.py
 
 # Visualization / Export
-echo "[COMPUTE] player_archetypes_viewer.py"
-python3 app/player_archetypes_viewer.py
+echo "[COMPUTE] player_archetype_viewer.py"
+python3 app/player_archetype_viewer.py
 echo "[COMPUTE] player_data_viewer.py"
 python3 app/player_data_viewer.py
 echo "[COMPUTE] export_db_to_parquet.py"

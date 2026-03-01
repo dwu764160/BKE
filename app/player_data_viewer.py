@@ -390,6 +390,96 @@ def _format_pct(val, scale=100):
     result = val * scale if abs(val) < 1.5 else val
     return round(result, 1)
 
+
+def _safe_float(val):
+    if val is None:
+        return None
+    try:
+        out = float(val)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(out):
+        return None
+    return out
+
+
+def apply_bke_split_variants(cards, details):
+    """Attach 60/40 + 55/45 split variants and per-season rank/pct to each card/version.
+
+    This keeps historical behavior with 60/40 as default while making 55/45
+    available instantly in the UI without requiring additional backend score files.
+    """
+    split_defs = {
+        "split_60_40": {"off_weight": 0.60, "def_weight": 0.40},
+        "split_55_45": {"off_weight": 0.55, "def_weight": 0.45},
+    }
+
+    buckets = {}
+    for card in cards:
+        season = str(card.get("season", "")).strip()
+        versions = card.get("bke_versions") or {}
+        for version_name, version_payload in versions.items():
+            obke = _safe_float(version_payload.get("obke"))
+            dbke = _safe_float(version_payload.get("dbke"))
+            splits = {}
+            for split_name, coeffs in split_defs.items():
+                bke_val = None
+                if obke is not None and dbke is not None:
+                    bke_val = round(coeffs["off_weight"] * obke + coeffs["def_weight"] * dbke, 3)
+                splits[split_name] = {
+                    "off_weight": coeffs["off_weight"],
+                    "def_weight": coeffs["def_weight"],
+                    "bke": bke_val,
+                    "rank": None,
+                    "pct": None,
+                }
+                key = (version_name, split_name, season)
+                buckets.setdefault(key, [])
+                if bke_val is not None:
+                    buckets[key].append((card, splits[split_name]))
+
+            version_payload["splits"] = splits
+            baseline = splits["split_60_40"]
+            version_payload["bke"] = baseline.get("bke")
+            version_payload["rank"] = baseline.get("rank")
+            version_payload["pct"] = baseline.get("pct")
+
+    for _, entries in buckets.items():
+        if not entries:
+            continue
+        entries.sort(key=lambda pair: pair[1]["bke"], reverse=True)
+        n = len(entries)
+        for i, (_, split_payload) in enumerate(entries):
+            split_payload["rank"] = i + 1
+            split_payload["pct"] = round((1 - i / max(n - 1, 1)) * 100, 1)
+
+    for card in cards:
+        key = card.get("key")
+        detail = details.get(key)
+        if not isinstance(detail, dict):
+            continue
+
+        version_splits = card.get("bke_versions") or {}
+        v27 = (version_splits.get("v27") or {}).get("splits")
+        v28 = (version_splits.get("v28") or {}).get("splits")
+        v30 = (version_splits.get("v30") or {}).get("splits")
+
+        for section_name in ("bke", "bke_details"):
+            section = detail.get(section_name)
+            if isinstance(section, dict) and v27:
+                section["split_variants"] = v27
+                section["active_split_default"] = "split_60_40"
+
+        section = detail.get("bke_v28")
+        if isinstance(section, dict) and v28:
+            section["split_variants"] = v28
+            section["active_split_default"] = "split_60_40"
+
+        section = detail.get("bke_v30")
+        if isinstance(section, dict) and v30:
+            section["split_variants"] = v30
+            section["active_split_default"] = "split_60_40"
+
 # ---------------------------------------------------------------------------
 # Archetype reason generators (same logic as player_archetype_viewer.py)
 # ---------------------------------------------------------------------------
@@ -807,6 +897,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             unique_cards.append(c)
     cards = unique_cards
 
+    apply_bke_split_variants(cards, details)
+
     cards.sort(key=lambda x: x['ppg'], reverse=True)
 
     cards_json = json.dumps(cards, separators=(',', ':'))
@@ -849,6 +941,7 @@ input{{width:300px}}select{{min-width:180px}}
 .ver-btn.active{{border-color:#f4a261;color:#f4a261;background:#1e2a4a}}
 .ver-btn:hover{{border-color:#f4a261;color:#f4a261}}
 .ver-label{{color:#666;font-size:12px;margin-right:2px}}
+.split-label{{color:#666;font-size:12px;margin-right:2px;margin-left:8px}}
 
 .load-wrap{{background:#101a33;border:1px solid #1f2a4f;border-radius:8px;padding:10px 12px;margin-bottom:16px;display:none}}
 .load-wrap.active{{display:block}}
@@ -1013,6 +1106,9 @@ input{{width:300px}}select{{min-width:180px}}
     <span class="ver-btn active" data-ver="v27" onclick="switchBkeVersion(this)">v27</span>
     <span class="ver-btn" data-ver="v28" onclick="switchBkeVersion(this)">v28</span>
     <span class="ver-btn" data-ver="v30" onclick="switchBkeVersion(this)">v3.0</span>
+        <span class="split-label">Split:</span>
+        <span class="ver-btn active split-btn" data-split="split_60_40" onclick="switchBkeSplit(this)">60/40</span>
+        <span class="ver-btn split-btn" data-split="split_55_45" onclick="switchBkeSplit(this)">55/45</span>
   </div>
   <span class="sort-btn" onclick="openCmp()" style="background:#1e3260;margin-left:8px">&#128200; Compare</span>
   <span class="reset-btn" onclick="resetFilters()">Reset All</span>
@@ -1085,21 +1181,42 @@ var fData=[],rendered=0,gen=0;
 var _detailCache=null;  /* lazy-parsed on first modal open */
 var _sortBaseLabels={};
 var curBkeVersion='v27';
+var curBkeSplit='split_60_40';
 var curModalKey=null;
 var cmpSel={1:null,2:null};
 
 /* ---- BKE version helpers ---- */
+function splitDisplayLabel(){
+    return curBkeSplit==='split_55_45'?'55/45':'60/40';
+}
+function getSplitData(rec){
+    var splits=(rec&&rec.split_variants)?rec.split_variants:{};
+    return splits[curBkeSplit]||splits['split_60_40']||null;
+}
 function getBkeField(card, field) {
     var v = (card.bke_versions || {})[curBkeVersion];
     if (!v) v = (card.bke_versions || {})['v27'] || {};
+    if(field==='bke' || field==='rank' || field==='pct'){
+        var splitRec=(v.splits||{})[curBkeSplit] || (v.splits||{})['split_60_40'];
+        if(splitRec && splitRec[field] !== undefined && splitRec[field] !== null) return splitRec[field];
+    }
     return v[field] !== undefined ? v[field] : null;
 }
 function switchBkeVersion(el) {
     var ver = el.dataset.ver;
     if (ver === curBkeVersion) return;
     curBkeVersion = ver;
-    document.querySelectorAll('.ver-btn').forEach(function(b) {
+    document.querySelectorAll('.ver-btn[data-ver]').forEach(function(b) {
         b.classList.toggle('active', b.dataset.ver === ver);
+    });
+    filterPlayers();
+}
+function switchBkeSplit(el) {
+    var split = el.dataset.split;
+    if (split === curBkeSplit) return;
+    curBkeSplit = split;
+    document.querySelectorAll('.split-btn').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.split === split);
     });
     filterPlayers();
 }
@@ -1211,7 +1328,7 @@ function cardHTML(p){
     +'<div class="st"><div class="sv">'+p.rpg+'</div><div class="sl">RPG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.usg,'%')+'</div><div class="sl">USG</div></div>'
     +'<div class="st"><div class="sv">'+fs(p.ts,'%')+'</div><div class="sl">TS%</div></div>'
-    +'<div class="st"><div class="sv">'+fbkeCard(getBkeField(p,"pct"),getBkeField(p,"rank"))+'</div><div class="sl">BKE'+(curBkeVersion!=='v27'?' <span style="color:#f4a261;font-size:8px">'+curBkeVersion.toUpperCase()+'</span>':'')+'</div></div>'
+    +'<div class="st"><div class="sv">'+fbkeCard(getBkeField(p,"pct"),getBkeField(p,"rank"))+'</div><div class="sl">BKE'+(curBkeVersion!=='v27'?' <span style="color:#f4a261;font-size:8px">'+curBkeVersion.toUpperCase()+'</span>':'')+' <span style="color:#8aa0d6;font-size:8px">'+splitDisplayLabel()+'</span></div></div>'
     +'</div>'
     +lean
     +'<div class="arow">'
@@ -1288,10 +1405,15 @@ function renderBKEHighlights(bke, version){
     var cards=[];
     function push(label,val){if(val!==null&&val!==undefined&&val!=='')cards.push({label:label,value:val});}
     function pct(v){return v!=null?Number(v).toFixed(1)+'%':null;}
+    var splitData=getSplitData(bke);
+    var splitBke=splitData?splitData.bke:null;
+    var splitRank=splitData?splitData.rank:null;
+    var splitPct=splitData?splitData.pct:null;
+    var splitLabel=splitDisplayLabel();
 
     if(version==='v27'){
-        push('BKE Rank',bke.rank);
-        push('BKE Percentile',pct(bke.final_BKE_percentile));
+        push('BKE Rank ('+splitLabel+')',splitRank!=null?splitRank:bke.rank);
+        push('BKE Percentile ('+splitLabel+')',pct(splitPct!=null?splitPct:bke.final_BKE_percentile));
         push('OBKE Percentile',pct(bke.final_OBKE_percentile));
         push('DBKE Percentile',pct(bke.final_DBKE_percentile));
         push('Pos-Band BKE %ile',pct(bke.position_band_BKE_percentile));
@@ -1303,28 +1425,29 @@ function renderBKEHighlights(bke, version){
         push('Def-Arch BKE %ile',pct(bke.def_archetype_BKE_percentile));
         push('Def-Arch OBKE %ile',pct(bke.def_archetype_OBKE_percentile));
         push('Def-Arch DBKE %ile',pct(bke.def_archetype_DBKE_percentile));
-        push('Transformed BKE',bke.transformed_BKE);
+        push('Split BKE ('+splitLabel+')',splitBke!=null?splitBke:bke.transformed_BKE);
         push('Transformed OBKE',bke.transformed_OBKE);
         push('Transformed DBKE',bke.transformed_DBKE);
         push('Position Band',bke.position_bucket);
         push('Off Archetype',bke.primary_archetype);
         push('Def Archetype',bke.defensive_archetype);
     } else if(version==='v28'){
-        push('BKE Composite',bke.bke_composite);
+        push('BKE Composite ('+splitLabel+')',splitBke!=null?splitBke:bke.bke_composite);
         push('OBKE Transformed',bke.obke_transformed);
         push('DBKE Transformed',bke.dbke_transformed);
-        push('Rank',bke.rank);
+        push('Rank ('+splitLabel+')',splitRank!=null?splitRank:bke.rank);
+        push('BKE Percentile ('+splitLabel+')',pct(splitPct));
         push('Portable Talent Z',bke.portable_talent_z_adj);
         push('Off Portable Z',bke.offensive_portable_z);
         push('Def Portable Z',bke.defensive_portable_z);
         for(var k in bke){if(k.indexOf('layer_')===0)push(k.replace('layer_','L: '),bke[k]);}
         for(var k in bke){if(k.indexOf('dim_')===0)push(k.replace('dim_','D: '),bke[k]);}
     } else if(version==='v30'){
-        push('BKE v3.0',bke.BKE_v30);
+        push('BKE v3.0 ('+splitLabel+')',splitBke!=null?splitBke:bke.BKE_v30);
         push('DBKE Scaled v3.0',bke.DBKE_scaled_v30);
         push('OBKE v3.0 Ref',bke.OBKE_v30_reference);
-        push('Rank',bke.rank);
-        push('BKE Percentile',pct(bke.bke_pct));
+        push('Rank ('+splitLabel+')',splitRank!=null?splitRank:bke.rank);
+        push('BKE Percentile ('+splitLabel+')',pct(splitPct!=null?splitPct:bke.bke_pct));
         push('DBKE Percentile',pct(bke.dbke_pct));
         push('OBKE Percentile',pct(bke.obke_pct));
         push('DBKE Raw v3.0',bke.DBKE_raw_v30);
@@ -1334,8 +1457,8 @@ function renderBKEHighlights(bke, version){
         push('\u03BB Shrink',bke.lambda_shrink);
     }
 
-    if(!cards.length)return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+')</h3><p style="color:#666;font-size:14px">No data for this version</p></div>';
-    return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+')</h3>'+renderSG(cards)+'</div>';
+    if(!cards.length)return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+' · '+splitLabel+')</h3><p style="color:#666;font-size:14px">No data for this version</p></div>';
+    return '<div class="msec msec-bke"><h3>BKE Highlights ('+version.toUpperCase()+' · '+splitLabel+')</h3>'+renderSG(cards)+'</div>';
 }
 
 function renderPositionEstimate(pr){
@@ -1396,6 +1519,14 @@ function openModal(key){
     if(curBkeVersion==='v28'){bk=d.bke_v28||{};bkDetails=d.bke_v28||{};}
     else if(curBkeVersion==='v30'){bk=d.bke_v30||{};bkDetails=d.bke_v30||{};}
     else{bk=d.bke||{};bkDetails=d.bke_details||{};}
+    var splitRec=getSplitData(bkDetails)||getSplitData(bk);
+    var bkDetailsDisplay=Object.assign({},bkDetails);
+    bkDetailsDisplay.active_split=splitDisplayLabel();
+    if(splitRec){
+        bkDetailsDisplay.split_bke=splitRec.bke;
+        bkDetailsDisplay.split_rank=splitRec.rank;
+        bkDetailsDisplay.split_pct=splitRec.pct;
+    }
     var gp=ps.GP||ss.GP||null;
   function add(l,v){if(v!==null&&v!==undefined&&v!=='')hl.push({label:l,value:v});}
     add('MPG',p.mpg);add('PPG',p.ppg);add('APG',p.apg);add('RPG',p.rpg);
@@ -1437,7 +1568,7 @@ function openModal(key){
     +renderKV('xRAPM',d.xrapm||{})
     +renderKV('xRAPM v2',d.xrapm_v2||{})
     +renderKV('Linear Metrics (BKE-computed)',d.linear||{})
-    +renderKV('BKE Details ('+curBkeVersion.toUpperCase()+')',bkDetails);
+    +renderKV('BKE Details ('+curBkeVersion.toUpperCase()+' · '+splitDisplayLabel()+')',bkDetailsDisplay);
 
   /* add collapsible toggles to each section */
   document.querySelectorAll('#mBody .msec').forEach(function(sec){
@@ -1500,7 +1631,9 @@ function resetFilters(){
     curSort='ppg';
     curSortDir='desc';
     curBkeVersion='v27';
-    document.querySelectorAll('.ver-btn').forEach(function(b){b.classList.toggle('active',b.dataset.ver==='v27');});
+    curBkeSplit='split_60_40';
+    document.querySelectorAll('.ver-btn[data-ver]').forEach(function(b){b.classList.toggle('active',b.dataset.ver==='v27');});
+    document.querySelectorAll('.split-btn').forEach(function(b){b.classList.toggle('active',b.dataset.split==='split_60_40');});
     refreshSortUI();
     filterPlayers();
 }
