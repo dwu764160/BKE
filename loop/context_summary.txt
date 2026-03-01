@@ -1,3 +1,16 @@
+- 2026-02-28 — Defensive archetype confidence EXP D applied + downstream rerun
+	- Updated `src/data_compute/compute_defensive_archetypes_v2.py` confidence formula to EXP D:
+		- `confidence = 0.40 * top_role_score + 0.60 * (0.5 + 0.5 * role_margin^0.6)` with [0,1] clipping on inputs.
+	- Fixed file integrity issues in same script introduced by prior edit:
+		- `load_tracking_defense()` now correctly reads parquet before setting season.
+		- `load_speed_distance()` restored valid control flow (removed stray triple-quote break).
+	- Rerun from defensive stage onward (all successful):
+		1) `python3 src/data_compute/compute_defensive_archetypes_v2.py`
+		2) `python3 app/player_archetype_viewer.py`
+		3) `python3 app/player_data_viewer.py`
+		4) `python3 src/utils/export_db_to_parquet.py`
+	- Output check: `defensive_confidence` summary now reports mean ~0.74 in script diagnostics; viewers regenerated.
+
 - 2026-02-27 — BKE v3.0 Standard Applied Across Repo + Viewer Enhancements
 	- **Model change: v27 60/40 blend**
 		- `src/modeling/construct_bke_scores_v27.py` line 286: `raw_BKE = raw_OBKE + raw_DBKE` → `raw_BKE = 0.60 * raw_OBKE + 0.40 * raw_DBKE`

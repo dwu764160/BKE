@@ -1,3 +1,9 @@
+2026-02-28 — Defensive archetype confidence EXP D rollout complete
+- Applied EXP D confidence in `src/data_compute/compute_defensive_archetypes_v2.py`.
+- Repaired syntax/runtime issues in the same file (`load_tracking_defense`, `load_speed_distance`).
+- Re-ran pipeline from defensive stage onward in-order: defensive compute → archetype viewer → player data viewer → parquet export.
+- Current status: no runtime errors in downstream steps; generated outputs refreshed.
+
 2026-02-21 — v2.9 diagnostic suite completed + pipeline reorganization
 - 2026-02-27 — BKE v3.0 standard applied + viewer enhancements
   - v27 constructor now uses 60/40 offense/defense blend (matching v3.0): `raw_BKE = 0.60*OBKE + 0.40*DBKE`

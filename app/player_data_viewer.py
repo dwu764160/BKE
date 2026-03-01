@@ -953,6 +953,33 @@ input{{width:300px}}select{{min-width:180px}}
 .radar-legend{{display:flex;gap:16px;justify-content:center;margin-bottom:12px;font-size:13px;color:#bac7e6}}
 .radar-legend span{{display:flex;align-items:center;gap:4px}}
 .radar-dot{{width:10px;height:10px;border-radius:50%;display:inline-block}}
+
+/* modal tabs */
+.m-tabs{{display:flex;gap:0;margin:8px 0 0}}
+.m-tab{{padding:8px 18px;background:transparent;border:1px solid #2a3b70;color:#7c8bb5;font-size:14px;cursor:pointer;border-radius:8px 8px 0 0;border-bottom:none;transition:all .2s}}
+.m-tab.active{{background:#101a36;color:#e6f0ff;border-color:#4e7cc9;font-weight:600}}
+.m-tab:hover:not(.active){{background:rgba(30,42,80,.5)}}
+/* graphs sections */
+.gfx-sec{{margin-bottom:20px;padding:16px;border:1px solid #243763;border-radius:12px;background:#101a36}}
+.gfx-title{{font-size:15px;font-weight:600;color:#8ea7db;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:12px}}
+/* YoY chart */
+.yoy-filters{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}}
+.yoy-filter{{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:#bac7e6;padding:3px 8px;border-radius:4px;background:#142246;border:1px solid #2b4475;user-select:none}}
+.yoy-filter.off{{opacity:.35;border-color:transparent}}
+.yoy-filter .yoy-dot{{width:8px;height:8px;border-radius:50%;display:inline-block}}
+/* layer bars */
+.layer-row{{display:flex;align-items:center;gap:8px;margin-bottom:8px}}
+.layer-label{{width:140px;font-size:13px;color:#8ea7db;text-align:right;white-space:nowrap}}
+.layer-bar-wrap{{flex:1;height:24px;position:relative;background:#0a1428;border-radius:4px;overflow:hidden}}
+.layer-center{{position:absolute;left:50%;top:0;bottom:0;width:1px;background:#3a5180;z-index:1}}
+.layer-bar{{height:100%;position:absolute;top:0;border-radius:3px;min-width:2px}}
+.layer-val{{width:55px;font-size:13px;color:#bac7e6;text-align:left;font-weight:600}}
+/* position stacked */
+.pos-bar-wrap{{display:flex;height:28px;border-radius:6px;overflow:hidden;margin-top:8px}}
+.pos-seg{{height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:600;min-width:0}}
+.pos-legend{{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap}}
+.pos-legend-item{{display:flex;align-items:center;gap:4px;font-size:12px;color:#bac7e6}}
+.pos-legend-dot{{width:10px;height:10px;border-radius:2px;display:inline-block}}
 </style>
 </head>
 <body>
@@ -1013,10 +1040,18 @@ input{{width:300px}}select{{min-width:180px}}
   <button class="modal-nav prev" id="modalPrev" onclick="event.stopPropagation();navigateModal(-1)" title="Previous season">&#9664;</button>
   <div class="mc" role="dialog" aria-modal="true">
     <div class="mh">
-      <div><div id="mTitle" class="mt"></div><div id="mSub" class="ms"></div></div>
+      <div>
+        <div id="mTitle" class="mt"></div>
+        <div id="mSub" class="ms"></div>
+        <div class="m-tabs">
+          <button class="m-tab active" id="tabStats" onclick="switchModalTab('stats')">&#128202; Stats</button>
+          <button class="m-tab" id="tabGraphs" onclick="switchModalTab('graphs')">&#128200; Graphs</button>
+        </div>
+      </div>
       <button class="mx" onclick="closeModal(event,true)">&times;</button>
     </div>
     <div id="mBody"></div>
+    <div id="mGraphs" style="display:none"></div>
   </div>
   <button class="modal-nav next" id="modalNext" onclick="event.stopPropagation();navigateModal(1)" title="Next season">&#9654;</button>
 </div>
@@ -1394,7 +1429,6 @@ function openModal(key){
         +renderBKEHighlights(bk, curBkeVersion)
     +arch
         +renderPositionEstimate(pr)
-    +renderPT(d.playtypes)
     +renderReasons(d.off_reasons,d.def_reasons)
     +renderKV('Profile',pr)
     +renderKV('Archetype Model Stats',d.archetype_model||{})
@@ -1415,6 +1449,14 @@ function openModal(key){
     h3.insertBefore(span,h3.firstChild);
     h3.addEventListener('click',function(){sec.classList.toggle('collapsed');});
   });
+
+  /* reset tabs */
+  document.getElementById('tabStats').classList.add('active');
+  document.getElementById('tabGraphs').classList.remove('active');
+  document.getElementById('mBody').style.display='';
+  document.getElementById('mGraphs').style.display='none';
+  document.getElementById('mGraphs').innerHTML='';
+  window._graphsRendered=false;
 
   updateNavArrows();
   document.getElementById('modal').classList.add('open');
@@ -1663,6 +1705,250 @@ function drawRadar(p1,p2){
     }
     svg+='</svg>';
     document.getElementById('radarSvg').innerHTML=svg;
+}
+
+/* ---- modal tab + graphs ---- */
+function switchModalTab(tab){
+    var isStats=(tab==='stats');
+    document.getElementById('tabStats').classList.toggle('active',isStats);
+    document.getElementById('tabGraphs').classList.toggle('active',!isStats);
+    document.getElementById('mBody').style.display=isStats?'':'none';
+    document.getElementById('mGraphs').style.display=isStats?'none':'';
+    if(!isStats&&!window._graphsRendered){
+        window._graphsRendered=true;
+        renderGraphsTab();
+    }
+}
+
+function renderGraphsTab(){
+    if(!curModalKey)return;
+    var p=null;for(var i=0;i<cards.length;i++){if(cards[i].key===curModalKey){p=cards[i];break;}}
+    if(!p)return;
+    var d=getDetail(curModalKey);
+    var pid=curModalKey.split('::')[0];
+    var curSeason=curModalKey.split('::')[1];
+    var html='';
+    /* 1. YoY progression */
+    html+=renderYoYSection(pid,curSeason);
+    /* 2. Offensive BKE layers */
+    var bkd=d.bke_details||{};
+    html+=renderLayerSection('Offensive BKE Layer Breakdown',[
+        {label:'Portable Talent',value:bkd.layer1_offensive_raw},
+        {label:'Role Utilization',value:bkd.layer2_rue_raw},
+        {label:'Archetype Elevation',value:bkd.layer3_off_elevation_raw},
+        {label:'Scheme Bonus',value:bkd.layer4_scheme_bonus_raw}
+    ],'off');
+    /* 3. Defensive BKE layers */
+    html+=renderLayerSection('Defensive BKE Layer Breakdown',[
+        {label:'Defensive Portable',value:bkd.layer1_defensive_raw},
+        {label:'Def Elevation',value:bkd.layer3_def_elevation_raw},
+        {label:'Scheme Bonus',value:bkd.layer4_scheme_bonus_raw}
+    ],'def');
+    /* 4. Position breakdown */
+    html+=renderPositionSection(d.profile||{});
+    /* 5. Defensive archetype radar */
+    html+=renderDefArchSection(p,d);
+    /* 6. Playtype breakdown (moved from Stats) */
+    html+=renderPT(d.playtypes);
+    document.getElementById('mGraphs').innerHTML=html;
+    drawYoYChart();
+}
+
+/* ---- YoY progression chart ---- */
+function renderYoYSection(pid,curSeason){
+    var allSeasons=['2022-23','2023-24','2024-25'];
+    var seriesDefs=[
+        {key:'BKE%',color:'#f4a261',fn:function(det){return (det.bke||{}).final_BKE_percentile;}},
+        {key:'OBKE%',color:'#ff6b6b',fn:function(det){return (det.bke||{}).final_OBKE_percentile;}},
+        {key:'DBKE%',color:'#4ecdc4',fn:function(det){return (det.bke||{}).final_DBKE_percentile;}},
+        {key:'BPM',color:'#a78bfa',fn:function(det){return (det.linear||{}).BPM;}},
+        {key:'WS',color:'#34d399',fn:function(det){return (det.linear||{}).WS;}},
+        {key:'RAPM',color:'#fb923c',fn:function(det){return (det.rapm||{}).RAPM;}}
+    ];
+    var seriesData={};
+    for(var si=0;si<seriesDefs.length;si++){
+        var sd=seriesDefs[si];var pts=[];
+        for(var j=0;j<allSeasons.length;j++){
+            var k=pid+'::'+allSeasons[j];
+            var det=getDetail(k);
+            if(!det||!Object.keys(det).length){pts.push(null);continue;}
+            var val=sd.fn(det);
+            if(val===null||val===undefined||val===''){pts.push(null);continue;}
+            var n=Number(val);pts.push(isFinite(n)?n:null);
+        }
+        seriesData[sd.key]=pts;
+    }
+    window._yoyData={seasons:allSeasons,series:seriesDefs,data:seriesData,curSeason:curSeason};
+    window._yoyActive={};
+    for(var si=0;si<seriesDefs.length;si++)window._yoyActive[seriesDefs[si].key]=true;
+    var filters='';
+    for(var si=0;si<seriesDefs.length;si++){
+        var sd=seriesDefs[si];var hasData=false;
+        for(var j=0;j<seriesData[sd.key].length;j++){if(seriesData[sd.key][j]!==null){hasData=true;break;}}
+        if(!hasData)continue;
+        filters+='<div class="yoy-filter" data-key="'+sd.key+'" onclick="toggleYoY(this)"><span class="yoy-dot" style="background:'+sd.color+'"></span>'+sd.key+'</div>';
+    }
+    return '<div class="gfx-sec"><div class="gfx-title">Year-over-Year Progression</div>'
+        +'<div class="yoy-filters" id="yoyFilters">'+filters+'</div>'
+        +'<div id="yoyChartWrap" style="display:flex;justify-content:center"></div></div>';
+}
+
+function toggleYoY(el){
+    var key=el.dataset.key;
+    window._yoyActive[key]=!window._yoyActive[key];
+    el.classList.toggle('off',!window._yoyActive[key]);
+    drawYoYChart();
+}
+
+function drawYoYChart(){
+    var yd=window._yoyData;if(!yd)return;
+    var W=560,H=220,pad={t:20,r:30,b:40,l:55};
+    var pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+    var seasons=yd.seasons,nS=seasons.length;
+    var allVals=[];
+    for(var si=0;si<yd.series.length;si++){
+        if(!window._yoyActive[yd.series[si].key])continue;
+        var pts=yd.data[yd.series[si].key];
+        for(var j=0;j<pts.length;j++){if(pts[j]!==null)allVals.push(pts[j]);}
+    }
+    if(!allVals.length){document.getElementById('yoyChartWrap').innerHTML='<p style="color:#666;font-size:14px">No data available</p>';return;}
+    var yMin=Math.min.apply(null,allVals),yMax=Math.max.apply(null,allVals);
+    var yRange=yMax-yMin;if(yRange<0.01){yMin-=1;yMax+=1;yRange=2;}
+    yMin-=yRange*0.1;yMax+=yRange*0.1;yRange=yMax-yMin;
+    function xP(idx){return pad.l+idx*(pw/(nS-1));}
+    function yP(val){return pad.t+ph-(val-yMin)/yRange*ph;}
+    var svg='<svg width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'">';
+    /* grid */
+    for(var gi=0;gi<=4;gi++){
+        var gy=pad.t+ph*gi/4;var gv=yMax-(yMax-yMin)*gi/4;
+        svg+='<line x1="'+pad.l+'" y1="'+gy.toFixed(1)+'" x2="'+(W-pad.r)+'" y2="'+gy.toFixed(1)+'" stroke="#1e2a50" stroke-width="0.5"/>';
+        svg+='<text x="'+(pad.l-6)+'" y="'+(gy+4).toFixed(1)+'" fill="#7c8bb5" font-size="10" text-anchor="end">'+gv.toFixed(1)+'</text>';
+    }
+    /* season labels */
+    for(var j=0;j<nS;j++){
+        var sx=xP(j);
+        svg+='<text x="'+sx.toFixed(1)+'" y="'+(H-8)+'" fill="#7c8bb5" font-size="11" text-anchor="middle">'+seasons[j]+'</text>';
+        svg+='<line x1="'+sx.toFixed(1)+'" y1="'+pad.t+'" x2="'+sx.toFixed(1)+'" y2="'+(pad.t+ph)+'" stroke="#1e2a50" stroke-width="0.5" stroke-dasharray="3,3"/>';
+    }
+    /* lines + dots */
+    for(var si=0;si<yd.series.length;si++){
+        var sd=yd.series[si];if(!window._yoyActive[sd.key])continue;
+        var pts=yd.data[sd.key];var pp=[];
+        for(var j=0;j<pts.length;j++){if(pts[j]!==null)pp.push({x:xP(j),y:yP(pts[j]),s:seasons[j],v:pts[j]});}
+        if(pp.length>=2){
+            var d2='M'+pp[0].x.toFixed(1)+','+pp[0].y.toFixed(1);
+            for(var k=1;k<pp.length;k++)d2+='L'+pp[k].x.toFixed(1)+','+pp[k].y.toFixed(1);
+            svg+='<path d="'+d2+'" fill="none" stroke="'+sd.color+'" stroke-width="2" stroke-linecap="round"/>';
+        }
+        for(var k=0;k<pp.length;k++){
+            var isCur=(pp[k].s===yd.curSeason);
+            svg+='<circle cx="'+pp[k].x.toFixed(1)+'" cy="'+pp[k].y.toFixed(1)+'" r="'+(isCur?6:4)+'" fill="'+sd.color+'"'+(isCur?' stroke="#fff" stroke-width="2"':'')+'/>';
+            if(isCur)svg+='<text x="'+pp[k].x.toFixed(1)+'" y="'+(pp[k].y-10).toFixed(1)+'" fill="'+sd.color+'" font-size="11" font-weight="700" text-anchor="middle">'+pp[k].v.toFixed(1)+'</text>';
+        }
+    }
+    svg+='</svg>';
+    document.getElementById('yoyChartWrap').innerHTML=svg;
+}
+
+/* ---- BKE layer breakdown (diverging bars) ---- */
+function renderLayerSection(title,layers,type){
+    var valid=[];
+    for(var i=0;i<layers.length;i++){if(layers[i].value!==null&&layers[i].value!==undefined)valid.push(layers[i]);}
+    if(!valid.length)return '<div class="gfx-sec"><div class="gfx-title">'+title+'</div><p style="color:#666;font-size:13px">No layer data available</p></div>';
+    var maxAbs=0;
+    for(var i=0;i<valid.length;i++){var a=Math.abs(Number(valid[i].value));if(a>maxAbs)maxAbs=a;}
+    if(maxAbs<0.001)maxAbs=1;
+    var bars='';
+    for(var i=0;i<valid.length;i++){
+        var v=Number(valid[i].value);
+        var pct=Math.abs(v)/maxAbs*45;
+        var isPos=v>=0;
+        var color=type==='off'?(isPos?'#ff6b6b':'#5a2d2d'):(isPos?'#4ecdc4':'#2d5a57');
+        var left=isPos?50:(50-pct);
+        bars+='<div class="layer-row"><span class="layer-label">'+valid[i].label+'</span>'
+            +'<div class="layer-bar-wrap"><div class="layer-center"></div>'
+            +'<div class="layer-bar" style="left:'+left.toFixed(1)+'%;width:'+pct.toFixed(1)+'%;background:'+color+'"></div></div>'
+            +'<span class="layer-val" style="color:'+color+'">'+(isPos?'+':'')+v.toFixed(3)+'</span></div>';
+    }
+    return '<div class="gfx-sec"><div class="gfx-title">'+title+'</div>'+bars+'</div>';
+}
+
+/* ---- position breakdown (stacked bar) ---- */
+function renderPositionSection(pr){
+    var positions=[
+        {key:'pct_pg',label:'PG',color:'#e63946'},
+        {key:'pct_sg',label:'SG',color:'#f4a261'},
+        {key:'pct_sf',label:'SF',color:'#2a9d8f'},
+        {key:'pct_pf',label:'PF',color:'#264653'},
+        {key:'pct_c',label:'C',color:'#457b9d'}
+    ];
+    var total=0;var hasData=false;
+    for(var i=0;i<positions.length;i++){
+        var v=pr[positions[i].key];
+        if(v!==null&&v!==undefined&&v!==''){
+            v=Number(v);if(Math.abs(v)<=1.5)v=v*100;
+            positions[i].pct=v;total+=v;hasData=true;
+        }else{positions[i].pct=0;}
+    }
+    if(!hasData)return '<div class="gfx-sec"><div class="gfx-title">Position Breakdown</div><p style="color:#666;font-size:13px">No position data</p></div>';
+    if(total<1)total=100;
+    var bar='<div class="pos-bar-wrap">';
+    var legend='<div class="pos-legend">';
+    for(var i=0;i<positions.length;i++){
+        var wp=positions[i].pct/total*100;
+        if(wp<0.5)continue;
+        bar+='<div class="pos-seg" style="width:'+wp.toFixed(1)+'%;background:'+positions[i].color+'">'+(wp>8?positions[i].label:'')+'</div>';
+        legend+='<div class="pos-legend-item"><span class="pos-legend-dot" style="background:'+positions[i].color+'"></span>'+positions[i].label+': '+positions[i].pct.toFixed(1)+'%</div>';
+    }
+    bar+='</div>';legend+='</div>';
+    return '<div class="gfx-sec"><div class="gfx-title">Position Breakdown</div>'
+        +'<div style="color:#bac7e6;font-size:14px;margin-bottom:6px">Primary: '+(pr.position||'Unknown')+'</div>'
+        +bar+legend+'</div>';
+}
+
+/* ---- defensive archetype radar ---- */
+function renderDefArchSection(p,d){
+    var bv=d.bke_v28||{};var bk=d.bke||{};var ln=d.linear||{};var ra=d.rapm||{};
+    var ps=d.profile_stats||{};var ss=d.season_stats||{};var gp=ps.GP||ss.GP||1;
+    function zTo100(z){if(z===null||z===undefined)return null;var v=Number(z);if(!isFinite(v))return null;return Math.min(100,Math.max(0,v*20+50));}
+    function pctVal(v){if(v===null||v===undefined)return null;var n=Number(v);if(!isFinite(n))return null;return Math.min(100,Math.max(0,n));}
+    function rateNorm(val,maxV){if(val===null||val===undefined)return null;var n=Number(val);if(!isFinite(n))return null;return Math.min(100,Math.max(0,n/maxV*100));}
+    var dims=[
+        {label:'DBKE',value:pctVal(bk.final_DBKE_percentile)},
+        {label:'Def Confidence',value:pctVal(p.def_confidence)},
+        {label:'Def Playmaking',value:zTo100(bv.dim_defensive_playmaking_z)},
+        {label:'Def Impact',value:zTo100(bv.dim_defensive_impact_z)},
+        {label:'Versatility',value:zTo100(bv.dim_defensive_versatility_z)}
+    ];
+    if(dims[2].value===null){var blk=perGame(ps.BLK||ss.BLK,gp);dims[2]={label:'BLK/G',value:rateNorm(blk,3.5)};}
+    if(dims[3].value===null){var drapm=(ra.DRAPM!==undefined)?ra.DRAPM:null;dims[3]={label:'DRAPM',value:drapm!==null?zTo100(drapm/3):null};}
+    if(dims[4].value===null){var stl=perGame(ps.STL||ss.STL,gp);dims[4]={label:'STL/G',value:rateNorm(stl,2.5)};}
+    var validDims=[];for(var i=0;i<dims.length;i++){if(dims[i].value!==null)validDims.push(dims[i]);}
+    if(validDims.length<3)return '<div class="gfx-sec"><div class="gfx-title">Defensive Archetype: '+(p.def_archetype||'Unknown')+'</div><p style="color:#666;font-size:13px">Insufficient defensive data</p></div>';
+    var cx=130,cy=130,radius=95,n=validDims.length;
+    var as=2*Math.PI/n;
+    var svg='<svg width="260" height="260" viewBox="0 0 260 260">';
+    [0.25,0.5,0.75,1.0].forEach(function(pct){svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(radius*pct).toFixed(1)+'" fill="none" stroke="#2b4475" stroke-width="0.5"/>';});
+    for(var i=0;i<n;i++){
+        var a=-Math.PI/2+i*as;
+        var ex=cx+radius*Math.cos(a),ey=cy+radius*Math.sin(a);
+        svg+='<line x1="'+cx+'" y1="'+cy+'" x2="'+ex.toFixed(1)+'" y2="'+ey.toFixed(1)+'" stroke="#1e2a50" stroke-width="1"/>';
+        var lx=cx+(radius+18)*Math.cos(a),ly=cy+(radius+18)*Math.sin(a);
+        svg+='<text x="'+lx.toFixed(1)+'" y="'+ly.toFixed(1)+'" fill="#7c8bb5" font-size="9" text-anchor="middle" dominant-baseline="central">'+validDims[i].label+'</text>';
+    }
+    var pts=[];
+    for(var i=0;i<n;i++){
+        var a=-Math.PI/2+i*as;var v=Math.min(Math.max(validDims[i].value,0),100)/100;
+        pts.push((cx+radius*v*Math.cos(a)).toFixed(1)+','+(cy+radius*v*Math.sin(a)).toFixed(1));
+    }
+    svg+='<polygon points="'+pts.join(' ')+'" fill="#4ecdc4" fill-opacity="0.2" stroke="#4ecdc4" stroke-width="2"/>';
+    for(var i=0;i<n;i++){
+        var a=-Math.PI/2+i*as;var v=Math.min(Math.max(validDims[i].value,0),100)/100;
+        svg+='<circle cx="'+(cx+radius*v*Math.cos(a)).toFixed(1)+'" cy="'+(cy+radius*v*Math.sin(a)).toFixed(1)+'" r="4" fill="#4ecdc4"/>';
+    }
+    svg+='</svg>';
+    return '<div class="gfx-sec"><div class="gfx-title">Defensive Archetype: '+(p.def_archetype||'Unknown')+'</div>'
+        +'<div style="display:flex;justify-content:center">'+svg+'</div></div>';
 }
 
 initSortUI();

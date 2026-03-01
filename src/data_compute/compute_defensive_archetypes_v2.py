@@ -151,6 +151,7 @@ def load_tracking_defense(season: str) -> pd.DataFrame:
     """Load tracking_Defense.parquet -- NOTE: all stats here are PER GAME."""
     path = TRACKING_DIR / season / "tracking_Defense.parquet"
     if path.exists():
+        df = pd.read_parquet(path)
         df["SEASON"] = season
         return df
     return pd.DataFrame()
@@ -186,8 +187,6 @@ def load_speed_distance() -> pd.DataFrame:
         path = TRACKING_DIR / season / "tracking_SpeedDistance.parquet"
         if path.exists():
             df = pd.read_parquet(path)
-
-        """
             df["SEASON"] = season
             all_data.append(df)
     if all_data:
@@ -1146,7 +1145,9 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
 
         top_role_score = row.get("top_role_score", 0.5)
         role_margin = row.get("role_margin", 0.0)
-        confidence = 0.5 + 0.5 * max(0.0, min(1.0, top_role_score - row.get("second_role_score", 0.0)))
+        _top_c = max(0.0, min(1.0, top_role_score))
+        _margin_c = max(0.0, min(1.0, role_margin))
+        confidence = 0.40 * _top_c + 0.60 * (0.5 + 0.5 * (_margin_c ** 0.6))
         if archetype == "Low-Activity Defender":
             secondary = "Liability"
 
