@@ -1,3 +1,19 @@
+- 2026-02-28 — Phase 1 balanced defensive tuning + BKE output rerun
+	- Updated `src/data_compute/compute_defensive_archetypes_v2.py` to balanced policy:
+		- Margin fallback gate: `MARGIN_RULE_GAP = 0.03` (from 0.05).
+		- Confidence formula: `0.50*top + 0.50*(0.5 + 0.5*margin^0.4) + 0.03*max(0, top-0.75)`.
+	- Fixed BKE decomposition blocker in `src/modeling/model_config.py`:
+		- Added missing `PortableTalentConfig` defensive phase-b fields used by Layer 1 (`enable_defensive_phase_b`, archetype/global blend weights, convex/scale/clip params).
+		- Defaulted `enable_defensive_phase_b=False` for backward compatibility.
+	- Phase 1 reruns completed:
+		1) `python3 src/data_compute/compute_player_archetypes.py`
+		2) `python3 src/data_compute/compute_defensive_archetypes_v2.py`
+		3) `python3 src/modeling/decomposition_engine.py`
+		4) `python3 src/modeling/construct_bke_scores_v27.py`
+		5) `python3 src/modeling/dbke_v30_defense_shrinkage.py` (phase_c remains FAIL gate, expected by script)
+		6) `python3 app/player_data_viewer.py`
+	- Output refresh confirmed: `player_archetypes.parquet`, `defensive_archetypes_v2.parquet`, `bke_v28_decomposition.parquet`, `BKE_Scores_v27.json`, `dbke_v30_defense_shrinkage.json`, `app/player_data.html`.
+
 - 2026-02-28 — Defensive archetype confidence EXP D applied + downstream rerun
 	- Updated `src/data_compute/compute_defensive_archetypes_v2.py` confidence formula to EXP D:
 		- `confidence = 0.40 * top_role_score + 0.60 * (0.5 + 0.5 * role_margin^0.6)` with [0,1] clipping on inputs.

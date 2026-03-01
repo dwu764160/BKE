@@ -445,7 +445,7 @@ SCORE_COLS = [
     "rim_score", "drop_big_score", "mobile_big_score",
 ]
 
-MARGIN_RULE_GAP = 0.05
+MARGIN_RULE_GAP = 0.03
 
 # v3.4 tuning coefficients (distribution shaping only)
 RIM_PROTECTOR_SCORE_COEF = 0.45  # v3.5: Make Rim Protectors extremely rare
@@ -1147,7 +1147,11 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
         role_margin = row.get("role_margin", 0.0)
         _top_c = max(0.0, min(1.0, top_role_score))
         _margin_c = max(0.0, min(1.0, role_margin))
-        confidence = 0.40 * _top_c + 0.60 * (0.5 + 0.5 * (_margin_c ** 0.6))
+        confidence = (
+            0.50 * _top_c
+            + 0.50 * (0.5 + 0.5 * (_margin_c ** 0.4))
+            + 0.03 * max(0.0, _top_c - 0.75)
+        )
         if archetype == "Low-Activity Defender":
             secondary = "Liability"
 

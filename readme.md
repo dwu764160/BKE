@@ -58,7 +58,7 @@ python3 src/data_compute/compute_advanced_metrics.py         # Compute advanced 
 python3 src/data_compute/compute_player_profiles.py          # Compute player profiles
 python3 src/data_compute/compute_player_archetypes.py        # Compute offensive archetypes
 python3 src/data_compute/compute_position_estimate.py        # Compute position estimate (PG/SG/SF/PF/C shares)
-python3 src/data_compute/compute_defensive_archetypes_v2.py  # Compute defensive archetypes (v2, EXP D confidence: 0.40*top + 0.60*(0.5+0.5*margin^0.6))
+python3 src/data_compute/compute_defensive_archetypes_v2.py  # Compute defensive archetypes (v2, balanced confidence: 0.50*top + 0.50*(0.5+0.5*margin^0.4) + 0.03*max(0, top-0.75); margin fallback gap=0.03)
 ```
 
 ## Modeling / Impact Metrics

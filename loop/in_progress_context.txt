@@ -1,3 +1,14 @@
+2026-02-28 — Phase 1 balanced defensive policy implemented and rerun
+- Defensive archetype balanced policy is now active in `src/data_compute/compute_defensive_archetypes_v2.py`:
+  - fallback margin gate `0.03`
+  - confidence `0.50*top + 0.50*(0.5+0.5*margin^0.4) + 0.03*max(0, top-0.75)`
+- BKE decomposition runtime blocker fixed by adding missing defensive phase-b config fields in `src/modeling/model_config.py` (compatibility defaults, phase-b disabled by default).
+- Phase 1 required reruns completed:
+  - offensive + defensive archetypes
+  - decomposition + v27 constructor + v30 defense script
+  - player data viewer rebuild
+- Note: `dbke_v30_defense_shrinkage.py` still reports `phase_c: FAIL` by its internal validation gate (script completed and output JSON written).
+
 2026-02-28 — Defensive archetype confidence EXP D rollout complete
 - Applied EXP D confidence in `src/data_compute/compute_defensive_archetypes_v2.py`.
 - Repaired syntax/runtime issues in the same file (`load_tracking_defense`, `load_speed_distance`).

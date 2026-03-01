@@ -165,6 +165,16 @@ class PortableTalentConfig:
     target_dimension_model_std: float = 0.42
     enforce_target_variance: bool = True
 
+    # v3.0b: defensive structural blend controls (Layer 1 defensive branch)
+    # Default disabled for backward compatibility; v3.x experiments can enable explicitly.
+    enable_defensive_phase_b: bool = False
+    defensive_archetype_min_cohort: int = 15
+    defensive_global_weight: float = 0.75
+    defensive_archetype_weight: float = 0.25
+    defensive_convex_alpha: float = 1.03
+    defensive_portable_phase_b_scale: float = 1.00
+    defensive_portable_clip: float = 3.5
+
 
 PORTABLE_TALENT = PortableTalentConfig()
 
