@@ -29,7 +29,7 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.modeling.bke_v31_experimental_layers import _build_base
-from src.modeling.model_config import BKE_V28_OUTPUT_PARQUET, REPORTS_DIR
+from src.modeling.model_config import BKE_V28_OUTPUT_PARQUET, REPORTS_DIR, V31_EXPERIMENTAL
 
 
 OUTPUT_JSON = os.path.join(REPORTS_DIR, "bke_v31_experiment2_production_tilt.json")
@@ -38,28 +38,18 @@ SECOND_PASS_PATH = os.path.join(REPORTS_DIR, "bke_v31_layer36_second_pass.json")
 
 @dataclass
 class Experiment2Config:
+    """Experiment 2 config; structural weights delegate to V31_EXPERIMENTAL."""
     lambda_grid: Tuple[float, ...] = tuple(round(0.01 * i, 2) for i in range(1, 16))
-    layer3_exponent_fallback: float = 1.08
-    layer6_k_fallback: float = 0.20
-    low_prod_quantile: float = 0.25
-    high_prod_quantile: float = 0.75
+    layer3_exponent_fallback: float = V31_EXPERIMENTAL.layer3_exponent_fallback
+    layer6_k_fallback: float = V31_EXPERIMENTAL.layer6_k_fallback
+    low_prod_quantile: float = V31_EXPERIMENTAL.low_prod_quantile
+    high_prod_quantile: float = V31_EXPERIMENTAL.high_prod_quantile
 
     production_weights: Dict[str, float] = None
 
     def __post_init__(self):
         if self.production_weights is None:
-            self.production_weights = {
-                "orapm": 0.22,
-                "TS_PCT": 0.14,
-                "PTS": 0.18,
-                "AST": 0.12,
-                "FGM": 0.08,
-                "FGA": 0.08,
-                "FG3M": 0.06,
-                "FG3A": 0.04,
-                "FTM": 0.04,
-                "FTA": 0.04,
-            }
+            self.production_weights = dict(V31_EXPERIMENTAL.production_weights)
 
 
 CFG = Experiment2Config()
@@ -146,7 +136,7 @@ def _build_layer36_dbke(df: pd.DataFrame, dbke_base: pd.Series, def_portable: pd
         sc = 1.0 / (1.0 + k * max(hist_var[col], 0.0))
         scaled[col] = mu + sc * (scaled[col] - mu)
 
-    dbke_l6 = 0.60 * scaled["def_port"] + 0.25 * scaled["def_elev"] + 0.15 * scaled["scheme"]
+    dbke_l6 = V31_EXPERIMENTAL.layer6_w_def_port * scaled["def_port"] + V31_EXPERIMENTAL.layer6_w_def_elev * scaled["def_elev"] + V31_EXPERIMENTAL.layer6_w_scheme * scaled["scheme"]
     mu_l6 = float(pd.to_numeric(dbke_l6, errors="coerce").mean())
     centered = pd.to_numeric(dbke_l6, errors="coerce") - mu_l6
     dbke_l36 = mu_l6 + np.sign(centered) * (np.abs(centered) ** exponent)
@@ -216,7 +206,7 @@ def run_experiment2(
 
     exponent, k = _load_layer36_config()
     dbke_layer36 = _build_layer36_dbke(df, dbke_base, def_portable, exponent=exponent, k=k)
-    bke_base = 0.60 * obke_base + 0.40 * dbke_layer36
+    bke_base = V31_EXPERIMENTAL.off_weight_default * obke_base + V31_EXPERIMENTAL.def_weight_default * dbke_layer36
 
     work = df[["season", "player_id", "player_name", "rapm"]].copy()
     work["season"] = work["season"].astype(str)

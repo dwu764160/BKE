@@ -1,3 +1,25 @@
+- 2026-03-01 — Interactive BKE viewer + model_config centralization
+	- Added interactive BKE viewer pipeline:
+		- `scripts/export_bke_components.py` — exports per-player BKE components to `data/processed/bke/bke_v31_components.json`
+		- `app/player_bke_viewer.py` — generates standalone `app/player_bke_viewer.html` with:
+			- Lambda slider (0.00–0.15) for real-time production tilt adjustment
+			- O/D split toggle (60/40 vs 55/45)
+			- Sortable table with rank, BKE, OBKE, DBKE, production proxy, RAPM
+			- Season filter, player search, Top-N bar chart, rank-shift distribution
+			- All computation happens client-side from 950-player JSON
+		- Formula: `bke_final = bke_base + lambda * prod_proxy_z`
+		- Parity verified at lambda=0.03 vs experiment2 report: exact match on all metrics
+	- Centralized v3.1 tuning knobs into `src/modeling/model_config.py`:
+		- Added `V31ExperimentalConfig` dataclass and `V31_EXPERIMENTAL` singleton
+		- Centralizes: OBKE/DBKE sub-weights, O/D split options, L3/L6 defaults, production proxy weights, cohort thresholds, sweep grids, defensive driver share guardrails
+		- Updated all consumers to import from model_config instead of hardcoding:
+			- `src/modeling/bke_v31_experimental_layers.py`
+			- `src/modeling/experiment2_production_tilt.py`
+			- `scripts/export_bke_components.py`
+		- Post-centralization audit: 0 hardcoded BKE weights remain in computation code
+	- Added `BKE_V31_COMPONENTS_JSON` path constant to model_config
+	- Updated `readme.md` with new viewer/exporter commands and data layout
+
 - 2026-03-01 — Experiment 2 rerun (expanded production proxy, 15 lambdas) + next-phase prep
 	- Added reproducible script: `src/modeling/experiment2_production_tilt.py`
 		- output: `reports/bke_v31_experiment2_production_tilt.json`

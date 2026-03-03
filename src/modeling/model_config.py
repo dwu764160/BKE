@@ -636,6 +636,76 @@ PORTABLE_DIMENSIONS = {
 PORTABLE_SKILL_COMPONENTS = PORTABLE_DIMENSIONS
 
 # ---------------------------------------------------------------------------
+# v3.1 Experimental Layer Config — centralized tuning knobs
+# ---------------------------------------------------------------------------
+@dataclass
+class V31ExperimentalConfig:
+    """Centralized v3.1 weights for OBKE/DBKE composition, O/D splits,
+    Layer 3+6 defaults, and production proxy.
+
+    All v3.1 experimental scripts must import these instead of hardcoding.
+    """
+    # OBKE sub-component weights (sum to 1.0)
+    obke_w_off_portable: float = 0.55
+    obke_w_role_util: float = 0.25
+    obke_w_off_elev: float = 0.20
+
+    # DBKE sub-component weights (sum to 1.0)
+    dbke_w_def_portable: float = 0.60
+    dbke_w_def_elev: float = 0.25
+    dbke_w_scheme: float = 0.15
+
+    # O/D split options
+    off_weight_default: float = 0.60
+    def_weight_default: float = 0.40
+    off_weight_alt: float = 0.55
+    def_weight_alt: float = 0.45
+
+    # Layer 3 tail-exponent fallback
+    layer3_exponent_fallback: float = 1.08
+
+    # Layer 6 variance-shrinkage k fallback
+    layer6_k_fallback: float = 0.20
+
+    # Layer 6 DBKE composition weights
+    layer6_w_def_port: float = 0.60
+    layer6_w_def_elev: float = 0.25
+    layer6_w_scheme: float = 0.15
+
+    # Production proxy weights (sum to 1.0)
+    production_weights: Dict[str, float] = field(default_factory=lambda: {
+        "orapm": 0.22,
+        "TS_PCT": 0.14,
+        "PTS": 0.18,
+        "AST": 0.12,
+        "FGM": 0.08,
+        "FGA": 0.08,
+        "FG3M": 0.06,
+        "FG3A": 0.04,
+        "FTM": 0.04,
+        "FTA": 0.04,
+    })
+
+    # Production tilt cohort thresholds
+    low_prod_quantile: float = 0.25
+    high_prod_quantile: float = 0.75
+
+    # Layer 1 weight grids (for sweeps)
+    layer1_weight_grid: Tuple[Tuple[float, float], ...] = (
+        (0.50, 0.50), (0.53, 0.47), (0.55, 0.45), (0.57, 0.43), (0.60, 0.40),
+    )
+
+    # Defensive driver share guard rails
+    def_driver_share_floor: float = 0.32
+    def_driver_share_ceil: float = 0.38
+
+
+V31_EXPERIMENTAL = V31ExperimentalConfig()
+
+# v3.1 output paths
+BKE_V31_COMPONENTS_JSON = os.path.join(BKE_DIR, "bke_v31_components.json")
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 def clean_id(val) -> str:

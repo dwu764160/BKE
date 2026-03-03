@@ -30,6 +30,7 @@ from src.modeling.model_config import (
     BKE_V28_OUTPUT_PARQUET,
     DEFENSIVE_ARCHETYPES_PATH,
     REPORTS_DIR,
+    V31_EXPERIMENTAL,
 )
 
 
@@ -43,23 +44,18 @@ OUTPUT_SCORES_V31_55_45_L36 = os.path.join(BKE_DIR, "BKE_Scores_v31_55_45_layer3
 
 @dataclass
 class V31Config:
-    base_off_weight: float = 0.60
-    base_def_weight: float = 0.40
+    """Local sweep grids; structural weights delegate to V31_EXPERIMENTAL."""
+    base_off_weight: float = V31_EXPERIMENTAL.off_weight_default
+    base_def_weight: float = V31_EXPERIMENTAL.def_weight_default
 
-    layer1_weight_grid: Tuple[Tuple[float, float], ...] = (
-        (0.50, 0.50),
-        (0.53, 0.47),
-        (0.55, 0.45),
-        (0.57, 0.43),
-        (0.60, 0.40),
-    )
+    layer1_weight_grid: Tuple[Tuple[float, float], ...] = V31_EXPERIMENTAL.layer1_weight_grid
 
     layer2_alpha_grid: Tuple[float, ...] = (0.03, 0.05, 0.07)
     layer3_tail_exponents: Tuple[float, ...] = (1.03, 1.05, 1.08)
     layer6_k_grid: Tuple[float, ...] = (0.10, 0.15, 0.20)
 
-    def_driver_share_floor: float = 0.32
-    def_driver_share_ceil: float = 0.38
+    def_driver_share_floor: float = V31_EXPERIMENTAL.def_driver_share_floor
+    def_driver_share_ceil: float = V31_EXPERIMENTAL.def_driver_share_ceil
 
 
 CFG = V31Config()
@@ -397,8 +393,8 @@ def _build_base(df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series, pd.S
     def_elev = _zscore(df["elevation_drapm"]).fillna(0.0)
     scheme = pd.to_numeric(df.get("scheme_stability_z", pd.Series(0.0, index=df.index)), errors="coerce").fillna(0.0).clip(lower=0.0)
 
-    obke = 0.55 * off_p + 0.25 * rue + 0.20 * off_elev
-    dbke = 0.60 * def_p + 0.25 * def_elev + 0.15 * scheme
+    obke = V31_EXPERIMENTAL.obke_w_off_portable * off_p + V31_EXPERIMENTAL.obke_w_role_util * rue + V31_EXPERIMENTAL.obke_w_off_elev * off_elev
+    dbke = V31_EXPERIMENTAL.dbke_w_def_portable * def_p + V31_EXPERIMENTAL.dbke_w_def_elev * def_elev + V31_EXPERIMENTAL.dbke_w_scheme * scheme
     bke = (CFG.base_off_weight * obke) + (CFG.base_def_weight * dbke)
     return obke, dbke, bke, def_p
 
@@ -538,10 +534,10 @@ def run_v31_experiments(
         bke=bke_base,
         output_path=OUTPUT_SCORES_V31_60_40,
         profile_name="baseline",
-        off_weight=0.60,
-        def_weight=0.40,
+        off_weight=V31_EXPERIMENTAL.off_weight_default,
+        def_weight=V31_EXPERIMENTAL.def_weight_default,
     )
-    bke_55_45_base = (0.55 * obke_base) + (0.45 * dbke_base)
+    bke_55_45_base = (V31_EXPERIMENTAL.off_weight_alt * obke_base) + (V31_EXPERIMENTAL.def_weight_alt * dbke_base)
     baseline_export_55 = _export_scores_json(
         df=df,
         obke=obke_base,
@@ -549,8 +545,8 @@ def run_v31_experiments(
         bke=bke_55_45_base,
         output_path=OUTPUT_SCORES_V31_55_45,
         profile_name="baseline",
-        off_weight=0.55,
-        def_weight=0.45,
+        off_weight=V31_EXPERIMENTAL.off_weight_alt,
+        def_weight=V31_EXPERIMENTAL.def_weight_alt,
     )
 
     layer_results = {
@@ -818,10 +814,10 @@ def run_v31_experiments(
             bke=bke_l36_60,
             output_path=OUTPUT_SCORES_V31_60_40_L36,
             profile_name="layer3_plus_layer6",
-            off_weight=0.60,
-            def_weight=0.40,
+            off_weight=V31_EXPERIMENTAL.off_weight_default,
+            def_weight=V31_EXPERIMENTAL.def_weight_default,
         )
-        bke_l36_55 = (0.55 * obke_base) + (0.45 * dbke_l36)
+        bke_l36_55 = (V31_EXPERIMENTAL.off_weight_alt * obke_base) + (V31_EXPERIMENTAL.def_weight_alt * dbke_l36)
         l36_exports["v31_55_45_layer36"] = _export_scores_json(
             df=df,
             obke=obke_base,
@@ -829,8 +825,8 @@ def run_v31_experiments(
             bke=bke_l36_55,
             output_path=OUTPUT_SCORES_V31_55_45_L36,
             profile_name="layer3_plus_layer6",
-            off_weight=0.55,
-            def_weight=0.45,
+            off_weight=V31_EXPERIMENTAL.off_weight_alt,
+            def_weight=V31_EXPERIMENTAL.def_weight_alt,
         )
 
     anchors_v30 = {

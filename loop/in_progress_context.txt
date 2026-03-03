@@ -1,3 +1,16 @@
+2026-03-01 — Interactive BKE viewer + model_config centralization
+- Added standalone interactive BKE viewer:
+  - `scripts/export_bke_components.py` exports 950-player component JSON
+  - `app/player_bke_viewer.py` generates `app/player_bke_viewer.html`
+  - Lambda slider (0.00–0.15), O/D split toggle (60/40 vs 55/45), sortable table, charts
+  - Client-side recompute: `bke_final = bke_base + lambda * prod_proxy_z`
+  - Parity verified: exact match with experiment2 report at lambda=0.03
+- Centralized all v3.1 tuning knobs into model_config.py:
+  - New: `V31ExperimentalConfig` / `V31_EXPERIMENTAL` singleton
+  - Covers OBKE/DBKE sub-weights, O/D splits, L3/L6 defaults, production proxy weights, cohort thresholds
+  - All consumers updated; 0 hardcoded BKE weights remain in computation code
+- Updated readme.md and loop context docs
+
 2026-03-01 — Experiment 2 rerun complete + player-eval phase prep
 - Added reproducible Experiment 2 rerun script:
   - `src/modeling/experiment2_production_tilt.py`
