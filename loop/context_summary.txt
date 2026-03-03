@@ -1,3 +1,39 @@
+- 2026-03-03 — PEC archetype consistency fix (aligned with player_data_viewer)
+	- Root mismatch identified: PEC viewer selected top offense/defense from probability vectors; `app/player_data_viewer.py` uses canonical labels/confidence from archetype outputs.
+	- Step 1 update in `src/player_eval/build_player_impact_profiles.py`:
+		- Added canonical archetype fields from source files into Step 1 output (`off_primary_archetype`, `off_secondary_archetype`, `off_role_confidence`, `off_role_effectiveness`, `def_primary_archetype`, `def_secondary_archetype`, `def_role_confidence`).
+		- Fixed defensive archetype merge collision via source-column renaming + coalescing.
+	- PEC viewer update in `app/player_eval_viewer.py`:
+		- Cards/modal now display canonical archetype labels + confidence fields from Step 1 (same semantics as player_data_viewer), while keeping distribution strips.
+	- Rebuild completed: Step 1 (`player_impact_profiles.parquet`), Step 2 (`minute_model_predictions_v2.parquet`), and PEC HTML (`app/player_eval.html`).
+	- Validation:
+		- Archetype parity against source parquet is 100% when source rows are present; overall ~85.7% due ~291 non-eligible rows without source archetype rows.
+		- Minute-model audit for leakage review: `corr(pec_defensive_shrinkage_lambda, MPG)=0.219`; ablations run (no-lambda, no-salary, no-lag_mpg) and logged in session output.
+
+- 2026-03-03 — PEC v1 Step 1/2 implementation completed (deterministic profile + minute model)
+	- Added new Player Evaluation core scripts under `src/player_eval/`:
+		- `constants.py` — centralized PEC input/output paths and modeling constants
+		- `build_player_impact_profiles.py` — Step 1 player impact object construction from RAPM/BKE/archetype/diagnostic artifacts
+		- `train_minute_model.py` — Step 2 deterministic minute-share model with season-grouped CV and team-share normalization constraints
+	- Step 1 outputs generated:
+		- `data/processed/player_eval/player_impact_profiles.parquet`
+		- `data/processed/player_eval/player_profiles_season.pkl`
+		- `reports/player_eval_step1_validation.json`
+	- Step 2 outputs generated:
+		- `data/processed/player_eval/minute_model_v1.pkl`
+		- `data/processed/player_eval/minute_model_predictions_v1.parquet`
+		- `reports/player_eval_step2_minute_model_validation.json`
+	- Validation highlights:
+		- Step 1 rows: 1978 across 2022-23/2023-24/2024-25
+		- Step 1 archetype probability sums are numerically normalized (mean = 1.0 for offense/defense vectors)
+		- Step 2 grouped CV MAE: 0.0119 / 0.0060 / 0.0009 by held-out season
+		- Step 2 holdout (2024-25): MAE 0.0119, R² 0.6155, team Spearman 0.9978
+		- Step 2 team-share simplex constraints hold exactly (team_sum_mean=1.0)
+	- Runtime note:
+		- `xgboost` not available in execution environment at run time; Step 2 now includes deterministic fallback to `sklearn.ensemble.GradientBoostingRegressor` so pipeline remains runnable.
+	- Documentation updates:
+		- `readme.md` updated with PEC step order and new output/report artifacts.
+
 - 2026-03-01 — Interactive BKE viewer + model_config centralization
 	- Added interactive BKE viewer pipeline:
 		- `scripts/export_bke_components.py` — exports per-player BKE components to `data/processed/bke/bke_v31_components.json`

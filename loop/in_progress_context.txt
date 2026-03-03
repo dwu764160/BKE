@@ -1,3 +1,29 @@
+2026-03-03 — PEC archetype source alignment (Step 1 + PEC viewer)
+- Root cause found: `app/player_data_viewer.py` displays canonical offensive/defensive archetype labels directly from `data/processed/player_archetypes.parquet` and `data/processed/defensive_archetypes_v2.parquet`, while PEC viewer inferred labels from probability bars.
+- Updated `src/player_eval/build_player_impact_profiles.py` to carry canonical fields from those same source files into Step 1 outputs:
+  - Offensive: `off_primary_archetype`, `off_secondary_archetype`, `off_role_confidence`, `off_role_effectiveness`
+  - Defensive: `def_primary_archetype`, `def_secondary_archetype`, `def_role_confidence`
+- Fixed defensive merge collision by renaming source columns before merge and explicit coalescing.
+- Updated `app/player_eval_viewer.py` to display canonical archetype labels/confidence (same semantics as player_data_viewer) while retaining probability strips.
+- Rebuilt PEC end-to-end: Step 1, Step 2, and `app/player_eval.html` regenerated.
+- Verification:
+  - Archetype label parity vs source parquet = 100% when source row exists (remaining ~291 rows are non-eligible/missing source archetype rows).
+  - Viewer payload now includes canonical `off_archetype`/`def_archetype` and confidence fields.
+
+2026-03-03 — PEC v1 Step 1/2 implemented and validated
+- Added `src/player_eval/constants.py` for centralized PEC paths/constants.
+- Added Step 1 builder: `src/player_eval/build_player_impact_profiles.py`.
+  - Outputs: `data/processed/player_eval/player_impact_profiles.parquet`, `data/processed/player_eval/player_profiles_season.pkl`, `reports/player_eval_step1_validation.json`.
+  - Validation: 1978 rows across 3 seasons; offensive/defensive archetype probability vectors sum to 1.0 (floating-point tolerance).
+- Added Step 2 trainer: `src/player_eval/train_minute_model.py`.
+  - Outputs: `data/processed/player_eval/minute_model_v1.pkl`, `data/processed/player_eval/minute_model_predictions_v1.parquet`, `reports/player_eval_step2_minute_model_validation.json`.
+  - Validation (holdout 2024-25): MAE 0.0119, R² 0.6155, team Spearman 0.9978.
+  - Team-share constraints pass: per team-season predicted minute shares renormalized to exactly 1.0 under cap/floor constraints.
+- Runtime compatibility adjustment:
+  - Added deterministic fallback model path to sklearn GradientBoostingRegressor when `xgboost` is unavailable in runtime.
+  - Added robust NaN handling in feature engineering/imputation to keep training reproducible and executable.
+- `readme.md` updated with PEC stage commands and new data/report artifact locations.
+
 2026-03-01 — Interactive BKE viewer + model_config centralization
 - Added standalone interactive BKE viewer:
   - `scripts/export_bke_components.py` exports 950-player component JSON

@@ -79,12 +79,20 @@ python3 src/modeling/bke_v31_experimental_layers.py         # Run v3.1 experimen
 python3 src/modeling/experiment2_production_tilt.py         # Run v3.1 Experiment 2 rerun (15-λ production-tilt sweep using ORAPM/TS + raw offensive box-score stats)
 ```
 
+## Player Evaluation (PEC v1)
+```bash
+python3 src/player_eval/build_player_impact_profiles.py     # PEC Step 1: build PlayerImpactProfile (47+ fields from 9 sources, canonical offensive/defensive archetype labels + embeddings, behavioral fingerprint)
+python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 15 pipeline sources into aggregate/player_profile_aggregate.parquet (1971 rows x 908 cols)
+python3 src/player_eval/train_minute_model.py               # PEC Step 2: train MPG prediction model (GBDT, 70 features, GroupKFold CV, temporal holdout; excludes volume stats)
+```
+
 ## Visualization / Export
 ```bash
 python3 app/player_archetype_viewer.py    # Generate archetype viewer
 python3 app/player_data_viewer.py         # Generate player data viewer (with salary + BKE split toggle: 60/40 or 55/45)
 python3 scripts/export_bke_components.py  # Export per-player BKE components JSON for interactive viewer
 python3 app/player_bke_viewer.py          # Generate standalone BKE interactive explorer (lambda slider + split toggle)
+python3 app/player_eval_viewer.py         # Generate PEC viewer (player cards, team view, detail modal, predicted vs actual MPG)
 python3 src/utils/export_db_to_parquet.py # Export DB tables to parquet
 ```
 
@@ -105,8 +113,10 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary)
 - `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`
+- `data/processed/player_eval/` — PEC Step outputs: `player_impact_profiles.parquet`, `player_profiles_season.pkl`, `minute_model_v2.pkl`, `minute_model_predictions_v2.parquet`
+- `aggregate/` — comprehensive player profile aggregate: `player_profile_aggregate.parquet` (1971 rows x 908 cols, all 15 pipeline sources merged)
 - `data/processed/bke/` — BKE decomposition data: `bke_v28_decomposition.parquet`, `bke_v28_decomposition.csv`, `BKE_Scores_v27.json` (includes terminal league-wide percentiles plus grouped transformed percentiles by `position_bucket`, `primary_archetype`, and `defensive_archetype`), `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`, v3.1 split artifacts `BKE_Scores_v31_60_40.json`, `BKE_Scores_v31_55_45.json`, and (when Layer 3+6 second-pass is additive) `BKE_Scores_v31_60_40_layer36.json`, `BKE_Scores_v31_55_45_layer36.json`, `bke_v31_components.json` (per-player components for interactive viewer)
-- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`
+- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `player_eval_step1_validation.json`, `player_eval_step2_minute_model_validation.json`, `profile_aggregate_validation.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`
 - `data/tracking/` — tracking-derived JSONs
 - `src/player_eval/` — new phase workspace for upcoming player evaluation engine scripts
 - `data_backup_YYYYMMDD/` — dated snapshot backup folders (use `bash scripts/backup_data_snapshot.sh [YYYYMMDD]`)

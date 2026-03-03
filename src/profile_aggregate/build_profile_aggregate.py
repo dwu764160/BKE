@@ -1,0 +1,556 @@
+"""
+src/profile_aggregate/build_profile_aggregate.py
+=============================================================================
+Build the comprehensive Player Profile Aggregate — one row per player-season
+containing ALL available pipeline data merged from every source.
+
+This file is the foundational data layer for all downstream products.
+Future pipelines, viewers, and models should read from the aggregate rather
+than merging raw sources themselves.
+
+Sources merged:
+  1. BKE v28 decomposition          (impact dimensions, playtypes, tracking, archetypes)
+  2. BKE Scores v27 JSON            (raw OBKE/DBKE, percentiles, dimension scores)
+  3. Complete player season stats    (box stats, advanced stats from NBA API)
+  4. Player archetypes               (offensive roles, embeddings, playtype breakdown)
+  5. Defensive archetypes v2         (defensive roles, hustle, matchup data)
+  6. Archetype embeddings            (standalone embedding vectors)
+  7. Position estimates              (position distributions)
+  8. Player profiles advanced        (advanced per-possession ratings)
+  9. Metrics linear                  (WS, BPM, VORP)
+  10. Player RAPM                    (multi-season pooled RAPM)
+  11. Player xRAPM v1/v2            (expected RAPM with priors)
+  12. DARKO                         (external DPM model data)
+  13. Players metadata              (bio: height, weight, wingspan, experience)
+  14. Salary data                   (per-season contract info)
+  15. Game logs aggregates          (MPG variance, DNP estimation)
+  16. Step 1 impact profiles        (curated impact/behavioral features)
+  17. BKE diagnostic reports        (stability, shrinkage)
+
+Output:
+  aggregate/player_profile_aggregate.parquet
+
+Usage:
+  python3 src/profile_aggregate/build_profile_aggregate.py
+=============================================================================
+"""
+
+import glob
+import json
+import re
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.player_eval.constants import (
+    AGGREGATE_DIR,
+    AGGREGATE_VALIDATION_REPORT,
+    BKE_DECOMP_PATH,
+    BKE_SCORES_PATH,
+    BKE_V29_PLAYER_DIAGNOSTIC_PATH,
+    COMPLETE_STATS_PATH,
+    DARKO_DIR,
+    DBKE_V30_SHRINKAGE_PATH,
+    DEF_ARCHETYPES_PATH,
+    GAME_LOGS_PATH,
+    HISTORICAL_DIR,
+    METRICS_LINEAR_PATH,
+    PLAYER_ARCHETYPES_PATH,
+    PLAYER_PROFILES_PARQUET,
+    PLAYERS_META_PATH,
+    POSITION_ESTIMATES_PATH,
+    PROFILE_AGGREGATE_PATH,
+    PROCESSED_DIR,
+    REPORTS_DIR,
+    XRAPM_V1_PATH,
+    XRAPM_V2_PATH,
+)
+from src.utils.player_name_normalizer import (
+    apply_player_name_normalization,
+    build_player_name_maps,
+)
+
+
+def _norm_id(series: pd.Series) -> pd.Series:
+    """Normalize player_id to clean string (no trailing .0)."""
+    return series.astype(str).str.replace(r"\.0$", "", regex=True)
+
+
+def _safe_load(path: Path, **kwargs) -> pd.DataFrame:
+    """Load parquet, return empty DataFrame on failure."""
+    try:
+        return pd.read_parquet(path, **kwargs)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _dedup(df: pd.DataFrame, key_cols=("player_id", "season")) -> pd.DataFrame:
+    """Drop duplicate rows on key columns, keeping first."""
+    return df.drop_duplicates(subset=list(key_cols), keep="first")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Loader helpers — each returns a DataFrame keyed on (player_id, season)
+# ═════════════════════════════════════════════════════════════════════
+
+def _load_bke_decomp() -> pd.DataFrame:
+    """BKE v28 decomposition — the densest single source (379 cols)."""
+    df = _safe_load(BKE_DECOMP_PATH)
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_complete_stats() -> pd.DataFrame:
+    """NBA API box-score stats. Deduplicate traded players (keep max-minute row)."""
+    df = _safe_load(COMPLETE_STATS_PATH)
+    if df.empty:
+        return df
+    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    df["MIN"] = pd.to_numeric(df.get("MIN"), errors="coerce")
+    df = df.sort_values("MIN", ascending=False).drop_duplicates(
+        subset=["player_id", "season"], keep="first"
+    )
+    # Prefix rank columns to avoid collisions
+    rank_cols = [c for c in df.columns if c.endswith("_RANK")]
+    df = df.rename(columns={c: f"box_{c}" for c in rank_cols})
+    return df
+
+
+def _load_archetypes() -> pd.DataFrame:
+    """Offensive archetype data + tracking metrics."""
+    df = _safe_load(PLAYER_ARCHETYPES_PATH)
+    if df.empty:
+        return df
+    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_def_archetypes() -> pd.DataFrame:
+    """Defensive archetypes v2 with role scores and percentiles."""
+    df = _safe_load(DEF_ARCHETYPES_PATH)
+    if df.empty:
+        return df
+    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_positions() -> pd.DataFrame:
+    df = _safe_load(POSITION_ESTIMATES_PATH)
+    if df.empty:
+        return df
+    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_metrics_linear() -> pd.DataFrame:
+    df = _safe_load(METRICS_LINEAR_PATH)
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_rapm() -> pd.DataFrame:
+    path = PROCESSED_DIR / "player_rapm.parquet"
+    df = _safe_load(path)
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    # Keep single-season or best RAPM row per (player, season)
+    df = df.sort_values("possessions_played", ascending=False)
+    return _dedup(df)
+
+
+def _load_xrapm() -> pd.DataFrame:
+    """Load xRAPM v2 (preferred) falling back to v1."""
+    df = _safe_load(XRAPM_V2_PATH)
+    if df.empty:
+        df = _safe_load(XRAPM_V1_PATH)
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    return _dedup(df)
+
+
+def _load_darko() -> pd.DataFrame:
+    """Combine per-season DARKO parquet files."""
+    frames = []
+    for f in sorted(glob.glob(str(DARKO_DIR / "darko_*.parquet"))):
+        d = _safe_load(Path(f))
+        if d.empty:
+            continue
+        d = d.rename(columns={"nba_id": "player_id"})
+        d["player_id"] = _norm_id(d["player_id"])
+        d["season"] = d["season"].astype(str)
+        frames.append(d)
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    return _dedup(df)
+
+
+def _load_players_meta() -> pd.DataFrame:
+    """Player bio data (height, weight, wingspan, experience)."""
+    df = _safe_load(PLAYERS_META_PATH)
+    if df.empty:
+        return df
+    df = df.rename(columns={"player_id": "player_id"})
+    df["player_id"] = _norm_id(df["player_id"])
+    # Bio is not season-specific — drop season-like columns if present
+    keep = ["player_id", "height_inches", "weight_lbs", "wingspan_inches",
+            "experience_years", "primary_position"]
+    keep = [c for c in keep if c in df.columns]
+    return df[keep].drop_duplicates(subset=["player_id"], keep="first")
+
+
+def _load_salaries() -> pd.DataFrame:
+    """Combine per-season salary parquet files."""
+    files = sorted(glob.glob(str(HISTORICAL_DIR / "player_salaries_*.parquet")))
+    frames = []
+    for f in files:
+        d = _safe_load(Path(f))
+        if d.empty:
+            continue
+        d["player_id"] = _norm_id(d["player_id"])
+        d["season"] = d["season"].astype(str)
+        frames.append(d[["player_id", "season", "salary"]])
+    if not frames:
+        return pd.DataFrame(columns=["player_id", "season", "salary"])
+    return _dedup(pd.concat(frames, ignore_index=True))
+
+
+def _load_game_log_aggregates() -> pd.DataFrame:
+    """Compute per-player-season aggregates from individual game logs."""
+    df = _safe_load(GAME_LOGS_PATH)
+    if df.empty:
+        return pd.DataFrame()
+    # Normalize columns — handle both Player_ID and PLAYER_ID
+    # Drop duplicate player id column first
+    if "Player_ID" in df.columns and "PLAYER_ID" in df.columns:
+        df = df.drop(columns=["Player_ID"])
+        df = df.rename(columns={"PLAYER_ID": "player_id"})
+    elif "Player_ID" in df.columns:
+        df = df.rename(columns={"Player_ID": "player_id"})
+    elif "PLAYER_ID" in df.columns:
+        df = df.rename(columns={"PLAYER_ID": "player_id"})
+    df = df.rename(columns={"SEASON": "season"})
+    if "player_id" not in df.columns:
+        return pd.DataFrame()
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    df["MIN"] = pd.to_numeric(df["MIN"], errors="coerce")
+
+    agg = df.groupby(["player_id", "season"]).agg(
+        gl_games_total=("MIN", "count"),
+        gl_mpg_mean=("MIN", "mean"),
+        gl_mpg_std=("MIN", "std"),
+        gl_mpg_median=("MIN", "median"),
+        gl_mpg_max=("MIN", "max"),
+        gl_mpg_min=("MIN", "min"),
+        gl_dnp_count=("MIN", lambda x: (x.fillna(0) == 0).sum()),
+        gl_low_min_count=("MIN", lambda x: ((x.fillna(0) > 0) & (x.fillna(0) < 5)).sum()),
+    ).reset_index()
+    agg["gl_mpg_std"] = agg["gl_mpg_std"].fillna(0.0)
+    return agg
+
+
+def _load_bke_json_scores() -> pd.DataFrame:
+    """Extract per-player BKE scores from JSON (OBKE, DBKE, percentiles, dimensions)."""
+    if not BKE_SCORES_PATH.exists():
+        return pd.DataFrame()
+    payload = json.loads(BKE_SCORES_PATH.read_text(encoding="utf-8"))
+    rows = []
+    for _, info in payload.get("players", {}).items():
+        row = {
+            "player_id": str(info.get("player_id", "")),
+            "season": str(info.get("season", "")),
+            "bke_raw_obke": info.get("raw_OBKE"),
+            "bke_raw_dbke": info.get("raw_DBKE"),
+            "bke_raw_bke": info.get("raw_BKE"),
+            "bke_transformed_bke": info.get("transformed_BKE"),
+            "bke_final_pctl": info.get("final_BKE_percentile"),
+            "bke_obke_pctl": info.get("final_OBKE_percentile"),
+            "bke_dbke_pctl": info.get("final_DBKE_percentile"),
+            "bke_rank": info.get("rank"),
+        }
+        # Dimension scores
+        dims = info.get("dimension_scores", {})
+        for dk, dv in dims.items():
+            row[f"bke_dim_{dk}"] = dv
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    df["player_id"] = _norm_id(df["player_id"])
+    return _dedup(df)
+
+
+def _load_diagnostics() -> pd.DataFrame:
+    """Load v29 diagnostic and v30 shrinkage data."""
+    frames = []
+    # v29
+    if BKE_V29_PLAYER_DIAGNOSTIC_PATH.exists():
+        payload = json.loads(BKE_V29_PLAYER_DIAGNOSTIC_PATH.read_text(encoding="utf-8"))
+        rows = payload.get("player_level_metrics", [])
+        if rows:
+            v29 = pd.DataFrame(rows)
+            v29 = v29.rename(columns={
+                "d_stability": "diag_d_stability",
+                "o_stability": "diag_o_stability",
+                "vol_ratio_dbke_to_drapm": "diag_vol_ratio",
+            })
+            v29["player_id"] = _norm_id(v29["player_id"])
+            v29["season"] = v29["season"].astype(str)
+            frames.append(v29)
+    # v30
+    if DBKE_V30_SHRINKAGE_PATH.exists():
+        payload = json.loads(DBKE_V30_SHRINKAGE_PATH.read_text(encoding="utf-8"))
+        rows = payload.get("player_outputs", [])
+        if rows:
+            v30 = pd.DataFrame(rows)
+            v30["player_id"] = _norm_id(v30["player_id"])
+            v30["season"] = v30["season"].astype(str)
+            frames.append(v30)
+    if not frames:
+        return pd.DataFrame()
+    result = frames[0]
+    for f in frames[1:]:
+        result = result.merge(f, on=["player_id", "season"], how="outer", suffixes=("", "_v30"))
+    return _dedup(result)
+
+
+def _load_step1_profiles() -> pd.DataFrame:
+    """Load Step 1 curated impact profiles."""
+    df = _safe_load(PLAYER_PROFILES_PARQUET)
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    # Prefix to avoid column collisions
+    skip_cols = {"player_id", "season", "player_name", "team_abbreviation", "team_id"}
+    rename = {c: f"pec_{c}" for c in df.columns if c not in skip_cols}
+    df = df.rename(columns=rename)
+    return _dedup(df)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Smart merge — handles column conflicts by suffixing the incoming source
+# ═════════════════════════════════════════════════════════════════════
+
+def _smart_merge(base: pd.DataFrame, incoming: pd.DataFrame,
+                 on: list, source_tag: str, how: str = "left") -> pd.DataFrame:
+    """Merge two DataFrames, handling overlapping columns by keeping base version."""
+    if incoming.empty:
+        return base
+    overlap = set(base.columns) & set(incoming.columns) - set(on)
+    if overlap:
+        incoming = incoming.rename(columns={c: f"{source_tag}_{c}" for c in overlap})
+    return base.merge(incoming, on=on, how=how)
+
+
+def _to_snake(name: str) -> str:
+    text = str(name).strip()
+    text = text.replace("%", " pct ").replace("+", " plus ")
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_").lower()
+    return text or "col"
+
+
+def _normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize all column names to portable snake_case and resolve collisions."""
+    used = {}
+    renamed = {}
+    for col in df.columns:
+        base = _to_snake(col)
+        count = used.get(base, 0)
+        if count == 0:
+            final = base
+        else:
+            final = f"{base}_{count + 1}"
+        used[base] = count + 1
+        renamed[col] = final
+    return df.rename(columns=renamed)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Main
+# ═════════════════════════════════════════════════════════════════════
+
+def main() -> None:
+    print("Building Player Profile Aggregate ...")
+    merge_key = ["player_id", "season"]
+
+    # 1. Spine: BKE decomposition (most comprehensive single source)
+    spine = _load_bke_decomp()
+    if spine.empty:
+        raise FileNotFoundError(f"Missing BKE decomposition: {BKE_DECOMP_PATH}")
+    print(f"  [1] BKE decomposition: {len(spine)} rows, {len(spine.columns)} cols")
+
+    # 2. Complete box stats
+    stats = _load_complete_stats()
+    spine = _smart_merge(spine, stats, merge_key, "box", how="left")
+    print(f"  [2] + Box stats: {len(spine.columns)} cols")
+
+    # 3. Offensive archetypes (adds tracking detail not in decomp)
+    arche = _load_archetypes()
+    spine = _smart_merge(spine, arche, merge_key, "arche", how="left")
+    print(f"  [3] + Archetypes: {len(spine.columns)} cols")
+
+    # 4. Defensive archetypes
+    def_arche = _load_def_archetypes()
+    spine = _smart_merge(spine, def_arche, merge_key, "defarche", how="left")
+    print(f"  [4] + Def archetypes: {len(spine.columns)} cols")
+
+    # 5. Position estimates
+    pos = _load_positions()
+    spine = _smart_merge(spine, pos, merge_key, "pos", how="left")
+    print(f"  [5] + Positions: {len(spine.columns)} cols")
+
+    # 6. Metrics linear (WS, BPM, VORP)
+    ml = _load_metrics_linear()
+    spine = _smart_merge(spine, ml, merge_key, "ml", how="left")
+    print(f"  [6] + Linear metrics: {len(spine.columns)} cols")
+
+    # 7. RAPM
+    rapm = _load_rapm()
+    spine = _smart_merge(spine, rapm, merge_key, "rapm", how="left")
+    print(f"  [7] + RAPM: {len(spine.columns)} cols")
+
+    # 8. xRAPM
+    xrapm = _load_xrapm()
+    spine = _smart_merge(spine, xrapm, merge_key, "xrapm", how="left")
+    print(f"  [8] + xRAPM: {len(spine.columns)} cols")
+
+    # 9. DARKO
+    darko = _load_darko()
+    spine = _smart_merge(spine, darko, merge_key, "darko", how="left")
+    print(f"  [9] + DARKO: {len(spine.columns)} cols")
+
+    # 10. BKE JSON scores
+    bke_json = _load_bke_json_scores()
+    spine = _smart_merge(spine, bke_json, merge_key, "bkejson", how="left")
+    print(f"  [10] + BKE JSON: {len(spine.columns)} cols")
+
+    # 11. Diagnostics (v29 + v30)
+    diag = _load_diagnostics()
+    spine = _smart_merge(spine, diag, merge_key, "diag", how="left")
+    print(f"  [11] + Diagnostics: {len(spine.columns)} cols")
+
+    # 12. Salary
+    salary = _load_salaries()
+    spine = _smart_merge(spine, salary, merge_key, "sal", how="left")
+    print(f"  [12] + Salary: {len(spine.columns)} cols")
+
+    # 13. Game log aggregates
+    gl = _load_game_log_aggregates()
+    spine = _smart_merge(spine, gl, merge_key, "gl", how="left")
+    print(f"  [13] + Game logs: {len(spine.columns)} cols")
+
+    # 14. Player bio metadata (merge on player_id only)
+    bio = _load_players_meta()
+    if not bio.empty:
+        bio_overlap = set(spine.columns) & set(bio.columns) - {"player_id"}
+        if bio_overlap:
+            bio = bio.rename(columns={c: f"bio_{c}" for c in bio_overlap})
+        spine = spine.merge(bio, on="player_id", how="left")
+    print(f"  [14] + Bio metadata: {len(spine.columns)} cols")
+
+    # 15. Step 1 curated profiles
+    step1 = _load_step1_profiles()
+    spine = _smart_merge(spine, step1, merge_key, "s1", how="left")
+    print(f"  [15] + Step 1 profiles: {len(spine.columns)} cols")
+
+    # 16. Name normalization (ID-first and alias-aware)
+    name_sources = [
+        (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
+        (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
+        (COMPLETE_STATS_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
+        (BKE_DECOMP_PATH, ["player_id", "PLAYER_ID"], ["player_name", "PLAYER_NAME"], 3),
+    ]
+    id_to_name, key_to_name = build_player_name_maps(name_sources)
+    if "player_name" in spine.columns:
+        spine = apply_player_name_normalization(
+            df=spine,
+            player_id_col="player_id",
+            player_name_col="player_name",
+            id_to_name=id_to_name,
+            key_to_name=key_to_name,
+        )
+
+    # ── Computed fields ────────────────────────────────────────────────
+    # MPG from game logs or box stats
+    mins = pd.to_numeric(spine.get("MIN", spine.get("min")), errors="coerce")
+    gp = pd.to_numeric(spine.get("GP", spine.get("gp")), errors="coerce")
+    spine["agg_mpg"] = mins / gp.replace(0, np.nan)
+
+    # Minute share within team
+    team_mins = spine.groupby(["season", spine.columns[spine.columns.str.contains("TEAM_ABBREVIATION", case=False)].tolist()[0] if any(spine.columns.str.contains("TEAM_ABBREVIATION", case=False)) else "season"])["MIN"].transform("sum")
+    # Safer team abbreviation lookup
+    team_col = None
+    for c in spine.columns:
+        if "team_abbreviation" in c.lower() and "rank" not in c.lower():
+            team_col = c
+            break
+    if team_col:
+        min_col = "MIN" if "MIN" in spine.columns else "min"
+        team_min_sum = spine.groupby(["season", team_col])[min_col].transform("sum")
+        spine["agg_minute_share"] = mins / team_min_sum.replace(0, np.nan)
+
+    # ── Final dedup & sort ─────────────────────────────────────────────
+    spine = _dedup(spine)
+    spine = spine.sort_values(["season", "player_id"]).reset_index(drop=True)
+    spine = _normalize_column_names(spine)
+
+    # ── Save ───────────────────────────────────────────────────────────
+    AGGREGATE_DIR.mkdir(parents=True, exist_ok=True)
+    spine.to_parquet(PROFILE_AGGREGATE_PATH, index=False)
+    print(f"\nSaved aggregate: {PROFILE_AGGREGATE_PATH}")
+    print(f"  rows={len(spine)}, cols={len(spine.columns)}")
+
+    # ── Validation report ──────────────────────────────────────────────
+    report = {
+        "rows": int(len(spine)),
+        "columns": int(len(spine.columns)),
+        "seasons": sorted(spine["season"].unique().tolist()),
+        "unique_players": int(spine["player_id"].nunique()),
+        "column_groups": {
+            "bke_decomp": int(len([c for c in spine.columns if c.startswith("dim_") or c.startswith("portable_") or c.startswith("elevation_")])),
+            "box_stats": int(len([c for c in spine.columns if c.startswith("box_")])),
+            "archetypes": int(len([c for c in spine.columns if "archetype" in c.lower() or c.startswith("emb_")])),
+            "defensive": int(len([c for c in spine.columns if c.startswith("defarche_") or "defensive" in c.lower()])),
+            "bke_json": int(len([c for c in spine.columns if c.startswith("bke_")])),
+            "game_logs": int(len([c for c in spine.columns if c.startswith("gl_")])),
+            "step1_pec": int(len([c for c in spine.columns if c.startswith("pec_")])),
+        },
+        "coverage": {
+            "salary": float(spine.get("salary", pd.Series(dtype=float)).notna().mean()),
+            "game_logs": float(spine.get("gl_games_total", pd.Series(dtype=float)).notna().mean()),
+            "bio_height": float(spine.get("height_inches", pd.Series(dtype=float)).notna().mean()),
+            "mpg": float(spine.get("agg_mpg", pd.Series(dtype=float)).notna().mean()),
+        },
+        "sample_columns": sorted(spine.columns.tolist())[:50],
+    }
+    AGGREGATE_VALIDATION_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"Saved validation: {AGGREGATE_VALIDATION_REPORT}")
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

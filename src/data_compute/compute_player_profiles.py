@@ -11,9 +11,15 @@ import numpy as np
 import glob
 import os
 import sys
+from pathlib import Path
 
 # Adjust path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from src.utils.player_name_normalizer import (
+    apply_player_name_normalization,
+    build_player_name_maps,
+)
 
 DATA_DIR = "data/historical"
 OUTPUT_DIR = "data/processed"
@@ -227,15 +233,24 @@ def process_season(season):
 
 def enrich_names(df):
     try:
-        p_path = os.path.join(DATA_DIR, "players.parquet")
-        if os.path.exists(p_path):
-            meta = pd.read_parquet(p_path)
-            meta['id'] = meta['id'].astype(str).apply(clean_id)
-            name_map = meta.set_index('id')['full_name'].to_dict()
-            df['player_name'] = df['player_id'].map(name_map).fillna("Unknown")
-    except:
-        df['player_name'] = df['player_id']
-    return df
+        source_specs = [
+            (Path(os.path.join(DATA_DIR, "players.parquet")), ["id", "player_id"], ["full_name", "player_name"], 1),
+            (Path(os.path.join(OUTPUT_DIR, "player_archetypes.parquet")), ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
+            (Path(os.path.join("data/processed/bke", "bke_v28_decomposition.parquet")), ["player_id", "PLAYER_ID"], ["player_name", "PLAYER_NAME"], 3),
+        ]
+        id_to_name, key_to_name = build_player_name_maps(source_specs)
+        out = apply_player_name_normalization(
+            df=df,
+            player_id_col="player_id",
+            player_name_col="player_name",
+            id_to_name=id_to_name,
+            key_to_name=key_to_name,
+        )
+        return out
+    except Exception:
+        if "player_name" not in df.columns:
+            df["player_name"] = df["player_id"]
+        return df
 
 def main():
     files = sorted(glob.glob(os.path.join(DATA_DIR, "possessions_clean_*.parquet")))
