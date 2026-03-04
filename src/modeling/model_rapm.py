@@ -233,9 +233,12 @@ def _fit_prior_then_refine(
 
 
 def run_single_season_rapm(df: pd.DataFrame, season: str, player_to_idx: Dict[str, int], sorted_players: Sequence[str]) -> pd.DataFrame:
+    print(f"   [SINGLE RAPM] {season}: building matrix ({len(df):,} possessions, {len(sorted_players):,} players)")
     x_matrix, y = build_rapm_matrix(df, player_to_idx)
     weights = get_sample_weights(df)
+    print(f"   [SINGLE RAPM] {season}: fitting RidgeCV (alphas={list(RAPM_ALPHAS_SINGLE)})")
     model = fit_ridge(x_matrix, y, weights, RAPM_ALPHAS_SINGLE)
+    print(f"   [SINGLE RAPM] {season}: done (alpha={model.alpha_}, intercept={model.intercept_ * 100:.2f})")
 
     rows = []
     for pid, coef in zip(sorted_players, model.coef_):
@@ -254,9 +257,12 @@ def run_single_season_rapm(df: pd.DataFrame, season: str, player_to_idx: Dict[st
 
 
 def run_single_season_split(df: pd.DataFrame, season: str, player_to_idx: Dict[str, int], sorted_players: Sequence[str]) -> pd.DataFrame:
+    print(f"   [SINGLE SPLIT] {season}: building matrix ({len(df):,} possessions, {len(sorted_players):,} players)")
     x_matrix, y = build_split_matrix(df, player_to_idx)
     weights = get_sample_weights(df)
+    print(f"   [SINGLE SPLIT] {season}: fitting RidgeCV (alphas={list(RAPM_ALPHAS_SINGLE)})")
     model = fit_ridge(x_matrix, y, weights, RAPM_ALPHAS_SINGLE)
+    print(f"   [SINGLE SPLIT] {season}: done (alpha={model.alpha_}, intercept={model.intercept_ * 100:.2f})")
 
     n_players = len(sorted_players)
     off_coef = model.coef_[:n_players]
@@ -293,6 +299,7 @@ def run_pooled_refined_rapm(full_df: pd.DataFrame, target_season: str, n_prior_s
 
     sorted_players, player_to_idx = collect_player_index(pooled_df)
     print(f"   [POOLED RAPM] {target_season}: {len(sorted_players)} players, seasons={[(s, f'{w:.0%}') for s, w in seasons_to_use]}")
+    print(f"   [POOLED RAPM] {target_season}: assembling pooled/target matrices...")
 
     pooled_parts_x = []
     pooled_parts_y = []
@@ -359,6 +366,8 @@ def run_pooled_refined_split(full_df: pd.DataFrame, target_season: str, n_prior_
 
     sorted_players, player_to_idx = collect_player_index(pooled_df)
     n_players = len(sorted_players)
+    print(f"   [POOLED SPLIT] {target_season}: {n_players} players, seasons={[(s, f'{w:.0%}') for s, w in seasons_to_use]}")
+    print(f"   [POOLED SPLIT] {target_season}: assembling pooled/target matrices...")
 
     pooled_parts_x = []
     pooled_parts_y = []

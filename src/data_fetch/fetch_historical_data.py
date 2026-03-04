@@ -9,6 +9,7 @@ import requests
 import os
 import math
 import random
+from curl_cffi import requests as curl_requests
 
 def save_player_id_name_mapping(season):
     import os
@@ -50,34 +51,99 @@ from nba_api.stats.endpoints import teamgamelog, playergamelog, commonallplayers
 import pandas as pd
 import time
 
+
+def _fetch_leaguegamelog_direct(season):
+    """Fetch all team game logs for one season in a single stats.nba.com call."""
+    url = "https://stats.nba.com/stats/leaguegamelog"
+    params = {
+        "Counter": "0",
+        "DateFrom": "",
+        "DateTo": "",
+        "Direction": "ASC",
+        "LeagueID": "00",
+        "PlayerOrTeam": "T",
+        "Season": season,
+        "SeasonType": "Regular Season",
+        "Sorter": "DATE",
+    }
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'Connection': 'keep-alive',
+        'Origin': 'https://www.nba.com',
+        'Referer': 'https://www.nba.com/stats/teams/traditional',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'x-nba-stats-origin': 'stats',
+        'x-nba-stats-token': 'true',
+    }
+
+    resp = curl_requests.get(
+        url,
+        params=params,
+        headers=headers,
+        impersonate="chrome110",
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"leaguegamelog status={resp.status_code}")
+
+    data = resp.json()
+    if isinstance(data, dict) and "resultSets" in data and data["resultSets"]:
+        rs = data["resultSets"][0]
+        return pd.DataFrame(rs.get("rowSet", []), columns=rs.get("headers", []))
+    if isinstance(data, dict) and "resultSet" in data:
+        rs = data["resultSet"]
+        return pd.DataFrame(rs.get("rowSet", []), columns=rs.get("headers", []))
+    raise RuntimeError("Unexpected leaguegamelog JSON format")
+
 def fetch_team_game_logs(seasons):
     from nba_api.stats.static import teams
     all_seasons = []
     for season in seasons:
         print(f"Fetching all team game logs for {season} season...")
+
+        # Primary path: one-shot league endpoint
+        got_season = False
+        for attempt in range(3):
+            try:
+                df = _fetch_leaguegamelog_direct(season)
+                if not df.empty:
+                    df["SEASON"] = season
+                    all_seasons.append(df)
+                    got_season = True
+                    print(f"  ✅ Direct leaguegamelog rows: {len(df)}")
+                    break
+            except Exception as e:
+                wait = 2 ** attempt
+                print(f"  [WARN] Direct leaguegamelog failed (attempt {attempt+1}/3): {e}; retrying in {wait}s")
+                time.sleep(wait)
+
+        if got_season:
+            continue
+
+        # Fallback path: per-team TeamGameLog
         team_list = teams.get_teams()
-        print(f"  Number of teams found: {len(team_list)}")
+        print(f"  Falling back to TeamGameLog calls; teams: {len(team_list)}")
         team_ids = [team['id'] for team in team_list]
         season_team_logs = []
         for team_id in team_ids:
             try:
-                logs = teamgamelog.TeamGameLog(team_id=team_id, season=season)
+                logs = teamgamelog.TeamGameLog(team_id=team_id, season=season, timeout=60)
                 df = logs.get_data_frames()[0]
-                print(f"    Team {team_id} ({season}) logs shape: {df.shape}")
                 if not df.empty:
                     df["SEASON"] = season
                     df["TEAM_ID"] = team_id
                     season_team_logs.append(df)
-                else:
-                    print(f"    [DEBUG] No logs for team {team_id} in {season}")
-                time.sleep(0.6)
+                time.sleep(0.3)
             except Exception as e:
-                print(f"[ERROR] Could not fetch logs for team {team_id} in {season}: {e}")
+                print(f"  [WARN] Could not fetch team {team_id} in {season}: {e}")
+
         if season_team_logs:
-            print(f"  Teams with logs for {season}: {len(season_team_logs)}")
-            all_seasons.append(pd.concat(season_team_logs, ignore_index=True))
+            season_df = pd.concat(season_team_logs, ignore_index=True)
+            print(f"  ✅ Fallback TeamGameLog rows: {len(season_df)}")
+            all_seasons.append(season_df)
         else:
-            print(f"  [DEBUG] No team logs for {season}")
+            print(f"  ❌ No team logs fetched for {season}")
+
     if all_seasons:
         print(f"Total team log DataFrames to concat: {len(all_seasons)}")
         return pd.concat(all_seasons, ignore_index=True)

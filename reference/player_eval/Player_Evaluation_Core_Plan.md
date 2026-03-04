@@ -1229,3 +1229,665 @@ Preventing black box leakage? → Yes
 Optimizing for net rating? → Yes
 
 Building foundation for game prediction? → Yes
+
+Step 1 and 2 Note 3/3/2026: Player agg. might be redundant, minute model benefits from removing salary.
+
+--------------Steps 3 and 4 detailed:------------------
+Perfect.
+We now lock Step 3 as a **fully specified, modular, implementation-ready layer**.
+
+This will be written so an AI engineer can build it directly without guessing intent.
+
+---
+
+# STEP 3 — OFFENSIVE & DEFENSIVE TEAM STRUCTURE LAYER
+
+(Mean Model + Volatility Model)
+
+Everything here assumes:
+
+* Projected minutes sum to **240**
+* All minute shares are normalized to 1.0
+* Archetypes are already assigned
+* Player OffBKE and DefBKE already computed
+
+---
+
+# SECTION 1 — PREPROCESSING
+
+## 1.1 Normalize Minutes
+
+For each player:
+
+[
+m_i = \frac{Minutes_i}{240}
+]
+
+Check:
+
+[
+\sum_i m_i = 1
+]
+
+---
+
+## 1.2 Percentile Flags
+
+Precompute for each archetype:
+
+* P25
+* P35
+* P50 (median)
+
+Using **league-wide distribution within archetype**.
+
+Store flags per player:
+
+```
+is_below_p25_BDC
+is_below_p35_IS
+is_below_p50_PS
+...
+```
+
+These will trigger conditional matrix logic.
+
+---
+
+# SECTION 2 — OFFENSIVE MEAN MODEL
+
+[
+TeamOff_{mean} = TalentBase + InteractionTerm + StructureTerm
+]
+
+---
+
+# 2.1 TALENT BASE
+
+[
+TalentBase = \sum_i (m_i \cdot OffBKE_i)
+]
+
+This is your stable anchor.
+
+---
+
+# 2.2 INTERACTION TERM (FULL 240 ROTATION)
+
+Loop over **all player pairs i < j**.
+
+### 2.2.1 Pair Weight
+
+[
+pair_weight_{i,j} = m_i \cdot m_j
+]
+
+This automatically ensures:
+
+* Bench players contribute less
+* 30 MPG players matter more
+* No manual starter weighting required
+
+---
+
+### 2.2.2 Matrix Value Lookup
+
+Convert your symbolic matrix into numeric:
+
+| Symbol | Value |
+| ------ | ----- |
+| ++     | +0.10 |
+| +      | +0.06 |
+| Mild + | +0.03 |
+| -      | -0.06 |
+| Mild - | -0.03 |
+| --     | -0.10 |
+| n/a    | 0     |
+
+---
+
+### 2.2.3 Conditional Logic Rules
+
+Apply conditional guards before assigning value.
+
+Examples:
+
+#### BDC × BDC
+
+If BOTH players:
+
+```
+is_below_p25_BDC == True
+```
+
+Then value = -0.06
+Else value = 0
+
+---
+
+#### BDC × IS
+
+If Interior Scorer player:
+
+```
+is_below_p25_IS == True
+```
+
+Then value = -0.06
+Else value = 0
+
+---
+
+#### BF × BF
+
+Always:
+
+```
+value = -0.10
+```
+
+---
+
+#### PS × OBM
+
+If PS player:
+
+```
+is_below_p50_PS == True
+```
+
+Then value = -0.06
+Else value = 0
+
+---
+
+Implement as:
+
+```
+value = lookup_matrix(archetype_i, archetype_j)
+
+if value has conditional:
+    evaluate percentile flags
+    override if necessary
+```
+
+---
+
+### 2.2.4 Accumulate Raw Interaction
+
+[
+RawInteraction = \sum_{i<j} pair_weight_{i,j} \cdot value_{i,j}
+]
+
+---
+
+### 2.2.5 Scaling
+
+Multiply by global interaction scalar:
+
+[
+InteractionTerm = \lambda_{interaction} \cdot RawInteraction
+]
+
+Initial:
+
+[
+\lambda_{interaction} = 0.75
+]
+
+We tune later.
+
+---
+
+### 2.2.6 Cap Interaction
+
+To preserve stability:
+
+[
+InteractionTerm = clip(InteractionTerm, -2.0, +2.0)
+]
+
+This prevents runaway synergy effects.
+
+---
+
+# 2.3 STRUCTURE TERM (OFFENSIVE FEATURES)
+
+These are team-level derived metrics.
+
+---
+
+## 2.3.1 Turnover Control
+
+Compute:
+
+[
+TeamTOV = \sum_i (m_i \cdot TOV%_i)
+]
+
+Penalty:
+
+[
+TurnoverPenalty = -\beta_{tov} \cdot (TeamTOV - LeagueAvgTOV)
+]
+
+Initial:
+
+[
+\beta_{tov} = 0.12
+]
+
+---
+
+## 2.3.2 Free Throw Rate
+
+[
+TeamFTr = \sum_i (m_i \cdot FTr_i)
+]
+
+[
+FTrBonus = \beta_{ftr} \cdot (TeamFTr - LeagueAvgFTr)
+]
+
+Initial:
+
+[
+\beta_{ftr} = 0.15
+]
+
+---
+
+## 2.3.3 Playmaking Diversity
+
+Count players:
+
+```
+AssistRate > threshold AND mpg > 15
+```
+
+If count == 1:
+-0.7
+
+If count >= 3:
++0.3
+
+Else:
+0
+
+---
+
+## 2.3.4 Spacing Credibility
+
+Count shooters:
+
+Criteria:
+
+* 3PA rate > threshold
+* 3P% > 35%
+* mpg > 15
+
+If < 2:
+-1.0
+
+If >= 4:
++0.5
+
+Else:
+0
+
+---
+
+## 2.3.5 Structure Term Sum
+
+[
+StructureTerm = TurnoverPenalty + FTrBonus + PlaymakingAdj + SpacingAdj
+]
+
+Cap:
+
+[
+clip(StructureTerm, -2.0, +2.0)
+]
+
+---
+
+# SECTION 3 — DEFENSIVE MEAN MODEL
+
+[
+TeamDef_{mean} = DefTalent + Essentials + Diversity - Liability
+]
+
+---
+
+## 3.1 Defensive Talent Base
+
+[
+DefTalent = \sum_i (m_i \cdot DefBKE_i)
+]
+
+---
+
+## 3.2 Essentials
+
+### Rim Protector Check
+
+If no player:
+
+* Archetype = Rim Protector
+* mpg > 15
+
+Then:
+-1.2
+
+---
+
+### POA Defender Check
+
+If none > 15 mpg:
+
+-0.8
+
+If BOTH missing:
+
+Additional -0.5
+
+---
+
+## 3.3 Anchor Quality Scaling
+
+Top Rim Protector:
+
+[
+
+* 0.6 \cdot DefBKE_{RP}
+  ]
+
+Top POA:
+
+[
+
+* 0.4 \cdot DefBKE_{POA}
+  ]
+
+---
+
+## 3.4 Diversity Bonus
+
+Count unique defensive archetypes > 15 mpg.
+
+If count > 3:
+
+[
++0.15 \cdot (count - 3)
+]
+
+Cap at +0.6.
+
+---
+
+## 3.5 Liability Penalty
+
+For each player:
+
+If:
+
+```
+DefBKE < -1.0 AND mpg > 20
+```
+
+Penalty:
+
+-0.4 each
+
+If 2+ such players:
+
+Additional -0.4 stacking penalty
+
+---
+
+Cap total defensive adjustments:
+
+±3.0
+
+---
+
+# SECTION 4 — FINAL TEAM NET RATING (MEAN)
+
+[
+TeamNet_{mean} =
+TeamOff_{mean}
+
+* TeamDef_{mean}
+  ]
+
+---
+
+# SECTION 5 — VOLATILITY MODEL
+
+Separate from mean.
+
+Used only in simulation.
+
+---
+
+## 5.1 Base Variance
+
+[
+\sigma_{base} = LeagueStdDev
+]
+
+---
+
+## 5.2 3PT Frequency Volatility
+
+[
+\sigma_{3PA} =
+\alpha_1 \cdot (Team3PARate - LeagueAvg)
+]
+
+High 3PA → higher σ
+
+---
+
+## 5.3 Creation Concentration
+
+Compute:
+
+[
+C = max(UsageShare_i)
+]
+
+If C > threshold:
+
+[
+\sigma_{creation} = \alpha_2 \cdot (C - threshold)
+]
+
+---
+
+## 5.4 Transition Frequency
+
+High transition teams:
+
+[
+\sigma_{transition} =
+\alpha_3 \cdot (TeamTransitionFreq - Avg)
+]
+
+---
+
+## 5.5 Final Volatility
+
+[
+\sigma_{team} =
+\sigma_{base}
+
+* \sigma_{3PA}
+* \sigma_{creation}
+* \sigma_{transition}
+  ]
+
+Floor:
+
+[
+\sigma_{team} \ge 8
+]
+
+Ceiling:
+
+[
+\sigma_{team} \le 16
+]
+
+---
+
+# SECTION 6 — MODULARITY DESIGN
+
+Each component must be toggleable:
+
+```
+use_interaction = True
+use_structure = True
+use_defense_architecture = True
+use_volatility = True
+```
+
+So you can ablate and test:
+
+* Talent only
+* Talent + Interaction
+* Talent + Structure
+* Full model
+
+This is critical for stability testing.
+
+---
+
+# WHAT THIS ACHIEVES
+
+You now have:
+
+* Full 240 minute weighted interaction
+* Conditional synergy logic
+* Defensive structural realism
+* Controlled caps to reduce volatility
+* Separate mean + variance engine
+* Fully modular architecture
+
+This is Phase 2 backbone quality.
+
+
+
+# 🔹 STEP 4 — Game Margin Predictor (Deterministic v1)
+
+Now we convert TeamNR into game-level predictions.
+
+---
+
+## 4.1 Base Formula
+
+For game:
+
+Home Team H
+Away Team A
+
+[
+ExpectedMargin = (TeamNR_H - TeamNR_A) + HCA
+]
+
+Where:
+
+HCA = +2.5 points (initial estimate)
+
+Tune via regression.
+
+---
+
+## 4.2 Win Probability Conversion
+
+Assume margin distribution:
+
+Normal(μ = ExpectedMargin, σ = 12)
+
+NBA margin std dev ≈ 12 points.
+
+Win probability:
+
+[
+P(H wins) = \Phi(\frac{ExpectedMargin}{12})
+]
+
+Where Φ is standard normal CDF.
+
+---
+
+## 4.3 Backtesting
+
+For seasons N-4 to N:
+
+Evaluate:
+
+* Brier score
+* Log loss
+* Calibration curve
+* Vegas line comparison
+
+Goal:
+
+Be within 0.5–1.0% of Vegas implied win probability calibration.
+
+---
+
+## 4.4 Structural Integrity Check
+
+If game model fails but team NR R² is strong:
+
+The problem is variance modeling, not strength modeling.
+
+Keep layers separate.
+
+---
+
+# 🚀 Where This Leaves You
+
+You now have:
+
+* Player impact core (BKE)
+* Minute allocation layer (validated)
+* Team aggregation layer (Step 3)
+* Game prediction engine (Step 4)
+
+From here:
+
+Season simulation becomes:
+
+Sim 82 games using margin distribution.
+
+Then playoff simulation.
+
+Then management game layer.
+
+---
+
+# Final Assessment
+
+Your minute model is clean enough to move forward.
+
+You are no longer in “experimental metric” territory.
+
+You are building:
+
+A vertically integrated predictive system.
+
+---
+
+Next decision:
+
+For Step 3 diminishing returns adjustment —
+
+Do you want it:
+
+A) Purely variance-based (simple)
+B) Archetype-interaction based (more realistic but complex)
+
+That choice affects long-term simulation realism.

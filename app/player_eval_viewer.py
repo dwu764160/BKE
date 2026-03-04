@@ -42,6 +42,7 @@ from src.utils.player_name_normalizer import (
 
 PROFILES_PATH = "data/processed/player_eval/player_impact_profiles.parquet"
 PREDICTIONS_PATH = "data/processed/player_eval/minute_model_predictions_v2.parquet"
+TEAM_AGG_PATH = "data/processed/player_eval/team_feature_aggregation.parquet"
 OUTPUT_HTML = "app/player_eval.html"
 
 
@@ -192,14 +193,93 @@ def build_payload():
     return players
 
 
+def build_team_payload():
+    """Build JSON payload from Step 3 team feature aggregation."""
+    if not os.path.exists(TEAM_AGG_PATH):
+        print(f"  Team aggregation data not found: {TEAM_AGG_PATH}")
+        return []
+
+    df = pd.read_parquet(TEAM_AGG_PATH)
+    teams = []
+    for _, row in df.iterrows():
+        team_abbrev = _clean_team_abbreviation(row.get("team_abbreviation"))
+        if not team_abbrev:
+            continue
+
+        off_arch = {}
+        def_arch = {}
+        interactions = []
+        player_summaries = []
+        try:
+            off_arch = json.loads(row.get("off_archetype_distribution", "{}"))
+        except Exception:
+            pass
+        try:
+            def_arch = json.loads(row.get("def_archetype_distribution", "{}"))
+        except Exception:
+            pass
+        try:
+            interactions = json.loads(row.get("interaction_details", "[]"))
+        except Exception:
+            pass
+        try:
+            player_summaries = json.loads(row.get("player_summaries", "[]"))
+        except Exception:
+            pass
+
+        team = {
+            "team": team_abbrev,
+            "season": str(row.get("season", "")),
+            "n_players": int(row.get("n_players", 0)),
+            "off_talent": _safe_json_val(row.get("off_talent_base")),
+            "off_interaction": _safe_json_val(row.get("off_interaction_term")),
+            "off_structure": _safe_json_val(row.get("off_structure_term")),
+            "off_mean": _safe_json_val(row.get("off_mean")),
+            "tov_penalty": _safe_json_val(row.get("off_tov_penalty")),
+            "ftr_bonus": _safe_json_val(row.get("off_ftr_bonus")),
+            "playmaking_adj": _safe_json_val(row.get("off_playmaking_adj")),
+            "spacing_adj": _safe_json_val(row.get("off_spacing_adj")),
+            "transition_bonus": _safe_json_val(row.get("off_transition_bonus")),
+            "n_playmakers": int(row.get("off_n_playmakers", 0)),
+            "n_shooters": int(row.get("off_n_shooters", 0)),
+            "transition_freq": _safe_json_val(row.get("off_team_transition_freq")),
+            "transition_success": _safe_json_val(row.get("off_team_transition_success")),
+            "def_talent": _safe_json_val(row.get("def_talent_base")),
+            "def_adj": _safe_json_val(row.get("def_adjustments")),
+            "def_mean": _safe_json_val(row.get("def_mean")),
+            "rp_penalty": _safe_json_val(row.get("def_rim_protector_penalty")),
+            "poa_penalty": _safe_json_val(row.get("def_poa_defender_penalty")),
+            "anchor_bonus": _safe_json_val(row.get("def_anchor_bonus")),
+            "diversity_bonus": _safe_json_val(row.get("def_diversity_bonus")),
+            "liability_penalty": _safe_json_val(row.get("def_liability_penalty")),
+            "n_liabilities": int(row.get("def_n_liabilities", 0)),
+            "unique_def_archetypes": int(row.get("def_unique_archetypes", 0)),
+            "net_projected": _safe_json_val(row.get("team_net_rating_projected")),
+            "vol_base": _safe_json_val(row.get("vol_base")),
+            "vol_3pa": _safe_json_val(row.get("vol_3pa")),
+            "vol_creation": _safe_json_val(row.get("vol_creation")),
+            "vol_transition": _safe_json_val(row.get("vol_transition")),
+            "vol_total": _safe_json_val(row.get("vol_total")),
+            "off_arch_dist": off_arch,
+            "def_arch_dist": def_arch,
+            "interactions": interactions,
+            "players": player_summaries,
+        }
+        teams.append(team)
+
+    return teams
+
+
 def generate_html():
     """Generate the standalone HTML viewer."""
     players = build_payload()
+    team_agg = build_team_payload()
     data_json = json.dumps(players, separators=(",", ":"))
+    team_json = json.dumps(team_agg, separators=(",", ":"))
 
-    # Get unique seasons and teams
-    seasons = sorted(set(p["season"] for p in players))
-    teams = sorted(set(p["team"] for p in players if p["team"]))
+    # Get unique seasons and teams (union of player and team-aggregation sources)
+    seasons = sorted(set(p["season"] for p in players) | set(tm.get("season") for tm in team_agg))
+    teams = sorted((set(p["team"] for p in players if p["team"]) | set(tm.get("team") for tm in team_agg if tm.get("team"))) )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -294,6 +374,7 @@ h1 {{ font-size:22px; font-weight:600; color:var(--accent); margin-bottom:2px; }
 <div class="tab-btns">
   <button class="active" onclick="switchTab('cards')">Player Cards</button>
   <button onclick="switchTab('team')">Team View</button>
+  <button onclick="switchTab('teamagg')">Team Aggregation</button>
 </div>
 
 <div class="controls">
@@ -331,14 +412,20 @@ h1 {{ font-size:22px; font-weight:600; color:var(--accent); margin-bottom:2px; }
 <div class="stats-bar" id="statsBar"></div>
 <div id="cardsView"><div class="grid" id="cardGrid"></div></div>
 <div id="teamView" style="display:none"></div>
+<div id="teamAggView" style="display:none"></div>
 </div>
 
 <div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modalContent"></div>
 </div>
 
+<div class="modal-overlay" id="teamModal" onclick="if(event.target===this)closeTeamModal()">
+  <div class="modal" id="teamModalContent" style="max-width:1000px"></div>
+</div>
+
 <script>
 const DATA = {data_json};
+const TEAM_AGG = {team_json};
 let currentSort = 'bke';
 let sortAsc = false;
 const OFF_COLORS = ['#f85149','#ff7b72','#ffa657','#d29922','#e3b341','#3fb950','#56d364','#39d2c0','#58a6ff','#bc8cff','#d2a8ff'];
@@ -360,18 +447,19 @@ const PLAYTYPE_LABELS = ['ISO','PnR BH','Post','Cut','PnR RM','Handoff','OffScre
 
 function fmt(v,d=1){{ return v==null?'—':(typeof v==='number'?v.toFixed(d):'—'); }}
 function fmtPct(v){{ return v==null?'—':(v*100).toFixed(1)+'%'; }}
-function fmtSalary(v){{ if(v==null||Number(v)<=0)return'Not found'; if(v>=1e6)return'$'+((v/1e6).toFixed(1))+'M'; return'$'+(v/1e3).toFixed(0)+'K'; }}
+function fmtSalary(v){{ if(v==null||isNaN(v))return'Salary not found'; if(Number(v)<=0)return'Salary not found'; if(v>=1e6)return'$'+((v/1e6).toFixed(1))+'M'; return'$'+(v/1e3).toFixed(0)+'K'; }}
 function bkeColor(v){{ if(v==null)return'var(--text-muted)'; if(v>2)return'var(--green)'; if(v>0)return'var(--cyan)'; if(v>-2)return'var(--orange)'; return'var(--red)'; }}
 function residColor(r){{ if(r==null)return'var(--text-muted)'; if(Math.abs(r)<2)return'var(--text)'; return r>0?'var(--green)':'var(--red)'; }}
+function stripDiacritics(s){{ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); }}
 
 function getFiltered() {{
   let s = document.getElementById('seasonFilter').value;
   let t = document.getElementById('teamFilter').value;
-  let q = document.getElementById('searchBox').value.toLowerCase();
+  let q = stripDiacritics(document.getElementById('searchBox').value.toLowerCase());
   let list = DATA.filter(p => {{
     if(s!=='all' && p.season!==s) return false;
     if(t!=='all' && p.team!==t) return false;
-    if(q && !p.name.toLowerCase().includes(q)) return false;
+    if(q && !stripDiacritics(p.name.toLowerCase()).includes(q)) return false;
     return true;
   }});
   list.sort((a,b) => {{
@@ -604,6 +692,195 @@ function openModal(pid, season) {{
 }}
 
 function closeModal() {{ document.getElementById('modal').classList.remove('open'); }}
+function closeTeamModal() {{ document.getElementById('teamModal').classList.remove('open'); }}
+
+// ─── Team Aggregation View ──────────────────────────────────────
+function getFilteredTeams() {{
+  let s = document.getElementById('seasonFilter').value;
+  let t = document.getElementById('teamFilter').value;
+  return TEAM_AGG.filter(tm => {{
+    if(s!=='all' && tm.season!==s) return false;
+    if(t!=='all' && tm.team!==t) return false;
+    return true;
+  }}).sort((a,b) => (b.net_projected||0)-(a.net_projected||0));
+}}
+
+function renderTeamAggView() {{
+  const view = document.getElementById('teamAggView');
+  const teams = getFilteredTeams();
+  if(!teams.length) {{
+    view.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:40px">No team aggregation data. Run Step 3 first.</div>';
+    return;
+  }}
+  let html = '<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">';
+  teams.forEach(tm => {{
+    const netColor = (tm.net_projected||0)>0?'var(--green)':'var(--red)';
+    const offColor = (tm.off_mean||0)>0?'var(--green)':'var(--red)';
+    const defColor = (tm.def_mean||0)>0?'var(--green)':'var(--red)';
+    // Top archetype
+    const topOff = Object.entries(tm.off_arch_dist||{{}}).sort((a,b)=>b[1]-a[1]);
+    const topDef = Object.entries(tm.def_arch_dist||{{}}).sort((a,b)=>b[1]-a[1]);
+    html += `<div class="card" onclick="openTeamModal('${{tm.team}}','${{tm.season}}')" style="padding:16px">
+      <div class="card-header">
+        <div>
+          <div class="card-name" style="font-size:17px">${{tm.team}}</div>
+          <div class="card-team">${{tm.season}} · ${{tm.n_players}} players</div>
+        </div>
+        <span class="card-badge" style="background:${{netColor}}22;color:${{netColor}};font-size:13px;padding:4px 12px">${{fmt(tm.net_projected,2)}} Net</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 0">
+        <div style="text-align:center"><div style="font-size:16px;font-weight:600;color:${{offColor}}">${{fmt(tm.off_mean,2)}}</div><div style="font-size:10px;color:var(--text-muted)">OFF Mean</div></div>
+        <div style="text-align:center"><div style="font-size:16px;font-weight:600;color:${{defColor}}">${{fmt(tm.def_mean,2)}}</div><div style="font-size:10px;color:var(--text-muted)">DEF Mean</div></div>
+        <div style="text-align:center"><div style="font-size:16px;font-weight:600;color:var(--purple)">${{fmt(tm.vol_total,1)}}</div><div style="font-size:10px;color:var(--text-muted)">Volatility</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;font-size:11px;text-align:center;margin-bottom:8px">
+        <div><div style="font-weight:600">${{fmt(tm.off_talent,2)}}</div><div style="color:var(--text-muted)">Talent</div></div>
+        <div><div style="font-weight:600;color:${{(tm.off_interaction||0)>=0?'var(--green)':'var(--red)'}}">${{fmt(tm.off_interaction,2)}}</div><div style="color:var(--text-muted)">Interact</div></div>
+        <div><div style="font-weight:600;color:${{(tm.off_structure||0)>=0?'var(--green)':'var(--red)'}}">${{fmt(tm.off_structure,2)}}</div><div style="color:var(--text-muted)">Structure</div></div>
+        <div><div style="font-weight:600">${{tm.n_playmakers}}</div><div style="color:var(--text-muted)">Playmakrs</div></div>
+        <div><div style="font-weight:600">${{tm.n_shooters}}</div><div style="color:var(--text-muted)">Shooters</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted)">
+        Off: ${{topOff.slice(0,3).map(([k,v])=>k.replace(/_/g,' ')+' ('+v+')').join(', ')||'—'}}<br>
+        Def: ${{topDef.slice(0,3).map(([k,v])=>k.replace(/_/g,' ')+' ('+v+')').join(', ')||'—'}}
+      </div>
+    </div>`;
+  }});
+  html += '</div>';
+  view.innerHTML = html;
+}}
+
+function openTeamModal(team, season) {{
+  const tm = TEAM_AGG.find(t => t.team===team && t.season===season);
+  if(!tm) return;
+  const m = document.getElementById('teamModalContent');
+
+  // Players table
+  let playersHtml = '';
+  if(tm.players && tm.players.length) {{
+    const sorted = [...tm.players].sort((a,b)=>(b.mpg||0)-(a.mpg||0));
+    playersHtml = `<table class="team-table"><thead><tr>
+      <th>#</th><th>Player</th><th>MPG</th><th>Min Share</th><th>OBKE</th><th>DBKE</th>
+      <th>Off Archetype</th><th>Def Archetype</th><th>USG</th><th>AST</th><th>3P Rate</th><th>Trans</th>
+    </tr></thead><tbody>`;
+    sorted.forEach((p,i) => {{
+      const obkeColor = (p.impact_obke||0)>0?'var(--green)':'var(--red)';
+      const dbkeColor = (p.impact_dbke||0)>0?'var(--green)':'var(--red)';
+      playersHtml += `<tr>
+        <td>${{i+1}}</td>
+        <td style="font-weight:600">${{p.player_name}}</td>
+        <td>${{fmt(p.mpg,1)}}</td>
+        <td>${{fmtPct(p.minute_share)}}</td>
+        <td style="color:${{obkeColor}}">${{fmt(p.impact_obke,2)}}</td>
+        <td style="color:${{dbkeColor}}">${{fmt(p.impact_dbke,2)}}</td>
+        <td style="font-size:11px">${{(p.off_archetype||'').replace(/_/g,' ')}}</td>
+        <td style="font-size:11px">${{(p.def_archetype||'').replace(/_/g,' ')}}</td>
+        <td>${{fmtPct(p.usage)}}</td>
+        <td>${{fmtPct(p.ast_rate)}}</td>
+        <td>${{fmtPct(p.three_rate)}}</td>
+        <td>${{fmtPct(p.transition_freq)}}</td>
+      </tr>`;
+    }});
+    playersHtml += '</tbody></table>';
+  }}
+
+  // Interaction details
+  let interHtml = '';
+  if(tm.interactions && tm.interactions.length) {{
+    const sorted = [...tm.interactions].sort((a,b)=>Math.abs(b.contribution)-Math.abs(a.contribution));
+    interHtml = sorted.slice(0,15).map(ix => {{
+      const color = ix.contribution>0?'var(--green)':'var(--red)';
+      const sign = ix.contribution>0?'+':'';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-bottom:1px solid var(--border);font-size:12px">
+        <div>${{ix.player_i}} <span style="color:var(--text-muted)">${{(ix.arch_i||'').replace(/_/g,' ')}}</span>
+        × ${{ix.player_j}} <span style="color:var(--text-muted)">${{(ix.arch_j||'').replace(/_/g,' ')}}</span></div>
+        <div style="color:${{color}};font-weight:600">${{sign}}${{fmt(ix.contribution,4)}}</div>
+      </div>`;
+    }}).join('');
+  }}
+
+  // Offense breakdown visual
+  const offParts = [
+    {{label:'Talent Base', val:tm.off_talent, color:'var(--accent)'}},
+    {{label:'Interaction', val:tm.off_interaction, color:tm.off_interaction>=0?'var(--green)':'var(--red)'}},
+    {{label:'Structure', val:tm.off_structure, color:tm.off_structure>=0?'var(--green)':'var(--red)'}},
+  ];
+  const defParts = [
+    {{label:'Talent Base', val:tm.def_talent, color:'var(--accent)'}},
+    {{label:'Adjustments', val:tm.def_adj, color:tm.def_adj>=0?'var(--green)':'var(--red)'}},
+  ];
+
+  m.innerHTML = `
+    <button class="modal-close" onclick="closeTeamModal()">&times;</button>
+    <h2>${{tm.team}} — ${{tm.season}}</h2>
+    <div class="meta">${{tm.n_players}} players · Projected Net Rating: <span style="color:${{(tm.net_projected||0)>0?'var(--green)':'var(--red)'}};font-weight:700">${{fmt(tm.net_projected,2)}}</span> · Volatility: <span style="color:var(--purple)">${{fmt(tm.vol_total,1)}}</span></div>
+
+    <div class="section">
+      <h3>Offensive Model Breakdown</h3>
+      <div style="display:flex;gap:16px;margin-bottom:12px">
+        ${{offParts.map(p=>`<div style="flex:1;background:var(--bg);border-radius:4px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:${{p.color}}">${{fmt(p.val,3)}}</div>
+          <div style="font-size:10px;color:var(--text-muted)">${{p.label}}</div>
+        </div>`).join('')}}
+        <div style="flex:1;background:var(--bg);border-radius:4px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:${{(tm.off_mean||0)>0?'var(--green)':'var(--red)'}}">${{fmt(tm.off_mean,3)}}</div>
+          <div style="font-size:10px;color:var(--text-muted)">OFF Total</div>
+        </div>
+      </div>
+      <div class="metric-grid">
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.tov_penalty,3)}}</div><div class="mg-lbl">TOV Penalty</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.ftr_bonus,3)}}</div><div class="mg-lbl">FTR Bonus</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.playmaking_adj,2)}}</div><div class="mg-lbl">Playmaking (${{tm.n_playmakers}})</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.spacing_adj,2)}}</div><div class="mg-lbl">Spacing (${{tm.n_shooters}})</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.transition_bonus,3)}}</div><div class="mg-lbl">Transition</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmtPct(tm.transition_freq)}}</div><div class="mg-lbl">Trans Freq</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Defensive Model Breakdown</h3>
+      <div style="display:flex;gap:16px;margin-bottom:12px">
+        ${{defParts.map(p=>`<div style="flex:1;background:var(--bg);border-radius:4px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:${{p.color}}">${{fmt(p.val,3)}}</div>
+          <div style="font-size:10px;color:var(--text-muted)">${{p.label}}</div>
+        </div>`).join('')}}
+        <div style="flex:1;background:var(--bg);border-radius:4px;padding:10px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:${{(tm.def_mean||0)>0?'var(--green)':'var(--red)'}}">${{fmt(tm.def_mean,3)}}</div>
+          <div style="font-size:10px;color:var(--text-muted)">DEF Total</div>
+        </div>
+      </div>
+      <div class="metric-grid">
+        <div class="mg-item"><div class="mg-val" style="color:${{tm.rp_penalty<0?'var(--red)':'var(--green)'}}">${{fmt(tm.rp_penalty,2)}}</div><div class="mg-lbl">Rim Protector</div></div>
+        <div class="mg-item"><div class="mg-val" style="color:${{tm.poa_penalty<0?'var(--red)':'var(--green)'}}">${{fmt(tm.poa_penalty,2)}}</div><div class="mg-lbl">POA Defender</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.anchor_bonus,2)}}</div><div class="mg-lbl">Anchor Quality</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.diversity_bonus,2)}}</div><div class="mg-lbl">Diversity (${{tm.unique_def_archetypes}} types)</div></div>
+        <div class="mg-item"><div class="mg-val" style="color:var(--red)">${{fmt(tm.liability_penalty,2)}}</div><div class="mg-lbl">Liability (${{tm.n_liabilities}})</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Volatility Components</h3>
+      <div class="metric-grid">
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.vol_base,1)}}</div><div class="mg-lbl">Base (League σ)</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.vol_3pa,2)}}</div><div class="mg-lbl">3PA Impact</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.vol_creation,2)}}</div><div class="mg-lbl">Creation Conc.</div></div>
+        <div class="mg-item"><div class="mg-val">${{fmt(tm.vol_transition,2)}}</div><div class="mg-lbl">Transition</div></div>
+        <div class="mg-item"><div class="mg-val" style="color:var(--purple)">${{fmt(tm.vol_total,1)}}</div><div class="mg-lbl">Total σ</div></div>
+      </div>
+    </div>
+
+    ${{tm.interactions&&tm.interactions.length ? `<div class="section">
+      <h3>Top Archetype Interactions</h3>
+      <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:4px">${{interHtml}}</div>
+    </div>` : ''}}
+
+    <div class="section">
+      <h3>Roster (${{tm.n_players}} players)</h3>
+      <div style="overflow-x:auto">${{playersHtml||'<div style="color:var(--text-muted)">No player data</div>'}}</div>
+    </div>
+  `;
+  document.getElementById('teamModal').classList.add('open');
+}}
 
 function setSort(btn) {{
   const newSort = btn.dataset.sort;
@@ -637,14 +914,19 @@ function toggleTeam(sectionId) {{
 
 function switchTab(tab) {{
   document.querySelectorAll('.tab-btns button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('cardsView').style.display='none';
+  document.getElementById('teamView').style.display='none';
+  document.getElementById('teamAggView').style.display='none';
   if(tab==='cards') {{
-    document.querySelector('.tab-btns button:first-child').classList.add('active');
+    document.querySelector('.tab-btns button:nth-child(1)').classList.add('active');
     document.getElementById('cardsView').style.display='';
-    document.getElementById('teamView').style.display='none';
-  }} else {{
-    document.querySelector('.tab-btns button:last-child').classList.add('active');
-    document.getElementById('cardsView').style.display='none';
+  }} else if(tab==='team') {{
+    document.querySelector('.tab-btns button:nth-child(2)').classList.add('active');
     document.getElementById('teamView').style.display='';
+  }} else if(tab==='teamagg') {{
+    document.querySelector('.tab-btns button:nth-child(3)').classList.add('active');
+    document.getElementById('teamAggView').style.display='';
+    renderTeamAggView();
   }}
   applyFilters();
 }}
@@ -654,6 +936,9 @@ function applyFilters() {{
   updateStats(list);
   renderCards(list);
   renderTeamView(list);
+  if(document.getElementById('teamAggView').style.display !== 'none') {{
+    renderTeamAggView();
+  }}
 }}
 
 // Init
@@ -668,7 +953,7 @@ document.addEventListener('DOMContentLoaded', () => {{
 
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {{
-  if(e.key==='Escape') closeModal();
+  if(e.key==='Escape') {{ closeModal(); closeTeamModal(); }}
 }});
 </script>
 </body>

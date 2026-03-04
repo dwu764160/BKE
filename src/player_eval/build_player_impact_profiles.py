@@ -331,15 +331,27 @@ def main() -> None:
     import glob
     salary_files = sorted(glob.glob(str(HISTORICAL_DIR / "player_salaries_*.parquet")))
     salary_frames = []
+    salary_name_frames = []  # for name-based fallback
     for sf in salary_files:
         try:
             sdf = pd.read_parquet(sf)
-            sdf["player_id"] = _norm_player_id(sdf["player_id"])
-            sdf["season"] = sdf["season"].astype(str)
-            salary_frames.append(sdf[["player_id", "season", "salary"]])
+            # Rows with valid player_id
+            has_id = sdf["player_id"].notna()
+            if has_id.any():
+                matched = sdf.loc[has_id].copy()
+                matched["player_id"] = _norm_player_id(matched["player_id"])
+                matched["season"] = matched["season"].astype(str)
+                salary_frames.append(matched[["player_id", "season", "salary"]])
+            # Rows without player_id but with player_name (for name-based fallback)
+            has_name = (~has_id) & sdf["player_name"].notna()
+            if has_name.any():
+                unmatched = sdf.loc[has_name].copy()
+                unmatched["season"] = unmatched["season"].astype(str)
+                salary_name_frames.append(unmatched[["player_name", "season", "salary"]])
         except Exception:
             pass
     salary_df = pd.concat(salary_frames, ignore_index=True) if salary_frames else pd.DataFrame(columns=["player_id", "season", "salary"])
+    salary_name_df = pd.concat(salary_name_frames, ignore_index=True) if salary_name_frames else pd.DataFrame(columns=["player_name", "season", "salary"])
 
     # ═══════════════════ MERGE ═══════════════════════════════════════
     data = base.merge(bke_df, on=["player_id", "season"], how="left")
@@ -418,12 +430,26 @@ def main() -> None:
         data = data.merge(metrics_lin[ml_keep].drop_duplicates(subset=["player_id", "season"]),
                           on=["player_id", "season"], how="left")
 
-    # Salary
+    # Salary — merge by ID first, then name-based fallback
     if not salary_df.empty:
         data = data.merge(salary_df.drop_duplicates(subset=["player_id", "season"]),
                           on=["player_id", "season"], how="left")
     else:
         data["salary"] = np.nan
+
+    # Name-based salary fallback for players without salary after ID merge
+    if not salary_name_df.empty:
+        from src.utils.player_name_normalizer import canonical_name_key
+        salary_missing = data["salary"].isna()
+        if salary_missing.any():
+            data["_canon_key"] = data["player_name"].astype(str).map(canonical_name_key)
+            salary_name_df["_canon_key"] = salary_name_df["player_name"].astype(str).map(canonical_name_key)
+            name_salary_map = salary_name_df.drop_duplicates(subset=["_canon_key", "season"]).set_index(["_canon_key", "season"])["salary"]
+            for idx in data.index[salary_missing]:
+                key = (data.at[idx, "_canon_key"], str(data.at[idx, "season"]))
+                if key in name_salary_map.index:
+                    data.at[idx, "salary"] = name_salary_map[key]
+            data.drop(columns=["_canon_key"], inplace=True)
 
     # Player bio (join on player_id only — bio is not season-specific)
     if not players_meta.empty:
@@ -463,17 +489,18 @@ def main() -> None:
     data["turnover_rate"] = _pct_to_rate(_first_existing(data, ["tov_pct", "TOV_PCT", "TOV_pct"]))
 
     # FIX: three_point_rate = FG3A / FGA (share of shots from three, 0‑1)
-    fg3a = pd.to_numeric(_first_existing(data, ["FG3A", "fg3a"]), errors="coerce")
-    fga = pd.to_numeric(_first_existing(data, ["FGA", "fga", "TOTAL_FGA"]), errors="coerce").replace(0, np.nan)
+    # Note: base (BKE decomp) AND stats both have FGA/FG3A/FTA, causing _x/_y suffixes
+    fg3a = pd.to_numeric(_first_existing(data, ["FG3A", "FG3A_y", "FG3A_x", "fg3a"]), errors="coerce")
+    fga = pd.to_numeric(_first_existing(data, ["FGA", "FGA_y", "FGA_x", "fga", "TOTAL_FGA"]), errors="coerce").replace(0, np.nan)
     data["three_point_rate"] = (fg3a / fga).clip(0.0, 1.0)
 
     data["rim_rate"] = _pct_to_rate(_first_existing(data, ["rim_rate", "AT_RIM_FREQ"]))
-    data["efg"] = _pct_to_rate(_first_existing(data, ["efg_pct", "EFG_PCT", "eFG_pct"]))
-    data["orb_rate"] = _pct_to_rate(_first_existing(data, ["OREB_PCT", "OREB_pct"])).clip(0.0, 1.0)
-    data["drb_rate"] = _pct_to_rate(_first_existing(data, ["DREB_PCT", "DREB_pct"])).clip(0.0, 1.0)
+    data["efg"] = _pct_to_rate(_first_existing(data, ["efg_pct", "EFG_PCT", "eFG_pct", "EFG_PCT_y", "EFG_PCT_x"]))
+    data["orb_rate"] = _pct_to_rate(_first_existing(data, ["OREB_PCT", "OREB_pct", "OREB_PCT_y"])).clip(0.0, 1.0)
+    data["drb_rate"] = _pct_to_rate(_first_existing(data, ["DREB_PCT", "DREB_pct", "DREB_PCT_y"])).clip(0.0, 1.0)
 
     # FIX: free_throw_rate = FTA / FGA (standard FT rate, can be > 1.0, that's valid)
-    fta = pd.to_numeric(_first_existing(data, ["FTA", "fta"]), errors="coerce")
+    fta = pd.to_numeric(_first_existing(data, ["FTA", "FTA_y", "FTA_x", "fta"]), errors="coerce")
     data["free_throw_rate"] = (fta / fga).clip(lower=0.0)
 
     # FIX: hustle = hustle_pctl from defensive archetypes (already 0‑1 normalized)
@@ -600,7 +627,7 @@ def main() -> None:
         "hustle_pctl", "foul_rate",
         "age", "minutes", "mpg", "minute_share_potential", "possessions", "games",
         "on_off_diff", "scheme_stability_index",
-        "compression_flag", "defensive_shrinkage_lambda", "salary",
+        "compression_flag", "defensive_shrinkage_lambda",
         "off_role_confidence", "off_role_effectiveness", "def_role_confidence",
     ]
     for col in numeric_fill_cols:
@@ -675,7 +702,7 @@ def main() -> None:
             compression_flag=_safe_float(row["compression_flag"], default=0.0),
             defensive_shrinkage_lambda=_safe_float(row["defensive_shrinkage_lambda"], default=0.0),
             # Financial
-            salary=_safe_float(row["salary"], default=0.0),
+            salary=_safe_float(row["salary"], default=np.nan),
         )
 
         profile_rows.append(profile)

@@ -222,16 +222,24 @@ def _load_players_meta() -> pd.DataFrame:
 
 
 def _load_salaries() -> pd.DataFrame:
-    """Combine per-season salary parquet files."""
+    """Combine per-season salary parquet files.
+    
+    Handles both ID-matched rows (player_id is set) and name-only rows
+    (player_id is NaN but player_name is set, from fetcher fallbacks).
+    """
     files = sorted(glob.glob(str(HISTORICAL_DIR / "player_salaries_*.parquet")))
     frames = []
     for f in files:
         d = _safe_load(Path(f))
         if d.empty:
             continue
-        d["player_id"] = _norm_id(d["player_id"])
-        d["season"] = d["season"].astype(str)
-        frames.append(d[["player_id", "season", "salary"]])
+        # Keep rows with valid player_id
+        has_id = d["player_id"].notna()
+        if has_id.any():
+            matched = d.loc[has_id].copy()
+            matched["player_id"] = _norm_id(matched["player_id"])
+            matched["season"] = matched["season"].astype(str)
+            frames.append(matched[["player_id", "season", "salary"]])
     if not frames:
         return pd.DataFrame(columns=["player_id", "season", "salary"])
     return _dedup(pd.concat(frames, ignore_index=True))

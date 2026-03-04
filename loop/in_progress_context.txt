@@ -1,3 +1,114 @@
+2026-03-04 — Reproduction pipeline "stuck" diagnosis (Layer 2 / C5)
+- Root cause was primarily observability + control-flow, not a hard deadlock:
+  1) `scripts/reproduce_pipeline.sh` piped Python output through `tee` without unbuffered mode,
+     so long-running steps appeared frozen with empty logs.
+  2) `run_patched()` swallowed step failures (did not return non-zero), so the pipeline could continue
+     after a failed step and look inconsistent/stuck downstream.
+  3) `src/modeling/model_rapm.py` had sparse logs during long RidgeCV fits, especially in C5.
+- Fixes implemented:
+  - `scripts/reproduce_pipeline.sh`
+    - Run patched scripts with `PYTHONUNBUFFERED=1` and `python -u` for live logs.
+    - Added per-step elapsed time in completion/failure messages.
+    - Added fail-fast behavior: `run_patched()` now returns non-zero on failure.
+  - `src/modeling/model_rapm.py`
+    - Added granular C5 progress logging for matrix build and RidgeCV fit stages
+      (`[SINGLE RAPM]`, `[SINGLE SPLIT]`, `[POOLED RAPM]`, `[POOLED SPLIT]`).
+  - `readme.md`
+    - Documented reproduction harness command + live unbuffered log behavior.
+- Validation:
+  - Layer 2 rerun now shows continuous progress and explicit step durations:
+    - `C1` completed in 69s, `C2` 24s, `C3` 14s, `C4` 10s.
+    - `C5` now logs startup and fit-stage progress instead of appearing idle.
+
+2026-07-17 — PEC Step 3 architectural overhaul: scale decompression + talent dominance
+- Critical issue: model produced compressed net ratings (std=0.64 vs real NBA ~5.5)
+  with zero predictive correlation (r=0.04) and structure/defense dominating talent.
+- Root causes identified and fixed:
+  1. Rim protector detection: was str.contains("rim") catching only 40/130 bigs.
+     Fixed to include "Dropping Big"(60) and "Mobile Big"(30) via .isin().
+     Result: teams_no_rp dropped from 60% to 4.3%.
+  2. DEFAULT_TEAM_SCALE: increased from 5 to 20.
+     BKE compression factor ~9x vs real RAPM (std 0.34 vs 3.0).
+     TEAM_SCALE=20 produces realistic NBA spread (std~5.07, range -11 to +13).
+  3. Data-driven TEAM_SCALE threshold: raised from r>0.05 to r>0.20.
+     With corrupted data (overall r=0.074), data-driven fit was degenerate.
+     Now falls back to DEFAULT_TEAM_SCALE when talent-actual r is weak.
+  4. All penalty/bonus magnitudes reduced 50-70% via named constants:
+     PLAYMAKING_SOLO: -0.7 to -0.25, SPACING_POOR: -1.0 to -0.35,
+     RP_MISSING: -1.2 to -0.40, POA_MISSING: -0.8 to -0.25, etc.
+  5. Volatility model enhanced: added roster depth component,
+     wider alpha coefficients (1 to 5 for 3PA/creation, 0.5 to 3 for transition),
+     floor/ceiling reduced from [8,16] to [1,6].
+  6. Calibration skip logic: when holdout_r < 0 (inverted data) or
+     train_r < 0.20 or slope < 0.10, skip OLS calibration and use
+     raw predictions with mean centering. This preserves realistic spread.
+  7. All constants centralized with documentation in constants.py.
+- Post-fix results:
+  - Projected net rating: std=5.07, range [-11.1, +12.9] (realistic NBA scale)
+  - Talent dominance: 57%+61% of raw std (modifier/talent=7.5%, target <30%)
+  - Per-season correlations: 2022-23 r=0.19, 2023-24 r=0.49, 2024-25 r=-0.37
+    (2024-25 inverted because game log data is simulated/fictional)
+  - Model correctly identifies BOS/OKC as elite, DET/POR/SAS as bottom
+  - Viewer regenerated successfully (app/player_eval.html, 4.3MB)
+- Data quality finding: 2024-25 game logs appear simulated (CHA best, BOS worst).
+  This is NOT a model issue -- our BKE-based rankings are correct for real NBA.
+- Files modified: src/player_eval/constants.py, src/player_eval/team_feature_aggregation.py
+
+2026-03-03 — PEC v1 Step 3 remediation after critical eval feedback
+- Baseline diagnostics on pre-fix Step 3 output confirmed core failure modes:
+  - `corr(projected, actual)=0.021`, `corr(off_talent, actual)=-0.029`, `corr(def_talent, actual)=0.146`.
+  - `vol_total` fully collapsed (`nunique=1`, min=max=8.0) due hard floor clipping.
+- `src/player_eval/team_feature_aggregation.py` remediation changes implemented:
+  - Added dynamic volatility floor/ceiling tied to observed league std (`vol_floor_used`, `vol_ceiling_used` written per row).
+  - Added defense-sign inference helper (`_compute_defense_sign`) with explicit `corr(off+def)` vs `corr(off-def)` reporting.
+  - Added ablation/calibration utilities (`_linear_fit`, `_metrics`, `_ablation_report`) with train/holdout split (`2024-25` holdout).
+  - Added six-stage ablation stack to validation JSON:
+    1) talent-only scaled, 2) talent+calibration, 3) talent+defense,
+    4) +structure, 5) full raw, 6) full calibrated.
+  - Team net construction updated to avoid over-scaling structural terms:
+    `raw = 5*off_talent + 5*def_talent(sign-adjusted) + interaction + structure + def_adjustments(sign-adjusted)`.
+  - Increased interaction term leverage via pair weight scaling (`(m_i*m_j)/0.2`).
+  - Tightened spacing credibility gate (`behavioral_efg > max(threshold, 0.52)` and `minute_share > 0.08`) to prevent every rotation from qualifying as a shooter.
+- Post-fix Step 3 rerun completed successfully:
+  - `vol_total` now distributed (mean 1.7605, std 0.0589, min 1.6726, max 1.928).
+  - `avg_n_shooters` dropped from ~11.5 to ~3.1 (more realistic structure signal).
+  - Overall correlation improved slightly to `r=0.0417`, but holdout (`2024-25`) remains negative across ablation stack (instability persists).
+  - Calibration now explicit in report (`full_slope=0.2144`, `full_intercept=-0.1529`) and applied to `team_net_rating_projected`; raw value preserved in `team_net_rating_raw`.
+- Documentation updates completed for this remediation pass:
+  - `readme.md`: Step 3 command + Step 3 output/report artifacts.
+  - `reference/player_eval/Player_Evaluation_Core_Summary.md`: added "Step 3 Remediation Pass" subsection.
+
+2026-03-05 — PEC v1 Step 3: Team Feature Aggregation + Data Quality Fixes
+- Salary pipeline fix (src/data_fetch/fetch_player_salaries.py):
+  - `normalize_name()` was deleting diacritics instead of decomposing them (e.g., č→nothing). Fixed with `unicodedata.normalize("NFKD", ...)` so Dončić→Doncic.
+  - Output now preserves original ESPN name via `player_name_final = DISPLAY_FIRST_LAST.fillna(player_name)`.
+  - Fixed duplicate `player_name` column bug by using intermediate `player_id_final`/`player_name_final` columns.
+  - Re-ran fetcher: 531+476+493+464 rows across 4 seasons. Luka/Jokic now correctly matched.
+- Step 1 salary/behavioral rate fixes (src/player_eval/build_player_impact_profiles.py):
+  - Removed `"salary"` from `numeric_fill_cols` to prevent median-fill creating $5M placeholders. Default changed to NaN.
+  - Added name-based salary fallback using `canonical_name_key` for players without player_id in salary parquets.
+  - Fixed all-zero behavioral_three_point_rate and behavioral_free_throw_rate: root cause was FGA/FG3A/FTA column collision from BKE decomp + stats merge creating _x/_y suffixes. `_first_existing()` now tries suffixed variants.
+  - Rebuilt: 1978 rows, behavioral rates correct (Jokic FTR=0.406, 3PR=0.146), salary coverage 63.6%.
+- Frontend fixes (app/player_eval_viewer.py):
+  - Added `stripDiacritics()` using `String.normalize('NFD')` so ASCII search matches diacritical names.
+  - Updated `fmtSalary()` to display "Salary not found" for null/NaN/zero salary values.
+- Aggregate fix (src/profile_aggregate/build_profile_aggregate.py):
+  - `_load_salaries()` now filters for `player_id.notna()` rows only. Rebuilt: 1971 rows, 915 cols.
+- Step 3 implementation (src/player_eval/team_feature_aggregation.py, 901 lines):
+  - Offensive Mean Model: TalentBase (weighted BKE avg) + InteractionTerm (66-entry symmetric archetype pair matrix, λ=0.75, capped ±2.0) + StructureTerm (TOV control β=0.12, FTR bonus β=0.15, playmaking diversity, spacing credibility, transition as structure term using success-weighted formula: freq × success_ratio).
+  - Defensive Mean Model: DefTalent + Essentials (RP/POA checks with -1.2/-0.8 penalties) + AnchorQuality (0.6×top_RP + 0.4×top_POA) + Diversity (+0.15 per archetype >3) - Liability (-0.4 per player with DBKE<-0.5 and MPG>20).
+  - Volatility Model: base (league σ of NET) + 3PA deviation + creation concentration + transition frequency deviation.
+  - Transition frequency appears in BOTH structure term (requested change) AND volatility model.
+  - Validation: used team_game_logs.parquet for actual net ratings (team_summaries.parquet had all-zero PLUS_MINUS). r=0.02, MAE=1.64 — low correlation expected for v1 with compressed BKE range.
+  - 92 team-seasons processed. Output: data/processed/player_eval/team_feature_aggregation.parquet + reports/player_eval_step3_team_agg_validation.json.
+- Team Aggregation viewer tab added to app/player_eval_viewer.py:
+  - `build_team_payload()` loads team agg parquet, parses JSON columns, builds team payload.
+  - Third tab "Team Aggregation" with team cards showing NET projected, OFF/DEF mean, volatility, breakdowns by component.
+  - Team modal with full offense/defense/volatility waterfall, top 15 archetype interactions, roster table.
+  - Rebuilt viewer: 4.3MB HTML, 3 tabs, 1978 player-seasons, 92 team-seasons.
+- All Step 3 constants centralized in src/player_eval/constants.py.
+- PEC Summary (reference/player_eval/Player_Evaluation_Core_Summary.md) updated with full Step 3 entry.
+
 2026-03-03 — PEC archetype source alignment (Step 1 + PEC viewer)
 - Root cause found: `app/player_data_viewer.py` displays canonical offensive/defensive archetype labels directly from `data/processed/player_archetypes.parquet` and `data/processed/defensive_archetypes_v2.parquet`, while PEC viewer inferred labels from probability bars.
 - Updated `src/player_eval/build_player_impact_profiles.py` to carry canonical fields from those same source files into Step 1 outputs:

@@ -59,6 +59,7 @@ run_patched() {
     local script_rel="$2"
     shift 2
     local extra_args=("$@")
+    local step_start step_end step_elapsed
 
     local script_name
     script_name="$(basename "$script_rel")"
@@ -87,11 +88,18 @@ run_patched() {
 
     # Run the patched script
     echo "    Running patched script..."
-    if PYTHONPATH="${WORKSPACE}:${script_src_dir}" $PYTHON "$patched" "${extra_args[@]}" 2>&1 | tee "$LOG_DIR/${step_id}.log"; then
-        echo "<<< [$step_id] ✅ Done"
+    step_start="$(date +%s)"
+    if PYTHONUNBUFFERED=1 PYTHONPATH="${WORKSPACE}:${script_src_dir}" "$PYTHON" -u "$patched" "${extra_args[@]}" 2>&1 | tee "$LOG_DIR/${step_id}.log"; then
+        step_end="$(date +%s)"
+        step_elapsed="$((step_end - step_start))"
+        echo "<<< [$step_id] ✅ Done (${step_elapsed}s)"
     else
-        echo "<<< [$step_id] ❌ FAILED (exit $?)"
+        local exit_code=$?
+        step_end="$(date +%s)"
+        step_elapsed="$((step_end - step_start))"
+        echo "<<< [$step_id] ❌ FAILED (exit ${exit_code}, ${step_elapsed}s)"
         echo "    See log: $LOG_DIR/${step_id}.log"
+        return "$exit_code"
     fi
 }
 
@@ -111,6 +119,11 @@ if [[ $START_LAYER -le 0 ]]; then
 
         # Copy raw PBP parquets
         cp "$ORIGINAL/historical/play_by_play_"*.parquet "$FRESH/historical/" 2>/dev/null || echo "  ⚠️ No play_by_play files"
+
+        # Copy authoritative team logs/summaries if present
+        cp "$ORIGINAL/historical/team_game_logs.parquet" "$FRESH/historical/" 2>/dev/null || true
+        cp "$ORIGINAL/historical/team_summaries.parquet" "$FRESH/historical/" 2>/dev/null || true
+        cp "$ORIGINAL/historical/team_summaries.csv" "$FRESH/historical/" 2>/dev/null || true
 
         # Copy player game logs
         cp "$ORIGINAL/historical/player_game_logs_"*.parquet "$FRESH/historical/" 2>/dev/null || true

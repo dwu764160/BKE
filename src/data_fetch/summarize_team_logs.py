@@ -119,6 +119,12 @@ def summarize(path: str | None = None) -> pd.DataFrame:
 
     df = _upper_cols(df)
 
+    # Recover PLUS_MINUS when missing by using PTS - OPP_PTS.
+    if 'PLUS_MINUS' not in df.columns and 'PTS' in df.columns and 'OPP_PTS' in df.columns:
+        pts = pd.to_numeric(df['PTS'], errors='coerce')
+        opp = pd.to_numeric(df['OPP_PTS'], errors='coerce')
+        df['PLUS_MINUS'] = pts - opp
+
     # Build and write a padded per-team-per-game table (30 teams x 82 games x seasons)
     def build_padded_team_games(df: pd.DataFrame) -> pd.DataFrame:
         # Normalize TEAM_ID to string to avoid float-vs-string comparison issues
@@ -394,6 +400,10 @@ def pad_and_finalize(summary: pd.DataFrame) -> pd.DataFrame:
 
 def summarize_from_df(df: pd.DataFrame) -> pd.DataFrame:
     df = _upper_cols(df)
+    if 'PLUS_MINUS' not in df.columns and 'PTS' in df.columns and 'OPP_PTS' in df.columns:
+        pts = pd.to_numeric(df['PTS'], errors='coerce')
+        opp = pd.to_numeric(df['OPP_PTS'], errors='coerce')
+        df['PLUS_MINUS'] = pts - opp
     if 'GAME_ID' in df.columns:
         df['GAME_ID'] = df['GAME_ID'].astype(str)
     stats = [c for c in CORE_STATS if c in df.columns]

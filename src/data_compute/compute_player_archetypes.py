@@ -27,14 +27,12 @@ Archetype Definitions (v4.3):
 =============================
  1. Ball Dominant Creator  — High on-ball creation + high playmaking
       Subtypes: Heliocentric Guard | Post Hub | Gravity Engine
- 2. Offensive Hub          — Elite playmaker + elite scorer
  3. All-Around Scorer      — Playmaker + high scorer (placed before Ballhandler)
       Subtypes: High Volume | Midrange Scorer
  4. Ballhandler/Facilitator — High playmaking, lower scoring
  5. Interior Scorer        — Ball dominant, non-playmaker, interior-heavy (skill finishing required)
       Subtypes: Rim Finisher | Midrange Scorer | Inside-the-Arc | High Volume
  6. Perimeter Scorer       — Ball dominant, non-playmaker, perimeter FG2A <= P30
- 7. Balanced Scorer        — Ball dominant, moderate scoring, mixed shot profile
  8. Connector              — Moderate playmaking, active filter
  9. PnR Rolling Big        — Off-ball, roll man (strict P70 OR prominent P50 + interior profile)
 10. PnR Popping Big        — Off-ball, roll man + high 3PA

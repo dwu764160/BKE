@@ -22,6 +22,7 @@ import pyarrow.parquet as pq
 import pyarrow as pa
 import time
 import re
+import unicodedata
 from bs4 import BeautifulSoup
 import os
 
@@ -91,7 +92,9 @@ def get_espn_player_salaries():
 def normalize_name(name):
     # Remove trailing position (", G", ", F", ", C", etc.) if present
     name = re.sub(r",\s*[a-z]$", "", name.strip(), flags=re.IGNORECASE)
-    # Remove accents, lower, remove punctuation, join first/last
+    # Decompose diacritics (e.g., č→c, ć→c, ö→o) before lowering
+    name = unicodedata.normalize("NFKD", name)
+    name = "".join(ch for ch in name if not unicodedata.combining(ch))
     name = name.lower()
     name = re.sub(r"[^a-z0-9 ]", "", name)
     name = re.sub(r"\s+", " ", name).strip()
@@ -157,12 +160,16 @@ def main():
     # Write one parquet file per season
     os.makedirs(os.path.dirname(OUTPUT_PARQUET), exist_ok=True)
     for season, group in merged.groupby("season"):
-        out = group[["PERSON_ID", "DISPLAY_FIRST_LAST", "team", "team_id", "season", "salary"]].rename(columns={
-            "PERSON_ID": "player_id",
-            "DISPLAY_FIRST_LAST": "player_name"
+        out = group.copy()
+        # Use ID-map name when matched, fall back to original ESPN name
+        out["player_name_final"] = out["DISPLAY_FIRST_LAST"].fillna(out["player_name"])
+        out["player_id_final"] = out["PERSON_ID"]
+        out = out[["player_id_final", "player_name_final", "team", "team_id", "season", "salary"]].rename(columns={
+            "player_id_final": "player_id",
+            "player_name_final": "player_name",
         })
         season_file = f"data/historical/player_salaries_{season}.parquet"
-        table = pa.Table.from_pandas(out)
+        table = pa.Table.from_pandas(out, preserve_index=False)
         pq.write_table(table, season_file)
         print(f"Wrote {season_file} with {len(out)} rows.")
 

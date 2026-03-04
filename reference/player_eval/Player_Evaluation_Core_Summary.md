@@ -275,3 +275,258 @@ The aggregate is the canonical "everything we know about a player-season" file. 
 - `aggregate/player_profile_aggregate.parquet` — 1971 rows x 908 columns
 - `reports/profile_aggregate_validation.json` — aggregate data quality report
 - `app/player_eval.html` — interactive frontend viewer (~2.5MB)
+
+---
+
+## Entry: 2026-03-05 — PEC v1 Step 3: Team Feature Aggregation + Data Fixes
+
+### Data Quality Fixes Applied
+
+**Salary data pipeline fix:**
+- Root cause: `normalize_name()` in `fetch_player_salaries.py` used `re.sub(r"[^a-z0-9 ]", "", name)` which **deleted** diacritical characters instead of decomposing them. "Dončić" → "Doni" (removes č,ć) instead of "Doncic".
+- Fix: Added `unicodedata.normalize("NFKD", name)` + combining char removal before ASCII filtering. Now "Dončić" → "Doncic" correctly.
+- Result: Luka Dončić, Nikola Jokić, and ~100+ other players now correctly matched to salary data (from 0% to 63.6% coverage).
+- Removed salary from `numeric_fill_cols` — salary NaN values were being median-filled with ~$5M, creating false placeholders. Now salary stays NaN when not matched, displayed as "Salary not found" in frontend.
+
+**Behavioral rate column fix:**
+- Root cause: BKE decomposition parquet AND complete_player_season_stats parquet both have `FGA`, `FG3A`, `FTA` columns. After merge, pandas renames them to `FGA_x`/`FGA_y`, etc. The `_first_existing()` lookup couldn't find the original column names.
+- Fix: Updated `_first_existing()` calls to also search for `_x`/`_y` suffixed columns.
+- Result: `behavioral_three_point_rate` and `behavioral_free_throw_rate` now have correct values (were all 0.0 before).
+
+**Frontend search fix:**
+- Added `stripDiacritics()` JS function using `String.normalize('NFD')` to strip combining characters from search queries and player names, enabling ASCII search for players with diacritical names.
+
+### Step 3: Team Feature Aggregation — What was built
+
+`src/player_eval/team_feature_aggregation.py` computes team-level structural metrics from Step 1 player impact profiles. It implements a three-component team rating model: Offensive Mean Model, Defensive Mean Model, and Volatility Model.
+
+#### Architecture
+
+Each component is **toggleable** via flags (`use_interaction`, `use_structure`, `use_defense`, `use_volatility`) for ablation testing.
+
+**Offensive Mean Model:**
+```
+OFF_Mean = TalentBase + InteractionTerm + StructureTerm
+```
+
+1. **TalentBase** = Σ(minute_share_i × impact_obke_i) — minute-weighted offensive BKE
+2. **InteractionTerm** = λ × Σ(w_i × w_j × InteractionMatrix[arch_i, arch_j])
+   - λ = 0.75 (interaction lambda), capped at ±2.0
+   - 66-entry symmetric interaction matrix for all 11 offensive archetype pairs
+   - Conditional flags: `"both_low"` (penalty only if BOTH players below p25 BKE), `"j_low"` (penalty only if second player below p25)
+   - Positive pairs: BDC+PnR Roll (+0.10), BDC+Off-Ball Move Shooter (+0.10)
+   - Negative pairs: Interior Scorer+Interior Scorer (-0.10), PnR Roll+Off-Ball Finisher (-0.10)
+3. **StructureTerm** (capped at ±2.5):
+   - TOV control: −β_TOV × (team_tov − league_avg_tov), β=0.12
+   - FTR bonus: +β_FTR × (team_ftr − league_avg_ftr), β=0.15
+   - Playmaking diversity: 1 playmaker → −0.7, 3+ → +0.3 (>15 MPG AND >15% AST)
+   - Spacing credibility: <2 shooters → −1.0, 4+ → +0.5 (>25% 3PA rate AND >33% eFG AND >15 MPG)
+   - **Transition as structure term** (NEW): freq × success_ratio weighted formula. Rewards teams with BOTH high transition frequency AND good transition execution (eFG-based success proxy)
+
+**Defensive Mean Model:**
+```
+DEF_Mean = DefTalent + Essentials + AnchorQuality + Diversity − Liability
+```
+
+1. **DefTalent** = Σ(minute_share_i × impact_dbke_i) — minute-weighted defensive BKE
+2. **Essentials**: Missing rim protector → −1.2, missing POA defender → −0.8, both missing → additional −0.5
+3. **Anchor Quality**: 0.6 × top_RP_DBKE + 0.4 × top_POA_DBKE (scales with anchor effectiveness)
+4. **Diversity**: +0.15 per unique defensive archetype above 3 (max +0.6)
+5. **Liability**: −0.4 per defensive liability (DBKE < −0.5 AND >15 MPG), −0.4 stacking penalty if 2+ liabilities
+
+**Volatility Model** (separate from mean):
+```
+σ_team = σ_base + σ_3PA + σ_creation + σ_transition
+```
+- σ_base = league std of team net ratings
+- σ_3PA = α_3PA × (team_3PA_rate − league_avg) — 3PT-heavy teams are more volatile
+- σ_creation = α_creation × (max_usage − threshold) — concentrated creation increases variance
+- **σ_transition** = α_transition × (transition_freq − league_avg) — transition frequency as volatility driver (appears in BOTH structure and volatility, as requested)
+- Clamped to [8.0, 16.0] floor/ceiling
+
+#### Interaction Matrix Design
+
+The 66-entry interaction matrix is based on basketball role theory:
+- **Synergistic pairs** (positive): Ball-handler + roll man, creator + off-ball shooter, connector + finisher
+- **Redundant pairs** (negative): Two ball-dominant creators, two interior scorers, two PnR roll men
+- **Conditional penalties**: Same-archetype duplication only penalized if BOTH players are below the 25th percentile of that archetype's BKE distribution (prevents penalty when one is an elite player)
+
+#### Step 3 Validation Results:
+- 92 team-seasons processed (30 teams × 3 seasons, +2 edge cases)
+- Projected net rating range: −1.95 to +2.60 (narrow; calibration needed)
+- vs actual net rating: correlation=0.02, MAE=1.64, Spearman=0.05
+- Low correlation is expected for v1: the model operates on minute-share-weighted BKE which has a compressed range compared to real NBA net ratings (±12). Scaling calibration is the next step.
+- Structural components function correctly: interaction term identifies synergistic/redundant pairings, structure term captures spacing/playmaking/transition dynamics, defense model identifies anchor presence and liability exposure.
+
+#### Step 3 Remediation Pass (post-eval hardening)
+
+After targeted diagnostics, Step 3 was hardened with explicit ablations and calibration rather than relying on a single latent index.
+
+Implemented fixes:
+- **Defense sign verification** added (`corr(off+def, actual)` vs `corr(off-def, actual)`) to prevent silent sign inversion when DBKE semantics change.
+- **5-man talent scaling** applied only to talent terms (`5 * off_talent_base`, `5 * def_talent_base`) instead of scaling all structural terms.
+- **Interaction magnitude boost** applied via pair-weight scaling (`(minute_share_i * minute_share_j) / 0.2`) so interactions are not numerically negligible.
+- **Calibration layer** added: linear calibration `actual = a + b * projected` fit on train seasons (`2022-23`, `2023-24`) and evaluated on holdout (`2024-25`).
+- **Ablation stack** added and persisted to validation report:
+   1) talent-only scaled, 2) talent+calibration, 3) talent+defense, 4) +structure, 5) full raw, 6) full calibrated.
+- **Volatility floor/ceiling fix**: replaced hard `[8,16]` clipping with dynamic bounds tied to observed league std so volatility is no longer collapsed to 8.0 for all teams.
+- **Spacing structural rule tightened**: shooter qualification now includes meaningful efficiency and rotation-share guards, reducing artificial spacing inflation.
+
+Key observed outcomes from remediation run:
+- `vol_total` is now distributed (no longer constant 8.0).
+- Defensive sign inferred as additive (`+1`) on current data (`corr(def_talent, actual) > 0`).
+- Correlation remains weak overall in v1 and unstable on holdout, indicating remaining cross-season mapping instability between player-level latent impacts and team-level margin outcomes.
+- Step 3 report now explicitly exposes variance/correlation by component and by ablation stage, so failure modes are measurable and reproducible.
+
+### Frontend Additions
+
+**Team Aggregation tab** added to `app/player_eval_viewer.py`:
+- Third tab "Team Aggregation" with team modal cards
+- **Team cards**: one per team-season showing NET projected, OFF Mean, DEF Mean, Volatility, talent/interaction/structure breakdown, top archetypes
+- **Team modal** (click to expand): full breakdown including:
+  - Offensive model waterfall (Talent → Interaction → Structure → Total)
+  - Defensive model waterfall (Talent → Adjustments → Total)
+  - Volatility components (base, 3PA, creation, transition)
+  - Top 15 archetype interaction pairs with contribution values
+  - Full roster table with MPG, minute share, OBKE/DBKE, off/def archetypes, usage, AST, 3P rate, transition freq
+
+### Constants Centralized
+
+All Step 3 thresholds added to `src/player_eval/constants.py`:
+- Interaction: `INTERACTION_LAMBDA=0.75`, `INTERACTION_CAP=2.0`
+- Structure: `BETA_TOV=0.12`, `BETA_FTR=0.15`, `BETA_TRANSITION=0.10`, `STRUCTURE_CAP=2.5`
+- Defense: `DEFENSE_CAP=3.0`, RP/POA/diversity/liability thresholds
+- Volatility: `VOL_FLOOR=8.0`, `VOL_CEILING=16.0`, alpha coefficients
+- Transition: `TRANSITION_PPP_LEAGUE_AVG=1.10`
+
+### Output Artifacts (Step 3)
+- `data/processed/player_eval/team_feature_aggregation.parquet` — 92 team-seasons with ~35 columns + JSON detail columns
+- `reports/player_eval_step3_team_features_validation.json` — validation metrics vs actual
+- `app/player_eval.html` — updated with Team Aggregation tab (~4.3MB)
+
+### Step 3 notes for v1.1: 
+ Issue 1: TEAM_SCALE = 20 Is a Blunt Instrument
+
+Yes, it works.
+
+But what it reveals:
+
+Your player BKE distribution is extremely compressed.
+
+You’re scaling a small signal into realism rather than extracting more variance at the source.
+
+That’s acceptable — but long term:
+
+You want:
+
+Player metric variance to reflect impact,
+
+Not rely on aggressive team scaling.
+
+It’s not wrong — but it’s a signal that Step 1 (player layer) may need future expansion.
+
+❗ Issue 2: You Might Be Underweighting Structure Now
+
+7.5% modifier ratio is very conservative.
+
+That ensures stability.
+But it may be too safe.
+
+In reality:
+
+A team with no spacing and two heliocentric creators
+
+A team with no rim protection
+
+These can swing several points per 100.
+
+Your current structure dispersion:
+
+off_structure std ≈ 0.19
+def_adjustments std ≈ 0.24
+
+That’s tiny relative to 5-point spread.
+
+You may have overcorrected from overweight to underweight.
+
+Right now structure is almost cosmetic.
+
+❗ Issue 3: Correlations Reveal Something Important
+
+Per-season r:
+
+2022-23: 0.19
+2023-24: 0.49
+
+That tells you something crucial:
+
+The model works when the target behaves normally.
+
+But even 0.49 at peak suggests:
+
+You are capturing talent strength,
+but not game-state dynamics.
+
+What’s missing?
+
+Coaching/system effects
+
+Injury clustering
+
+Depth stability
+
+Lineup continuity
+
+Not saying add them now.
+But that’s the gap.
+
+❗ Issue 4: Defensive Archetype Model Is Binary
+
+You fixed rim detection (good),
+but philosophically defense is still checklist-based.
+
+Checklist defense is:
+
+Stable
+Interpretable
+Clean
+
+But it lacks interaction modeling.
+
+You penalize:
+
+Missing rim
+
+Missing POA
+
+Stacking liabilities
+
+But you don’t yet model:
+
+Rim protector + bad screen navigation interaction
+
+Mobile big + no nail help
+
+Versatile defender synergy effects
+
+You simplified defense to avoid noise — smart —
+but long term it’s too static.
+
+❗ Issue 5: Volatility Still Assumes Linear Effects
+
+You increased sensitivity, good.
+
+But volatility likely behaves nonlinearly:
+
+Very high 3PA% → fat tails
+
+Very heliocentric offense → bimodal outcomes
+
+Thin rotations → injury cascade risk
+
+You’re still modeling volatility as additive.
+
+It’s fine for now.
+But future versions should explore nonlinear risk amplification.
+
+
