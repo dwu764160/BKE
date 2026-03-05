@@ -187,9 +187,92 @@ svg text { fill:var(--text); font-family:inherit; }
 }
 .sg-btn:hover { filter:brightness(1.05); }
 .sg-status { font-size:12px; color:var(--text-muted); }
-.sg-result { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; }
-.sg-result .row { display:flex; justify-content:space-between; gap:10px; margin-bottom:4px; }
-.sg-result .row:last-child { margin-bottom:0; }
+.sg-result {
+  background:linear-gradient(180deg, rgba(13,17,23,1) 0%, rgba(15,23,34,1) 100%);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px;
+  font-size:13px;
+}
+.sg-header {
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  margin-bottom:10px; flex-wrap:wrap;
+}
+.sg-matchup {
+  font-size:15px; font-weight:700;
+}
+.sg-badge-home { color:var(--accent); }
+.sg-badge-away { color:var(--orange); }
+.sg-time { color:var(--text-muted); font-size:11px; }
+.sg-kpi-grid {
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+  gap:8px; margin-bottom:10px;
+}
+.sg-kpi {
+  border:1px solid var(--border);
+  background:rgba(88,166,255,0.05);
+  border-radius:8px;
+  padding:8px;
+}
+.sg-kpi .k { color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:0.4px; }
+.sg-kpi .v { font-size:16px; font-weight:700; margin-top:3px; }
+.sg-detail-grid {
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+  gap:10px;
+}
+.sg-card {
+  border:1px solid var(--border);
+  border-radius:8px;
+  padding:10px;
+  background:var(--bg);
+}
+.sg-card h4 {
+  font-size:11px;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:0.4px;
+  margin-bottom:8px;
+}
+.sg-list { display:grid; gap:4px; }
+.sg-list .row {
+  display:flex; justify-content:space-between; gap:10px;
+  font-size:12px;
+}
+.sg-list .row .k { color:var(--text-muted); }
+.sg-list .row .v { font-variant-numeric:tabular-nums; }
+.sg-edge { margin-bottom:7px; }
+.sg-edge:last-child { margin-bottom:0; }
+.sg-edge-top {
+  display:flex; justify-content:space-between; gap:8px;
+  font-size:11px; margin-bottom:3px;
+}
+.sg-edge-top .label { color:var(--text-muted); }
+.sg-edge-track {
+  position:relative; height:8px; border-radius:99px;
+  background:#1f2730; overflow:hidden;
+}
+.sg-edge-home {
+  position:absolute; left:0; top:0; bottom:0;
+  background:linear-gradient(90deg, rgba(88,166,255,0.75), rgba(88,166,255,0.45));
+}
+.sg-edge-away {
+  position:absolute; right:0; top:0; bottom:0;
+  background:linear-gradient(270deg, rgba(210,153,34,0.8), rgba(210,153,34,0.45));
+}
+.sg-contrib-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:8px;
+}
+.sg-contrib-col { border:1px solid var(--border); border-radius:6px; padding:8px; }
+.sg-contrib-col .title { font-size:11px; font-weight:700; margin-bottom:6px; }
+.sg-contrib-col .title.home { color:var(--accent); }
+.sg-contrib-col .title.away { color:var(--orange); }
+.sg-contrib-item {
+  display:flex; justify-content:space-between; gap:8px;
+  font-size:12px; margin-bottom:4px;
+}
+.sg-contrib-item:last-child { margin-bottom:0; }
+.sg-contrib-item .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sg-contrib-item .val { font-variant-numeric:tabular-nums; }
 
 /* Table */
 .table-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
@@ -385,6 +468,7 @@ let sortCol = "projected_rank";
 let sortDir = "asc";
 let currentSimulatedGame = null;
 let activeView = "step1View";
+const STEP2_SEASON_PLAYER_MAP = {};
 
 function getStep1Seasons() {
   return Object.keys(DATA.seasons || {}).sort();
@@ -688,6 +772,153 @@ function getTeamEntry(season, teamAbbr) {
   return null;
 }
 
+function numOrZero(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function summarizeTeamStyle(step2Team) {
+  const players = (step2Team && step2Team.starter_players) || [];
+  const out = {
+    creation: 0,
+    spacing: 0,
+    rimPressure: 0,
+    poa: 0,
+    rimDefense: 0,
+    switchability: 0,
+  };
+
+  players.forEach(p => {
+    const off = (p.off_archetype || "").toLowerCase();
+    const def = (p.def_archetype || "").toLowerCase();
+
+    if (/(ball dominant|ballhandler|all-around|hub|playmaking|creator)/.test(off)) out.creation += 1;
+    if (/(shooter|perimeter|popping|gravity)/.test(off)) out.spacing += 1;
+    if (/(interior|finisher|rolling|rim)/.test(off)) out.rimPressure += 1;
+
+    if (/(poa|wing stopper|off-ball chaser)/.test(def)) out.poa += 1;
+    if (/(rim protector|dropping big|mobile big)/.test(def)) out.rimDefense += 1;
+    if (/(versatile|mobile big|switch)/.test(def)) out.switchability += 1;
+  });
+  return out;
+}
+
+function computeTopContributors(step2Team, limit = 3) {
+  if (!step2Team) return [];
+  const store = new Map();
+
+  const addPlayers = (players, wImpact, wScore) => {
+    (players || []).forEach(p => {
+      const name = cleanNameLabel(p.player_name) || `ID ${cleanText(p.player_id) || "?"}`;
+      const impact = numOrZero(p.impact);
+      const score = numOrZero(p.score);
+      const contrib = (wImpact * impact) + (wScore * score);
+
+      const cur = store.get(name) || { name, value: 0, off: cleanText(p.off_archetype), def: cleanText(p.def_archetype) };
+      cur.value += contrib;
+      if (!cur.off && cleanText(p.off_archetype)) cur.off = cleanText(p.off_archetype);
+      if (!cur.def && cleanText(p.def_archetype)) cur.def = cleanText(p.def_archetype);
+      store.set(name, cur);
+    });
+  };
+
+  addPlayers(step2Team.starter_players, 0.70, 0.30);
+  addPlayers(step2Team.clutch_players, 0.60, 0.40);
+
+  return Array.from(store.values())
+    .sort((a, b) => b.value - a.value)
+    .slice(0, limit);
+}
+
+function buildMatchupContext(homeSeason, homeTeam, awaySeason, awayTeam, home, away, hca) {
+  const homeStep2 = findStep2Team(homeSeason, homeTeam);
+  const awayStep2 = findStep2Team(awaySeason, awayTeam);
+
+  const starterEdge = homeStep2 && awayStep2 ? (numOrZero(homeStep2.mu_start) - numOrZero(awayStep2.mu_start)) : null;
+  const rotationEdge = homeStep2 && awayStep2 ? (numOrZero(homeStep2.mu_rotation) - numOrZero(awayStep2.mu_rotation)) : null;
+  const clutchEdge = homeStep2 && awayStep2 ? (numOrZero(homeStep2.mu_clutch) - numOrZero(awayStep2.mu_clutch)) : null;
+
+  let phaseBlendEdge = null;
+  if (starterEdge != null && rotationEdge != null && clutchEdge != null) {
+    phaseBlendEdge = 0.45 * starterEdge + 0.35 * rotationEdge + 0.20 * clutchEdge;
+  }
+
+  const homeStyle = summarizeTeamStyle(homeStep2);
+  const awayStyle = summarizeTeamStyle(awayStep2);
+  const headToHead = [
+    { label: "On-Ball Creation", home: homeStyle.creation, away: awayStyle.creation },
+    { label: "Spacing Gravity", home: homeStyle.spacing, away: awayStyle.spacing },
+    { label: "Rim Pressure", home: homeStyle.rimPressure, away: awayStyle.rimPressure },
+    { label: "POA Defense", home: homeStyle.poa, away: awayStyle.poa },
+    { label: "Rim Protection", home: homeStyle.rimDefense, away: awayStyle.rimDefense },
+    { label: "Switchability", home: homeStyle.switchability, away: awayStyle.switchability },
+  ];
+
+  return {
+    homeStep2,
+    awayStep2,
+    phaseEdges: {
+      starter: starterEdge,
+      rotation: rotationEdge,
+      clutch: clutchEdge,
+      blend: phaseBlendEdge,
+    },
+    drivers: {
+      talentEdge: numOrZero(home.mu) - numOrZero(away.mu),
+      homeCourtEdge: numOrZero(hca),
+      volatilityGap: numOrZero(home.sigma) - numOrZero(away.sigma),
+    },
+    headToHead,
+    contributors: {
+      home: computeTopContributors(homeStep2, 3),
+      away: computeTopContributors(awayStep2, 3),
+    },
+  };
+}
+
+function renderHeadToHeadBars(homeTeam, awayTeam, rows) {
+  if (!rows || !rows.length) {
+    return `<div style="font-size:12px;color:var(--text-muted)">No Step 2 lineup data available for this matchup.</div>`;
+  }
+
+  return rows.map(r => {
+    const h = numOrZero(r.home);
+    const a = numOrZero(r.away);
+    const total = Math.max(1, h + a);
+    const homePct = Math.max(5, (h / total) * 100);
+    const awayPct = Math.max(5, (a / total) * 100);
+    return `
+      <div class="sg-edge">
+        <div class="sg-edge-top">
+          <span class="label">${r.label}</span>
+          <span>${homeTeam} ${h} - ${a} ${awayTeam}</span>
+        </div>
+        <div class="sg-edge-track">
+          <div class="sg-edge-home" style="width:${homePct}%"></div>
+          <div class="sg-edge-away" style="width:${awayPct}%"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderContributors(teamName, sideClass, items) {
+  if (!items || !items.length) {
+    return `<div class="sg-contrib-col"><div class="title ${sideClass}">${teamName}</div><div style="font-size:12px;color:var(--text-muted)">No Step 2 contributors available.</div></div>`;
+  }
+  return `
+    <div class="sg-contrib-col">
+      <div class="title ${sideClass}">${teamName}</div>
+      ${items.map(p => `
+        <div class="sg-contrib-item">
+          <span class="name" title="OFF: ${cleanText(p.off) || "-"} | DEF: ${cleanText(p.def) || "-"}">${p.name}</span>
+          <span class="val">${numOrZero(p.value).toFixed(3)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function erf(x) {
   const sign = x >= 0 ? 1 : -1;
   const ax = Math.abs(x);
@@ -741,6 +972,7 @@ function runSingleGameSimulation() {
   const z = sigmaGame > 0 ? deltaMu / sigmaGame : 0;
   const homeWinProb = normalCdf(z);
   const sampledMargin = deltaMu + sigmaGame * randn();
+  const context = buildMatchupContext(homeSeason, homeTeam, awaySeason, awayTeam, home, away, hca);
 
   currentSimulatedGame = {
     homeSeason,
@@ -753,6 +985,7 @@ function runSingleGameSimulation() {
     sampledMargin,
     winner: sampledMargin >= 0 ? `${homeTeam} (${homeSeason})` : `${awayTeam} (${awaySeason})`,
     timestamp: new Date().toLocaleString(),
+    context,
   };
 
   renderSingleGameResult();
@@ -765,14 +998,58 @@ function renderSingleGameResult() {
     return;
   }
   const g = currentSimulatedGame;
+  const ctx = g.context || {};
+  const drivers = ctx.drivers || {};
+  const phase = (ctx.phaseEdges || {});
+
+  const h2hHtml = renderHeadToHeadBars(g.homeTeam, g.awayTeam, ctx.headToHead || []);
+  const contribHome = renderContributors(`${g.homeTeam} Impact Drivers`, "home", (ctx.contributors || {}).home || []);
+  const contribAway = renderContributors(`${g.awayTeam} Impact Drivers`, "away", (ctx.contributors || {}).away || []);
+
+  const sampledWinnerClass = g.sampledMargin >= 0 ? "sg-badge-home" : "sg-badge-away";
+
   el.innerHTML = `
-    <div class="row"><span>Matchup</span><strong>${g.homeTeam} (${g.homeSeason}) vs ${g.awayTeam} (${g.awaySeason})</strong></div>
-    <div class="row"><span>Expected Margin (home)</span><strong>${g.deltaMu.toFixed(2)}</strong></div>
-    <div class="row"><span>Game Sigma</span><strong>${g.sigmaGame.toFixed(2)}</strong></div>
-    <div class="row"><span>Home Win Probability</span><strong>${(g.homeWinProb * 100).toFixed(1)}%</strong></div>
-    <div class="row"><span>Single Draw Margin (home)</span><strong>${g.sampledMargin.toFixed(2)}</strong></div>
-    <div class="row"><span>Winner (this run)</span><strong>${g.winner}</strong></div>
-    <div class="row"><span>Simulated At</span><span>${g.timestamp}</span></div>
+    <div class="sg-header">
+      <div class="sg-matchup">
+        <span class="sg-badge-home">${g.homeTeam} (${g.homeSeason})</span> vs
+        <span class="sg-badge-away">${g.awayTeam} (${g.awaySeason})</span>
+      </div>
+      <div class="sg-time">Simulated at ${g.timestamp}</div>
+    </div>
+
+    <div class="sg-kpi-grid">
+      <div class="sg-kpi"><div class="k">Home Win Probability</div><div class="v">${(g.homeWinProb * 100).toFixed(1)}%</div></div>
+      <div class="sg-kpi"><div class="k">Expected Margin (Home)</div><div class="v">${g.deltaMu.toFixed(2)}</div></div>
+      <div class="sg-kpi"><div class="k">Game Volatility (Sigma)</div><div class="v">${g.sigmaGame.toFixed(2)}</div></div>
+      <div class="sg-kpi"><div class="k">Single-Game Draw Winner</div><div class="v ${sampledWinnerClass}">${g.winner}</div></div>
+    </div>
+
+    <div class="sg-detail-grid">
+      <div class="sg-card">
+        <h4>Margin Drivers</h4>
+        <div class="sg-list">
+          <div class="row"><span class="k">Team Strength Edge (mu)</span><span class="v">${numOrZero(drivers.talentEdge).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Home Court Edge</span><span class="v">+${numOrZero(drivers.homeCourtEdge).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Phase Blend Edge (Step 2)</span><span class="v">${phase.blend == null ? "-" : numOrZero(phase.blend).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Starter / Rotation / Clutch</span><span class="v">${phase.starter == null ? "-" : numOrZero(phase.starter).toFixed(2)} / ${phase.rotation == null ? "-" : numOrZero(phase.rotation).toFixed(2)} / ${phase.clutch == null ? "-" : numOrZero(phase.clutch).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Volatility Gap (Home-Away Sigma)</span><span class="v">${numOrZero(drivers.volatilityGap).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Single Draw Margin (Home)</span><span class="v">${g.sampledMargin.toFixed(2)}</span></div>
+        </div>
+      </div>
+
+      <div class="sg-card">
+        <h4>Head-to-Head Profile</h4>
+        ${h2hHtml}
+      </div>
+
+      <div class="sg-card">
+        <h4>Top Player Contributors</h4>
+        <div class="sg-contrib-grid">
+          ${contribHome}
+          ${contribAway}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -824,7 +1101,7 @@ function renderStep2Stats(seasonData) {
       label: "Starter Overlap",
       value: s.starter_overlap_count_mean != null ? Number(s.starter_overlap_count_mean).toFixed(2) : "-",
       cls: (s.starter_target_met ? "val-green" : "val-orange"),
-      detail: "Predicted vs observed top-possession lineup (players)"
+      detail: "Predicted vs observed first-quarter starters from PBP"
     },
     {
       label: "Clutch Overlap",
@@ -836,7 +1113,7 @@ function renderStep2Stats(seasonData) {
       label: "Rotation Corr",
       value: s.rotation_corr != null ? Number(s.rotation_corr).toFixed(3) : "-",
       cls: (s.rotation_target_met ? "val-green" : "val-purple"),
-      detail: "Predicted rotation strength vs bench-heavy lineup NET_RTG"
+      detail: "Predicted rotation vs lineups >=50 poss and <=2 starters"
     },
     {
       label: "Teams",
@@ -901,6 +1178,86 @@ function findStep2Team(season, teamAbbr) {
   return teams.find(t => t.team_abbreviation === teamAbbr) || null;
 }
 
+function isIdPlaceholder(name) {
+  const text = cleanText(name);
+  if (!text) return false;
+  return /^id\s+\d+$/i.test(text);
+}
+
+function getSeasonPlayerNameMap(season) {
+  if (STEP2_SEASON_PLAYER_MAP[season]) {
+    return STEP2_SEASON_PLAYER_MAP[season];
+  }
+
+  const seasonData = (((STEP2 || {}).seasons || {})[season] || {});
+  const teams = seasonData.teams || [];
+  const map = {};
+
+  const addPlayerRows = (rows) => {
+    (rows || []).forEach((p) => {
+      const id = cleanText(p && p.player_id);
+      const name = cleanNameLabel(p && p.player_name);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+  };
+
+  teams.forEach((team) => {
+    addPlayerRows(team.pool_players);
+    addPlayerRows(team.starter_players);
+    addPlayerRows(team.clutch_players);
+
+    const v = team.validation || {};
+    const starterIds = v.actual_starter_ids || [];
+    const starterNames = v.actual_starter_names || [];
+    starterIds.forEach((idRaw, idx) => {
+      const id = cleanText(idRaw);
+      const name = cleanNameLabel(starterNames[idx]);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+
+    const clutchIds = v.actual_clutch_ids || [];
+    const clutchNames = v.actual_clutch_names || [];
+    clutchIds.forEach((idRaw, idx) => {
+      const id = cleanText(idRaw);
+      const name = cleanNameLabel(clutchNames[idx]);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+  });
+
+  STEP2_SEASON_PLAYER_MAP[season] = map;
+  return map;
+}
+
+function resolveObservedNames(season, ids, names) {
+  const idList = (ids || []).map(v => cleanText(v));
+  const nameList = names || [];
+  const idToName = getSeasonPlayerNameMap(season);
+
+  const seen = new Set();
+  const out = [];
+  const n = Math.max(idList.length, nameList.length);
+  for (let i = 0; i < n; i += 1) {
+    const id = idList[i];
+    let name = cleanNameLabel(nameList[i]);
+
+    if (!name || isIdPlaceholder(name)) {
+      if (id && idToName[id]) {
+        name = idToName[id];
+      }
+    }
+
+    if (!name || isIdPlaceholder(name) || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 function renderPlayerList(players) {
   const cleanPlayers = (players || []).filter(p => !!cleanNameLabel(p.player_name));
   if (!cleanPlayers.length) {
@@ -924,8 +1281,16 @@ function openLineupModal(season, teamAbbr) {
   if (!team) return;
 
   const v = team.validation || {};
-  const actualStarterNames = uniqueNamedList(v.actual_starter_names || []);
-  const actualClutchNames = uniqueNamedList(v.actual_clutch_names || []);
+  const actualStarterNames = resolveObservedNames(
+    season,
+    v.actual_starter_ids || [],
+    v.actual_starter_names || []
+  );
+  const actualClutchNames = resolveObservedNames(
+    season,
+    v.actual_clutch_ids || [],
+    v.actual_clutch_names || []
+  );
 
   document.getElementById("lineupModalTitle").textContent = `${team.team_abbreviation} (${season})`;
 
@@ -1014,7 +1379,7 @@ function uniqueNamedList(values) {
   const out = [];
   (values || []).forEach(v => {
     const name = cleanNameLabel(v);
-    if (!name || seen.has(name)) return;
+    if (!name || isIdPlaceholder(name) || seen.has(name)) return;
     seen.add(name);
     out.push(name);
   });

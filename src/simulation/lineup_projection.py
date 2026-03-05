@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from itertools import combinations
@@ -52,6 +54,7 @@ from src.simulation.simulation_config import (
     CLUTCH_WEIGHT_I,
     CLUTCH_WEIGHT_M,
     CLUTCH_WEIGHT_TALENT,
+    HISTORICAL_DIR,
     LINEUP_SIZE,
     METRICS_LINEUPS_PATH,
     MIN_MPG_FOR_POOL,
@@ -162,6 +165,271 @@ def _to_id_list(value) -> List[str]:
     return []
 
 
+def _lineup_from_value(value) -> List[str]:
+    ids = []
+    seen = set()
+    for pid in _to_id_list(value):
+        clean = str(pid).strip().replace(".0", "")
+        if not clean or clean == "0" or clean in seen:
+            continue
+        seen.add(clean)
+        ids.append(clean)
+    return ids
+
+
+def _is_valid_five_lineup(value) -> bool:
+    return len(_lineup_from_value(value)) == LINEUP_SIZE
+
+
+def _extract_season_from_path(path: Path) -> Optional[str]:
+    match = re.search(r"pbp_with_lineups_(\d{4}-\d{2})\.parquet$", path.name)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _verify_q1_substitution_patterns(game_q1: pd.DataFrame, lineup_col: str) -> Tuple[bool, int, int]:
+    """
+    Validate first-quarter starter extraction using substitution clusters.
+
+    Sub events are often emitted as a short burst (multiple SUB OUT / SUB IN rows).
+    We verify cluster-level transitions from the last valid 5-man lineup before the
+    cluster to the first valid 5-man lineup after the cluster.
+    """
+    if lineup_col not in game_q1.columns:
+        return False, 0, 0
+
+    subs_idx = game_q1.index[game_q1["event_type"] == "SUBSTITUTION"].tolist()
+    if not subs_idx:
+        return True, 0, 0
+
+    clusters: List[Tuple[int, int]] = []
+    start = subs_idx[0]
+    prev = subs_idx[0]
+    for idx in subs_idx[1:]:
+        if idx == prev + 1:
+            prev = idx
+            continue
+        clusters.append((start, prev))
+        start = idx
+        prev = idx
+    clusters.append((start, prev))
+
+    lineups = game_q1[lineup_col].apply(_lineup_from_value)
+    valid_mask = lineups.apply(lambda ids: len(ids) == LINEUP_SIZE)
+
+    valid_clusters = 0
+    considered_clusters = 0
+    for start_idx, end_idx in clusters:
+        before_mask = valid_mask.loc[: start_idx - 1] if start_idx > 0 else pd.Series(dtype=bool)
+        after_mask = valid_mask.loc[end_idx + 1 :]
+        if before_mask.empty or after_mask.empty:
+            continue
+        if not before_mask.any() or not after_mask.any():
+            continue
+
+        before_idx = before_mask[before_mask].index[-1]
+        after_idx = after_mask[after_mask].index[0]
+
+        before = set(lineups.loc[before_idx])
+        after = set(lineups.loc[after_idx])
+        diff_out = before - after
+        diff_in = after - before
+
+        considered_clusters += 1
+        if 1 <= len(diff_out) <= LINEUP_SIZE and len(diff_out) == len(diff_in):
+            valid_clusters += 1
+
+    if considered_clusters == 0:
+        return False, len(clusters), 0
+
+    return (valid_clusters / float(considered_clusters)) >= 0.50, len(clusters), valid_clusters
+
+
+def load_pbp_q1_starter_games(team_id_to_abbr: Dict[str, str]) -> pd.DataFrame:
+    """
+    Build per-game starter targets from first-quarter PBP lineups.
+
+    Extraction rule:
+      - use players on court at the first valid Q1 event (5-man lineup)
+    Verification rule:
+      - validate against Q1 substitution cluster transitions
+    """
+    records: List[Dict] = []
+    pbp_files = sorted(Path(HISTORICAL_DIR).glob("pbp_with_lineups_*.parquet"))
+    if not pbp_files or not team_id_to_abbr:
+        return pd.DataFrame(
+            columns=[
+                "season",
+                "game_id",
+                "team_abbreviation",
+                "starter_lineup_ids",
+                "starter_verified",
+                "sub_clusters",
+                "sub_clusters_valid",
+            ]
+        )
+
+    team_ids = sorted(team_id_to_abbr.keys())
+    lineup_cols = [f"lineup_{tid}" for tid in team_ids]
+
+    for path in pbp_files:
+        season = _extract_season_from_path(path)
+        if not season:
+            continue
+
+        base_cols = ["game_id", "period", "event_type", "clock"]
+        read_cols = base_cols + lineup_cols
+        try:
+            df = pd.read_parquet(path, columns=read_cols)
+        except Exception:
+            # Fallback in case parquet column projection fails in some environments.
+            df = pd.read_parquet(path)
+            keep_cols = [c for c in read_cols if c in df.columns]
+            df = df[keep_cols]
+
+        if "period" not in df.columns or "game_id" not in df.columns:
+            continue
+
+        q1 = df[df["period"] == 1].copy()
+        if q1.empty:
+            continue
+
+        for game_id, gdf in q1.groupby("game_id", sort=False):
+            gdf = gdf.reset_index(drop=True)
+            for team_id in team_ids:
+                lineup_col = f"lineup_{team_id}"
+                if lineup_col not in gdf.columns:
+                    continue
+
+                lineups = gdf[lineup_col].apply(_lineup_from_value)
+                valid_mask = lineups.apply(lambda ids: len(ids) == LINEUP_SIZE)
+                if not valid_mask.any():
+                    continue
+
+                first_valid_idx = valid_mask[valid_mask].index[0]
+                first_lineup = lineups.loc[first_valid_idx]
+                if len(first_lineup) != LINEUP_SIZE:
+                    continue
+
+                verified, n_clusters, n_valid = _verify_q1_substitution_patterns(gdf, lineup_col)
+
+                records.append(
+                    {
+                        "season": season,
+                        "game_id": str(game_id),
+                        "team_abbreviation": team_id_to_abbr.get(team_id),
+                        "starter_lineup_ids": first_lineup,
+                        "starter_verified": bool(verified),
+                        "sub_clusters": int(n_clusters),
+                        "sub_clusters_valid": int(n_valid),
+                    }
+                )
+
+    out = pd.DataFrame(records)
+    if out.empty:
+        return out
+    out = out.dropna(subset=["team_abbreviation"])
+    out["season"] = out["season"].astype(str)
+    out["team_abbreviation"] = out["team_abbreviation"].astype(str).str.upper()
+    return out
+
+
+def build_observed_starters_from_pbp(
+    starter_games: pd.DataFrame,
+    predicted_rows: List[Dict],
+) -> Tuple[Dict[Tuple[str, str], Set[str]], Dict[Tuple[str, str], Dict]]:
+    """
+    Aggregate per-game first-quarter starters to a season-level observed starter set.
+
+    Priority:
+      1) Most frequent verified full lineup (mode lineup)
+      2) Top-5 player frequency across verified/all games
+      3) Predicted starter fallback to guarantee exactly 5 IDs
+    """
+    observed: Dict[Tuple[str, str], Set[str]] = {}
+    meta: Dict[Tuple[str, str], Dict] = {}
+
+    predicted_map = {(r["season"], r["team_abbreviation"]): r for r in predicted_rows}
+
+    if not starter_games.empty:
+        for (season, team), g in starter_games.groupby(["season", "team_abbreviation"], sort=False):
+            g_all = g.copy()
+            g_verified = g_all[g_all["starter_verified"] == True]
+            source = g_verified if len(g_verified) >= 5 else g_all
+
+            lineups = []
+            for lineup in source["starter_lineup_ids"].tolist():
+                ids = _lineup_from_value(lineup)
+                if len(ids) == LINEUP_SIZE:
+                    lineups.append(ids)
+
+            if not lineups:
+                continue
+
+            lineup_counter = Counter(tuple(sorted(ids)) for ids in lineups)
+            player_counter = Counter(pid for ids in lineups for pid in ids)
+
+            selection_method = "mode_lineup"
+            target_ids: List[str] = []
+            if lineup_counter:
+                target_ids = list(max(lineup_counter.items(), key=lambda kv: (kv[1], kv[0]))[0])
+
+            if len(target_ids) < LINEUP_SIZE:
+                selection_method = "frequency_top5"
+                for pid, _ in player_counter.most_common():
+                    if pid in target_ids:
+                        continue
+                    target_ids.append(pid)
+                    if len(target_ids) >= LINEUP_SIZE:
+                        break
+
+            pred = predicted_map.get((season, team), {})
+            if len(target_ids) < LINEUP_SIZE:
+                selection_method = "predicted_fallback"
+                for pid in [str(x) for x in pred.get("starter_player_ids", [])]:
+                    if pid in target_ids:
+                        continue
+                    target_ids.append(pid)
+                    if len(target_ids) >= LINEUP_SIZE:
+                        break
+
+            target_ids = target_ids[:LINEUP_SIZE]
+            if len(target_ids) != LINEUP_SIZE:
+                continue
+
+            key = (str(season), str(team).upper())
+            observed[key] = set(target_ids)
+            meta[key] = {
+                "selection_method": selection_method,
+                "n_games_total": int(len(g_all)),
+                "n_games_verified": int(len(g_verified)),
+                "starter_ids_ranked": target_ids,
+            }
+
+    # Guarantee every predicted team-season has a 5-player observed set.
+    for row in predicted_rows:
+        key = (str(row["season"]), str(row["team_abbreviation"]).upper())
+        if key in observed:
+            continue
+        fallback = []
+        for pid in [str(x) for x in row.get("starter_player_ids", [])]:
+            if pid and pid not in fallback:
+                fallback.append(pid)
+            if len(fallback) >= LINEUP_SIZE:
+                break
+        if len(fallback) == LINEUP_SIZE:
+            observed[key] = set(fallback)
+            meta[key] = {
+                "selection_method": "predicted_fallback_only",
+                "n_games_total": 0,
+                "n_games_verified": 0,
+                "starter_ids_ranked": fallback,
+            }
+
+    return observed, meta
+
+
 @dataclass
 class Step2Config:
     lineup_size: int = LINEUP_SIZE
@@ -186,14 +454,15 @@ class Step2Config:
     player_vol_ceiling: float = PLAYER_VOL_CEILING
 
 
-def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str]]:
+def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     if not TEAMS_PATH.exists():
-        return {}, {}
+        return {}, {}, {}
     teams = pd.read_parquet(TEAMS_PATH)
     teams.columns = [str(c).lower() for c in teams.columns]
 
     full_to_abbr = {}
     abbr_to_conf = {}
+    team_id_to_abbr = {}
     if "full_name" in teams.columns and "abbreviation" in teams.columns:
         for _, row in teams.iterrows():
             full = str(row.get("full_name", "")).strip()
@@ -206,7 +475,18 @@ def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str]]:
             conf = str(row.get("conference", "")).strip().title()
             if abbr:
                 abbr_to_conf[abbr] = conf or "Unknown"
-    return full_to_abbr, abbr_to_conf
+    if "abbreviation" in teams.columns:
+        for _, row in teams.iterrows():
+            abbr = str(row.get("abbreviation", "")).strip().upper()
+            if not abbr:
+                continue
+            for key in ["team_id", "id"]:
+                if key in teams.columns:
+                    raw_id = row.get(key)
+                    clean_id = str(raw_id).strip().replace(".0", "")
+                    if clean_id and clean_id.lower() not in {"nan", "none"}:
+                        team_id_to_abbr[clean_id] = abbr
+    return full_to_abbr, abbr_to_conf, team_id_to_abbr
 
 
 def load_player_pool(cfg: Step2Config) -> pd.DataFrame:
@@ -550,22 +830,19 @@ def build_actual_maps(
     lineups: pd.DataFrame,
     clutch: pd.DataFrame,
     predicted_rows: List[Dict],
-) -> Tuple[Dict[Tuple[str, str], Set[str]], Dict[Tuple[str, str], Set[str]], Dict[Tuple[str, str], float]]:
-    actual_starters: Dict[Tuple[str, str], Set[str]] = {}
+    starter_games: pd.DataFrame,
+) -> Tuple[
+    Dict[Tuple[str, str], Set[str]],
+    Dict[Tuple[str, str], Set[str]],
+    Dict[Tuple[str, str], float],
+    Dict[Tuple[str, str], Dict],
+]:
+    actual_starters, starter_meta = build_observed_starters_from_pbp(
+        starter_games=starter_games,
+        predicted_rows=predicted_rows,
+    )
     actual_clutch: Dict[Tuple[str, str], Set[str]] = {}
     actual_rotation_net: Dict[Tuple[str, str], float] = {}
-
-    # Starter proxy: highest-possession lineup in metrics_lineups.
-    if not lineups.empty:
-        top_lineup = (
-            lineups.sort_values("total_poss", ascending=False)
-            .drop_duplicates(subset=["season", "team_abbreviation"], keep="first")
-        )
-        for _, row in top_lineup.iterrows():
-            key = (str(row["season"]), str(row["team_abbreviation"]))
-            ids = set(_to_id_list(row["lineup_ids"]))
-            if ids:
-                actual_starters[key] = ids
 
     # Clutch proxy: top-5 clutch-minute players per team-season.
     if not clutch.empty:
@@ -577,6 +854,7 @@ def build_actual_maps(
                 actual_clutch[(str(season), str(team))] = ids
 
     # Rotation proxy: bench-heavy (<=2 starters) lineup NET_RTG weighted by possessions.
+    # Target definition: lineups with >=50 possessions and <=2 observed starters.
     predicted_map = {(r["season"], r["team_abbreviation"]): r for r in predicted_rows}
     for (season, team), g in lineups.groupby(["season", "team_abbreviation"], sort=False):
         key = (str(season), str(team))
@@ -589,16 +867,14 @@ def build_actual_maps(
 
         tmp = g.copy()
         tmp["overlap"] = tmp["lineup_ids"].apply(lambda ids: len(set(_to_id_list(ids)) & starters))
-        candidates = tmp[(tmp["overlap"] <= 2) & (tmp["total_poss"] >= 100)]
-        if candidates.empty:
-            candidates = tmp[(tmp["overlap"] <= 3) & (tmp["total_poss"] >= 80)]
+        candidates = tmp[(tmp["overlap"] <= 2) & (tmp["total_poss"] >= 50)]
         if candidates.empty:
             continue
 
         rating = _weighted_avg(candidates["NET_RTG"].to_numpy(dtype=float), candidates["total_poss"].to_numpy(dtype=float))
         actual_rotation_net[key] = rating
 
-    return actual_starters, actual_clutch, actual_rotation_net
+    return actual_starters, actual_clutch, actual_rotation_net, starter_meta
 
 
 def attach_validation(
@@ -606,6 +882,8 @@ def attach_validation(
     actual_starters: Dict[Tuple[str, str], Set[str]],
     actual_clutch: Dict[Tuple[str, str], Set[str]],
     actual_rotation_net: Dict[Tuple[str, str], float],
+    starter_meta: Optional[Dict[Tuple[str, str], Dict]] = None,
+    player_name_lookup: Optional[Dict[Tuple[str, str, str], str]] = None,
 ) -> Dict:
     team_metrics = []
 
@@ -622,17 +900,18 @@ def attach_validation(
 
         starter_true = actual_starters.get(key)
         clutch_true = actual_clutch.get(key)
+        starter_info = starter_meta.get(key, {}) if starter_meta else {}
 
         def _name_list(id_set: Optional[Set[str]]) -> List[str]:
             if not id_set:
                 return []
             names = []
-            seen = set()
             for pid in sorted(list(id_set)):
                 name = pool_name_map.get(str(pid))
-                if not name or name in seen:
-                    continue
-                seen.add(name)
+                if not name and player_name_lookup:
+                    name = _clean_name(player_name_lookup.get((str(row["season"]), str(row["team_abbreviation"]), str(pid))))
+                if not name:
+                    name = f"ID {pid}"
                 names.append(name)
             return names
 
@@ -658,6 +937,10 @@ def attach_validation(
             "starter_overlap_rate": _safe_float(starter_overlap_rate),
             "actual_starter_ids": sorted(list(starter_true)) if starter_true else [],
             "actual_starter_names": actual_starter_names,
+            "actual_starter_count": int(len(starter_true)) if starter_true else 0,
+            "starter_target_source": starter_info.get("selection_method"),
+            "starter_games_total": starter_info.get("n_games_total"),
+            "starter_games_verified": starter_info.get("n_games_verified"),
             "clutch_overlap": clutch_overlap,
             "clutch_overlap_rate": _safe_float(clutch_overlap_rate),
             "actual_clutch_ids": sorted(list(clutch_true)) if clutch_true else [],
@@ -672,6 +955,7 @@ def attach_validation(
                 "team_abbreviation": row["team_abbreviation"],
                 "starter_overlap": starter_overlap,
                 "starter_overlap_rate": starter_overlap_rate,
+                "actual_starter_count": int(len(starter_true)) if starter_true else None,
                 "clutch_overlap": clutch_overlap,
                 "clutch_overlap_rate": clutch_overlap_rate,
                 "rotation_predicted": row.get("mu_rotation"),
@@ -689,10 +973,16 @@ def attach_validation(
         return _safe_float(value)
 
     def _season_summary(df: pd.DataFrame) -> Dict:
+        starter_count = pd.to_numeric(df.get("actual_starter_count"), errors="coerce")
+        exact5 = (starter_count == LINEUP_SIZE)
+        exact5_rate = float(exact5.mean()) if len(starter_count) else np.nan
         return {
             "n_teams": int(len(df)),
             "starter_overlap_rate_mean": _safe_float(df["starter_overlap_rate"].mean()),
             "starter_overlap_count_mean": _safe_float(df["starter_overlap"].mean(), 3),
+            "observed_starter_size_mean": _safe_float(starter_count.mean(), 3),
+            "observed_starter_exact5_rate": _safe_float(exact5_rate),
+            "observed_starter_exact5_count": int(exact5.sum()),
             "clutch_overlap_rate_mean": _safe_float(df["clutch_overlap_rate"].mean()),
             "clutch_overlap_count_mean": _safe_float(df["clutch_overlap"].mean(), 3),
             "rotation_corr": _corr(df["rotation_predicted"], df["rotation_actual_net"]),
@@ -710,6 +1000,8 @@ def attach_validation(
         {
             "n_team_seasons": int(len(metrics_df)),
             "starter_overlap_available": int(metrics_df["starter_overlap"].notna().sum()),
+            "starter_exact5_available": int(metrics_df["actual_starter_count"].notna().sum()),
+            "starter_exact5_count": int((pd.to_numeric(metrics_df["actual_starter_count"], errors="coerce") == LINEUP_SIZE).sum()),
             "clutch_overlap_available": int(metrics_df["clutch_overlap"].notna().sum()),
             "rotation_actual_available": int(metrics_df["rotation_actual_net"].notna().sum()),
         }
@@ -726,16 +1018,18 @@ def main() -> None:
     print("Simulation Core — Step 2: Lineup Projection")
     cfg = Step2Config()
 
-    full_to_abbr, abbr_to_conf = _load_team_map()
+    full_to_abbr, abbr_to_conf, team_id_to_abbr = _load_team_map()
     players = load_player_pool(cfg)
     positions = load_positions()
     clutch = load_clutch_stats()
     lineups = load_metrics_lineups(full_to_abbr)
+    starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
 
     print(f"  Players loaded: {len(players)}")
     print(f"  Positions loaded: {len(positions)}")
     print(f"  Clutch rows loaded: {len(clutch)}")
     print(f"  Lineup rows loaded: {len(lineups)}")
+    print(f"  Q1 starter game rows loaded: {len(starter_games)}")
 
     players = players.merge(positions, on=["player_id", "season"], how="left")
     players = players.merge(
@@ -751,13 +1045,25 @@ def main() -> None:
     players.loc[role_missing, "role"] = players.loc[role_missing, "position_proxy"].map(_role_from_text)
     players["role"] = players["role"].fillna("Wing")
 
+    player_name_lookup: Dict[Tuple[str, str, str], str] = {}
+    for _, p in players[["season", "team_abbreviation", "player_id", "player_name"]].iterrows():
+        pid = str(p.get("player_id", "")).strip()
+        if not pid:
+            continue
+        name = _clean_name(p.get("player_name"))
+        if not name:
+            continue
+        key = (str(p.get("season", "")), str(p.get("team_abbreviation", "")).upper(), pid)
+        player_name_lookup[key] = name
+
     predicted_rows = build_team_profiles(players, cfg, abbr_to_conf)
     print(f"  Team-season profiles built: {len(predicted_rows)}")
 
-    actual_starters, actual_clutch, actual_rotation_net = build_actual_maps(
+    actual_starters, actual_clutch, actual_rotation_net, starter_meta = build_actual_maps(
         lineups=lineups,
         clutch=clutch,
         predicted_rows=predicted_rows,
+        starter_games=starter_games,
     )
 
     validation = attach_validation(
@@ -765,6 +1071,8 @@ def main() -> None:
         actual_starters=actual_starters,
         actual_clutch=actual_clutch,
         actual_rotation_net=actual_rotation_net,
+        starter_meta=starter_meta,
+        player_name_lookup=player_name_lookup,
     )
 
     # Flatten for parquet convenience.
@@ -810,6 +1118,11 @@ def main() -> None:
     report_blob = {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "config": asdict(cfg),
+        "validation_targets": {
+            "starter": "First-quarter starters from PBP (players on court at first valid Q1 event), verified with Q1 substitution cluster transitions.",
+            "rotation": "Lineups with >=50 possessions and <=2 observed starters; weighted average NET_RTG by total_poss.",
+            "clutch": "Top-5 clutch-minute players per team-season.",
+        },
         "seasons": seasons_blob,
         "validation_overall": validation["overall"],
     }
@@ -820,6 +1133,9 @@ def main() -> None:
     print(f"Saved profiles parquet: {STEP2_LINEUP_PROFILES_PATH}")
     print(f"Saved step2 lineup report: {STEP2_LINEUP_REPORT_PATH}")
     print(f"Saved step2 validation: {STEP2_VALIDATION_PATH}")
+    exact5_count = validation["overall"].get("starter_exact5_count", 0)
+    exact5_avail = validation["overall"].get("starter_exact5_available", 0)
+    print(f"Observed starters exact-5 check: {exact5_count}/{exact5_avail} team-seasons")
     print("\nValidation snapshot:")
     print(json.dumps(validation["overall"], indent=2))
 

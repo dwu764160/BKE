@@ -944,3 +944,35 @@ NEXT_STEPS (explicit):
 - If approved, implement hybrid-preserving decomposition cohorting for `position_bucket` and rerun grouped-percentile diagnostics.
 - If not approved, keep current minimal-impact patch set as the policy baseline and monitor Step 2 starter/rotation gaps with continuity features.
 
+CONTEXT:
+- Task: address observed starter shortfall in Step 2, adopt stricter user-specified validation targets, regenerate metrics, and improve single-game simulator explainability/UI.
+- Env: Linux, Python 3.10
+- Key files changed: `src/simulation/lineup_projection.py`, `app/simulation_viewer.py`, `readme.md`, `reference/simulation/Simulation_Core_Summary.md`, `loop/context_summary.txt`
+- Status: ✅ Requested implementation complete and rerun outputs regenerated.
+
+FAILURE_REASON:
+- N/A (implementation completed; no blocking runtime failure).
+
+ATTEMPTED_METHODS:
+- Replaced starter target construction with PBP first-quarter lineup extraction and substitution-cluster verification.
+- Updated rotation observed-target definition to lineups with `total_poss >= 50` and starter overlap `<= 2`.
+- Preserved clutch target as-is.
+- Added metadata + fallback safeguards to ensure exact 5 observed starter IDs/names in Step 2 payload rows.
+- Extended simulation viewer single-game output with phase-edge decomposition, style head-to-head bars, and contributor summaries.
+- Re-ran:
+  - `python3 src/simulation/lineup_projection.py`
+  - `python3 app/simulation_viewer.py`
+- Ran post-run audit scripts to verify exact-5 starter coverage and refreshed summary metrics.
+
+SOURCES_READ:
+- Local: `data/historical/pbp_with_lineups_2022-23.parquet`
+- Local: `data/historical/pbp_with_lineups_2023-24.parquet`
+- Local: `data/historical/pbp_with_lineups_2024-25.parquet`
+- Local: `data/processed/metrics_lineups.parquet`
+- Local: `reports/simulation_step2_validation.json`
+- Local: `reports/simulation_step2_lineup_profiles.json`
+
+NEXT_STEPS (explicit):
+- Optional tuning pass if needed to raise starter-overlap under new PBP-grounded targets (without relaxing exact-5 observed starter guarantee).
+- If requested, add dedicated unit/integration tests around Q1 starter extraction and substitution verification helpers.
+

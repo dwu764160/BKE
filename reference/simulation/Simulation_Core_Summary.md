@@ -317,3 +317,68 @@ Canonical identity must remain visible in payloads and docs even when coarse str
 2. Redesign matchup/lineup taxonomy inputs to carry explicit canonical bands through all downstream grouped-percentile layers.
 
 These are held for explicit approval because they can alter grouped percentile baselines and rank distributions.
+
+---
+
+## Entry: 2026-03-05 — Step 2 Validation Target Upgrade + Simulator Explainability UI
+
+### Why this update was made
+
+Observed starter validation previously relied on proxy lineups that could underrepresent coaching-intent starting groups in some team-seasons. This pass upgrades validation targets to use first-quarter PBP on-court evidence and guarantees an exact five-player observed starter set for every team-season card.
+
+### Backend target-definition updates
+
+Updated in `src/simulation/lineup_projection.py`:
+
+1. **Starter target (new):**
+- Parse `data/historical/pbp_with_lineups_*.parquet` per season.
+- For each game/team: extract first valid 5-player on-court lineup from first-quarter events.
+- Verify candidate with substitution-pattern checks (cluster-level transitions to tolerate multi-sub bursts).
+- Aggregate game-level starter evidence to a season-level observed starter set.
+- Enforce exact 5 observed starter IDs/names for every team-season output row.
+
+2. **Rotation target (new):**
+- Restrict observed rotation benchmark to lineups in `data/processed/metrics_lineups.parquet` with:
+	- `total_poss >= 50`
+	- `starter_overlap <= 2`
+- Use average `NET_RTG` across these filtered lineups as team-season observed rotation target.
+
+3. **Clutch target:**
+- Unchanged (top-5 clutch-minute players).
+
+### Frontend simulator upgrade
+
+Updated in `app/simulation_viewer.py`:
+
+- Single-game simulation now explains **why** a margin appears, not just what the win probability is.
+- Added phase-edge decomposition (starter/rotation/clutch edges), matchup-context bars, and top-contributor cards.
+- Added team style summaries and head-to-head comparison blocks from Step 1 + Step 2 features.
+- Refreshed single-game result layout for clearer visual hierarchy and faster interpretation.
+
+### Validation snapshot after upgrade
+
+Step 2 rerun results (3 seasons, 90 team-seasons):
+
+| Metric | Value |
+|---|---|
+| Starter overlap rate mean | 0.6956 |
+| Starter overlap count mean | 3.478 |
+| Clutch overlap rate mean | 0.8578 |
+| Clutch overlap count mean | 4.289 |
+| Rotation correlation | 0.5526 |
+| Observed-starter exact-5 rows | 90 / 90 |
+
+Per-season breakdown:
+
+| Season | Starter Overlap Rate | Rotation Corr |
+|---|---|---|
+| 2022-23 | 0.6800 | 0.3832 |
+| 2023-24 | 0.7400 | 0.5817 |
+| 2024-25 | 0.6667 | 0.6267 |
+
+### Output integrity checks
+
+- `actual_starter_ids` length minimum: `5`
+- `actual_starter_names` length minimum: `5`
+- rows with non-5 observed starter names: `0`
+- rotation observed target availability: `90/90`

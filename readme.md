@@ -99,7 +99,7 @@ python3 src/player_eval/team_feature_aggregation.py         # PEC Step 3: team a
 ```bash
 python3 src/simulation/game_model.py                        # Simulation Layer 1-3: parameter config + deterministic game model + schedule engine
 python3 src/simulation/season_sim.py                        # Simulation Layer 4-5: Monte Carlo season simulation + aggregation (projected wins, playoff prob, confidence bands)
-python3 src/simulation/lineup_projection.py                 # Simulation Step 2: lineup projection (starter/rotation/clutch phases + validation)
+python3 src/simulation/lineup_projection.py                 # Simulation Step 2: lineup projection (starter/rotation/clutch phases + validation using PBP first-quarter starters + substitution checks, and rotation lineups >=50 poss with <=2 starters)
 python3 src/simulation/validate_sim.py                      # Simulation Layer 6: validation vs real records (Brier score, log loss, margin RMSE, season-level MAE/r)
 ```
 

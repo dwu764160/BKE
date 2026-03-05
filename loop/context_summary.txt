@@ -1,3 +1,19 @@
+- 2026-03-05 — Simulation Step 2 target-definition overhaul + exact-5 observed starters + simulator UX pass
+	- Backend (`src/simulation/lineup_projection.py`) now validates starters from first-quarter PBP on-court lineups, with substitution-cluster verification, then season aggregation to observed starters.
+	- Observed starter outputs are now guaranteed as exact five-player sets for every team-season in Step 2 payloads (`actual_starter_ids`, `actual_starter_names`).
+	- Rotation benchmark updated to strict candidate filter: lineup rows with `total_poss >= 50` and starter-overlap `<= 2`, using average `NET_RTG` as observed target.
+	- Clutch benchmark unchanged (top-5 clutch-minute players).
+	- Frontend (`app/simulation_viewer.py`) single-game simulation upgraded with phase-edge decomposition, matchup-style context, and top-contributor summaries; layout refreshed for clearer hierarchy.
+	- Regeneration/validation run:
+		- `python3 src/simulation/lineup_projection.py`
+		- `python3 app/simulation_viewer.py`
+	- Post-change metrics (90 team-seasons):
+		- starter_overlap_rate_mean: `0.6956`
+		- starter_overlap_count_mean: `3.478`
+		- clutch_overlap_rate_mean: `0.8578`
+		- rotation_correlation: `0.5526`
+		- observed-starter exact-5 coverage: `90/90`
+
 - 2026-07-17 — Three-Task Sprint Complete: Availability Factor + Simulation Core + Frontend
 	- Task 1 (PEC Step 4): Added availability_score to PlayerImpactProfile (games_ratio * age_factor, role-scaled). 1978 rows, mean=0.601, std=0.265. Aggregated as pec_availability_score.
 	- Task 2 (Simulation Core Step 1): Built full 6-layer margin-based simulation. 3 scripts: game_model.py (params+game model+schedule), season_sim.py (Monte Carlo+aggregation), validate_sim.py (validation). Overall r=0.886, MAE=5.13, Brier=0.205-0.228, accuracy=65-69%. NAN team bug fixed. Simulation_Core_Summary.md fully populated.
