@@ -1776,118 +1776,19 @@ You now have:
 
 This is Phase 2 backbone quality.
 
+### Step 4: Injury and Availability for each player in a given season.
 
+Injury / Availability Baseline
 
-# 🔹 STEP 4 — Game Margin Predictor (Deterministic v1)
+You do not currently have:
 
-Now we convert TeamNR into game-level predictions.
+Expected games played per player
 
----
+Availability-adjusted team strength
 
-## 4.1 Base Formula
+For margin-based predictive modeling:
+This is acceptable for now.
 
-For game:
+But if building season simulation, eventually you’ll need:
 
-Home Team H
-Away Team A
-
-[
-ExpectedMargin = (TeamNR_H - TeamNR_A) + HCA
-]
-
-Where:
-
-HCA = +2.5 points (initial estimate)
-
-Tune via regression.
-
----
-
-## 4.2 Win Probability Conversion
-
-Assume margin distribution:
-
-Normal(μ = ExpectedMargin, σ = 12)
-
-NBA margin std dev ≈ 12 points.
-
-Win probability:
-
-[
-P(H wins) = \Phi(\frac{ExpectedMargin}{12})
-]
-
-Where Φ is standard normal CDF.
-
----
-
-## 4.3 Backtesting
-
-For seasons N-4 to N:
-
-Evaluate:
-
-* Brier score
-* Log loss
-* Calibration curve
-* Vegas line comparison
-
-Goal:
-
-Be within 0.5–1.0% of Vegas implied win probability calibration.
-
----
-
-## 4.4 Structural Integrity Check
-
-If game model fails but team NR R² is strong:
-
-The problem is variance modeling, not strength modeling.
-
-Keep layers separate.
-
----
-
-# 🚀 Where This Leaves You
-
-You now have:
-
-* Player impact core (BKE)
-* Minute allocation layer (validated)
-* Team aggregation layer (Step 3)
-* Game prediction engine (Step 4)
-
-From here:
-
-Season simulation becomes:
-
-Sim 82 games using margin distribution.
-
-Then playoff simulation.
-
-Then management game layer.
-
----
-
-# Final Assessment
-
-Your minute model is clean enough to move forward.
-
-You are no longer in “experimental metric” territory.
-
-You are building:
-
-A vertically integrated predictive system.
-
----
-
-Next decision:
-
-For Step 3 diminishing returns adjustment —
-
-Do you want it:
-
-A) Purely variance-based (simple)
-B) Archetype-interaction based (more realistic but complex)
-
-That choice affects long-term simulation realism.
+Expected availability modifier

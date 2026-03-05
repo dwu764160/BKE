@@ -1,3 +1,63 @@
+2026-03-04 — Three-Task Sprint: Availability Factor + Simulation Core + Frontend
+═══════════════════════════════════════════════════════════════════════════
+ALL THREE TASKS COMPLETE.
+
+TASK 1: Player Availability Factor (PEC Step 4) ✅ COMPLETE
+─────────────────────────────────────────────────
+Implemented: availability_score (0-1) in PlayerImpactProfile dataclass.
+  - games_ratio * age_factor, scaled by role expectations
+  - Age breakpoints: [27, 30, 34], factors: [1.0, 0.97, 0.92, 0.82]
+  - Major rotation threshold: MPG >= 20 OR salary >= $10M
+  - 1978 rows, mean=0.601, std=0.265, range [0.012, 1.0], zero bounds violations
+  - Aggregated into player_profile_aggregate.parquet as pec_availability_score
+  - copilot-instructions.md updated with aggregation rule
+
+TASK 2: Simulation Core Step 1 (Margin-Based Team Simulation) ✅ COMPLETE
+──────────────────────────────────────────────────────────────
+Implemented full 6-layer simulation from Simulation_Core_Plan.md:
+  - game_model.py: Layers 1-3 (params, game model, schedule) — 30 teams/season, 1225-1230 games
+  - season_sim.py: Layers 4-5 (Monte Carlo, aggregation) — 10,000 sims, vectorized NumPy
+  - validate_sim.py: Layer 6 (validation) — Brier/log loss/calibration/season correlation
+Results: r=0.821/0.867/0.951, overall MAE=5.13, overall r=0.886
+  Brier: 0.205-0.228, Accuracy: 65-69%, Agg calibration error: 6.0%
+NAN team bug: filtered in load_team_params() (upstream data quality issue)
+Summary: reference/simulation/Simulation_Core_Summary.md (fully populated)
+
+TASK 3: Frontend Visualization (Simulation Viewer) ✅ COMPLETE
+──────────────────────────────────────────────────
+Goal: Create app/simulation_viewer.py → app/simulation.html
+Implemented: app/simulation_viewer.py → app/simulation.html
+  - Season selector tabs (2022-23, 2023-24, 2024-25)
+  - 8 stats cards (correlation, MAE, RMSE, Brier, accuracy, log loss, margin RMSE, teams)
+  - Horizontal bar chart: projected vs actual wins with 90% CI bands + playoff line
+  - Calibration scatter plot (predicted vs actual win rate by probability bin)
+  - Sortable 12-column table: rank, team, net rating, volatility, proj/actual wins, 
+    error (color-coded), playoff %, 50+/60+ win %, win SD, 90% CI
+  - Dark theme matching existing BKE viewers (GitHub dark palette)
+  - All data embedded as JSON — fully standalone, no server needed
+Validation: balanced braces (278/278), valid JSON, all 7 functions present, no XSS risk
+
+═══════════════════════════════════════════════════════════════════════════
+
+2026-03-04 — Team game logs fix impact check (linear metrics + real-world validation)
+- Question validated: whether repaired `data/historical/team_game_logs.parquet` changed player linear metrics (WS/BPM/VORP) and +/- consistency.
+- Controlled A/B rerun on `src/data_compute/compute_linear_metrics.py`:
+  - Swap in bad backup logs (`data_backup_20260301/historical/team_game_logs.parquet`), run metrics, capture outputs.
+  - Restore fixed logs, rerun, compare player-season outputs (1680 rows).
+  - Result: effectively no impact on linear player metrics.
+    - `BPM/OBPM/DBPM/VORP`: exact equality (MAE=0, max_abs=0, corr=1.0).
+    - `WS/OWS`: numerically negligible drift only (WS max abs diff `0.000047`, MAE `0.000002`, corr=1.0).
+  - Explanation: `compute_linear_metrics.py` only uses team logs for league context (`L_PPG`, `Pts_Per_Win`), and those values are nearly identical pre/post fix.
+- Added validator: `tests/validate_team_game_logs_realworld.py`.
+  - Compares local team logs vs official NBA `leaguegamelog` endpoint (direct stats.nba.com call with project headers; optional `nba_api` fallback).
+  - Checks season team W-L and row-level score/+/- agreement.
+  - Output report: `reports/team_game_logs_realworld_validation.json`.
+- Validation run results (2022-23, 2023-24, 2024-25):
+  - W-L exact: `90/90` team-seasons (100%).
+  - Full-row PTS exact: `7380/7380` (100%).
+  - Full-row PLUS_MINUS exact: `7380/7380` (100%).
+  - Random sampled game-score rows exact: `600/600` (100%) using 100 sampled games per season (seed=123).
+
 2026-03-04 — Reproduction pipeline "stuck" diagnosis (Layer 2 / C5)
 - Root cause was primarily observability + control-flow, not a hard deadlock:
   1) `scripts/reproduce_pipeline.sh` piped Python output through `tee` without unbuffered mode,

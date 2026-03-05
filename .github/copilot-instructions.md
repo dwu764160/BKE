@@ -53,6 +53,7 @@ The [loop](loop/) folder is your live context and planning hub. You must:
 - Use cached NBA API headers/sessions in [data/nba_headers.json] and [data/nba_session.json] when present.
 - Season identifiers must be formatted as `YYYY-YY` (e.g., `2023-24`).
 - **Centralize all logic and thresholds** (e.g., archetype cutoffs) in a single script per stage (e.g., [src/data_compute/compute_player_archetypes.py]). Never scatter constants across files.
+- **All future player-related stats** (computed or fetched) must be normalized and aggregated into the Profile Aggregate via `src/profile_aggregate/build_profile_aggregate.py`. This is the single source of truth for downstream products. New fields added to player impact profiles are automatically available in the aggregate via the Step 1 → Aggregate pipeline flow.
 - When adding new code:
   - Add new pipeline steps as explicit scripts alongside existing stage files.
   - Wire new steps into the documented order in [readme.md](readme.md) and update the data layout section.

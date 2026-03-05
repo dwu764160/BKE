@@ -88,10 +88,17 @@ python3 src/modeling/experiment2_production_tilt.py         # Run v3.1 Experimen
 
 ## Player Evaluation (PEC v1)
 ```bash
-python3 src/player_eval/build_player_impact_profiles.py     # PEC Step 1: build PlayerImpactProfile (47+ fields from 9 sources, canonical offensive/defensive archetype labels + embeddings, behavioral fingerprint)
-python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 15 pipeline sources into aggregate/player_profile_aggregate.parquet (1971 rows x 908 cols)
+python3 src/player_eval/build_player_impact_profiles.py     # PEC Step 1 + Step 4: build PlayerImpactProfile (47+ fields from 9 sources, canonical offensive/defensive archetype labels + embeddings, behavioral fingerprint, availability score)
+python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 15+ pipeline sources into aggregate/player_profile_aggregate.parquet (single source of truth for downstream products)
 python3 src/player_eval/train_minute_model.py               # PEC Step 2: train MPG prediction model (GBDT, 70 features, GroupKFold CV, temporal holdout; excludes volume stats)
 python3 src/player_eval/team_feature_aggregation.py         # PEC Step 3: team aggregation — TEAM_SCALE=20 (BKE→NBA per-100-poss), talent-dominant architecture (modifiers <10% of talent), expanded rim detection, smart calibration skip, 6-stage ablation stack
+```
+
+## Simulation (Step 1 — Margin-Based)
+```bash
+python3 src/simulation/game_model.py                        # Simulation Layer 1-3: parameter config + deterministic game model + schedule engine
+python3 src/simulation/season_sim.py                        # Simulation Layer 4-5: Monte Carlo season simulation + aggregation (projected wins, playoff prob, confidence bands)
+python3 src/simulation/validate_sim.py                      # Simulation Layer 6: validation vs real records (Brier score, log loss, margin RMSE, season-level MAE/r)
 ```
 
 ## Visualization / Export
@@ -101,6 +108,7 @@ python3 app/player_data_viewer.py         # Generate player data viewer (with sa
 python3 scripts/export_bke_components.py  # Export per-player BKE components JSON for interactive viewer
 python3 app/player_bke_viewer.py          # Generate standalone BKE interactive explorer (lambda slider + split toggle)
 python3 app/player_eval_viewer.py         # Generate PEC viewer (player cards, team view, detail modal, predicted vs actual MPG)
+python3 app/simulation_viewer.py          # Generate simulation viewer (projected wins, playoff odds, net rating charts)
 python3 src/utils/export_db_to_parquet.py # Export DB tables to parquet
 ```
 
@@ -124,7 +132,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 - `data/processed/player_eval/` — PEC Step outputs: `player_impact_profiles.parquet`, `player_profiles_season.pkl`, `minute_model_v2.pkl`, `minute_model_predictions_v2.parquet`, `team_feature_aggregation.parquet`
 - `aggregate/` — comprehensive player profile aggregate: `player_profile_aggregate.parquet` (1971 rows x 908 cols, all 15 pipeline sources merged)
 - `data/processed/bke/` — BKE decomposition data: `bke_v28_decomposition.parquet`, `bke_v28_decomposition.csv`, `BKE_Scores_v27.json` (includes terminal league-wide percentiles plus grouped transformed percentiles by `position_bucket`, `primary_archetype`, and `defensive_archetype`), `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`, v3.1 split artifacts `BKE_Scores_v31_60_40.json`, `BKE_Scores_v31_55_45.json`, and (when Layer 3+6 second-pass is additive) `BKE_Scores_v31_60_40_layer36.json`, `BKE_Scores_v31_55_45_layer36.json`, `bke_v31_components.json` (per-player components for interactive viewer)
-- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `player_eval_step1_validation.json`, `player_eval_step2_minute_model_validation.json`, `player_eval_step3_team_features_validation.json`, `profile_aggregate_validation.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`
+- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `player_eval_step1_validation.json`, `player_eval_step2_minute_model_validation.json`, `player_eval_step3_team_features_validation.json`, `profile_aggregate_validation.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`, `simulation_step1_results.json`, `simulation_step1_season_results.json`, `simulation_step1_validation.json`
 - `data/tracking/` — tracking-derived JSONs
 - `src/player_eval/` — new phase workspace for upcoming player evaluation engine scripts
 - `data_backup_YYYYMMDD/` — dated snapshot backup folders (use `bash scripts/backup_data_snapshot.sh [YYYYMMDD]`)

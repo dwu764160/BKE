@@ -128,8 +128,27 @@ CREATION_CONCENTRATION_THRESHOLD = 0.28  # slightly lower to catch more variatio
 #   Transition structure (success-weighted)
 TRANSITION_PPP_LEAGUE_AVG = 1.10  # approximate league transition PPP average
 
+# Step 4 outputs — Player Availability Factor
+STEP4_VALIDATION_REPORT = REPORTS_DIR / "player_eval_step4_availability_validation.json"
+
+# Step 4 — Availability Factor constants
+# ── Age curve: piecewise linear decay ──
+# Players under 27 → no age penalty. 27-30 → mild, 30-34 → moderate, 35+ → steep.
+AVAIL_AGE_BREAKPOINTS = [27, 30, 34]      # age thresholds
+AVAIL_AGE_FACTORS = [1.0, 0.97, 0.92, 0.82]  # factor AT each breakpoint edge
+#   <27 → 1.0, 27→0.97 (linear interp to 30→0.92), 30→0.92 (linear to 34→0.82), 35+→0.82
+
+# ── Role expectation: how many games a player is "expected" to play ──
+# Major rotation players (high MPG or high salary) are expected to play ~82.
+# Lower-minute players have a softer expectation.
+AVAIL_MAJOR_ROTATION_MPG = 20.0       # MPG threshold for "major rotation" expectation
+AVAIL_HIGH_SALARY_THRESHOLD = 10_000_000  # $10M — players earning this are expected to play 82
+AVAIL_FULL_SEASON_GAMES = 82          # NBA regular season game count
+AVAIL_MIN_EXPECTED_GAMES = 40         # floor for expected games (bench/two-way players)
+
 # Modeling constants
 RANDOM_SEED = 42
 MINUTE_SHARE_CAP = 0.22
 MINUTE_SHARE_FLOOR = 0.0
 HIGH_USAGE_QUANTILE = 0.75
+

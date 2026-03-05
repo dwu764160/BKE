@@ -1,3 +1,8 @@
+- 2026-07-17 — Three-Task Sprint Complete: Availability Factor + Simulation Core + Frontend
+	- Task 1 (PEC Step 4): Added availability_score to PlayerImpactProfile (games_ratio * age_factor, role-scaled). 1978 rows, mean=0.601, std=0.265. Aggregated as pec_availability_score.
+	- Task 2 (Simulation Core Step 1): Built full 6-layer margin-based simulation. 3 scripts: game_model.py (params+game model+schedule), season_sim.py (Monte Carlo+aggregation), validate_sim.py (validation). Overall r=0.886, MAE=5.13, Brier=0.205-0.228, accuracy=65-69%. NAN team bug fixed. Simulation_Core_Summary.md fully populated.
+	- Task 3 (Frontend): Created simulation_viewer.py → simulation.html. Season tabs, 8 stat cards, projected-vs-actual bar chart with CI bands, calibration plot, sortable 12-column table with color-coded errors. Dark theme, embedded JSON, fully standalone.
+
 - 2026-03-04 — Reproduction pipeline stall remediation (Layer 2 observability + fail-fast)
 	- Diagnosed "stuck" state as buffered logging + swallowed step failures in `scripts/reproduce_pipeline.sh`, not a deadlock.
 	- Updated reproduction harness to run patched scripts with `python -u`/`PYTHONUNBUFFERED=1` for live logs.

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BKE Simulation Core — Season Projections</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --border: #30363d;
+  --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff;
+  --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+  --yellow: #e3b341;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; }
+.container { max-width:1440px; margin:0 auto; padding:20px; }
+h1 { font-size:26px; font-weight:700; color:var(--accent); margin-bottom:2px; }
+.subtitle { color:var(--text-muted); font-size:13px; margin-bottom:20px; }
+
+/* Season Tabs */
+.season-tabs { display:flex; gap:0; margin-bottom:20px; }
+.season-tab { padding:10px 24px; background:var(--surface); border:1px solid var(--border); color:var(--text-muted); cursor:pointer; font-size:14px; font-weight:600; transition:all 0.15s; user-select:none; }
+.season-tab:first-child { border-radius:8px 0 0 8px; }
+.season-tab:last-child { border-radius:0 8px 8px 0; }
+.season-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.season-tab:hover:not(.active) { color:var(--text); background:rgba(88,166,255,0.1); }
+
+/* Stats Cards */
+.stats-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+.stat-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px 18px; min-width:130px; flex:1; }
+.stat-card .label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
+.stat-card .value { font-size:22px; font-weight:700; margin-top:4px; }
+.stat-card .detail { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.val-green { color:var(--green); }
+.val-accent { color:var(--accent); }
+.val-orange { color:var(--orange); }
+.val-purple { color:var(--purple); }
+
+/* Charts Row */
+.charts-row { display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+.chart-box { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; flex:1; min-width:320px; }
+.chart-box h3 { font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }
+svg text { fill:var(--text); font-family:inherit; }
+
+/* Single Game Sim */
+.single-game-box { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:20px; }
+.single-game-box h3 { font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }
+.sg-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:10px; }
+.sg-group label { display:block; font-size:11px; color:var(--text-muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.3px; }
+.sg-group select { width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px; font-size:13px; }
+.sg-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.sg-btn { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 12px; font-weight:700; cursor:pointer; }
+.sg-btn:hover { filter:brightness(1.05); }
+.sg-status { font-size:12px; color:var(--text-muted); }
+.sg-result { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; }
+.sg-result .row { display:flex; justify-content:space-between; gap:10px; margin-bottom:4px; }
+.sg-result .row:last-child { margin-bottom:0; }
+
+/* Table */
+.table-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.table-scroll { max-height:72vh; overflow-y:auto; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+thead { position:sticky; top:0; z-index:10; }
+th { background:var(--surface); color:var(--text-muted); text-align:left; padding:10px 12px; border-bottom:2px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; }
+th:hover { color:var(--accent); }
+th.sorted-asc::after { content:" ▲"; color:var(--accent); }
+th.sorted-desc::after { content:" ▼"; color:var(--accent); }
+td { padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+tr:hover { background:rgba(88,166,255,0.06); }
+.rank { font-weight:700; color:var(--accent); text-align:right; width:36px; }
+.team { font-weight:700; font-size:14px; }
+.num { text-align:right; font-variant-numeric:tabular-nums; }
+.err-good { color:var(--green); }
+.err-ok { color:var(--orange); }
+.err-bad { color:var(--red); }
+.conf-band { color:var(--text-muted); font-size:12px; }
+.prob-bar-wrap { width:80px; height:14px; background:var(--bg); border-radius:3px; display:inline-block; vertical-align:middle; overflow:hidden; }
+.prob-bar { height:100%; border-radius:3px; }
+.prob-playoff { background:var(--green); }
+.prob-50 { background:var(--accent); }
+.prob-60 { background:var(--purple); }
+
+/* Tooltip */
+.tooltip { position:relative; cursor:help; }
+.tooltip .tip-text { visibility:hidden; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:10px 14px; border-radius:6px; position:absolute; z-index:100; bottom:125%; left:50%; transform:translateX(-50%); width:260px; font-size:12px; line-height:1.5; box-shadow:0 4px 12px rgba(0,0,0,0.4); pointer-events:none; }
+.tooltip:hover .tip-text { visibility:visible; }
+
+/* Footer */
+.footer { margin-top:24px; padding:16px; color:var(--text-muted); font-size:11px; text-align:center; border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>BKE Simulation Core</h1>
+  <div class="subtitle">Margin-Based Season Projections — 10,000 Monte Carlo Simulations per Season</div>
+
+  <div class="season-tabs" id="seasonTabs"></div>
+  <div class="stats-row" id="statsRow"></div>
+  <div class="charts-row">
+    <div class="chart-box" style="flex:2"><h3>Projected vs Actual Wins</h3><div id="winsChart"></div></div>
+    <div class="chart-box" style="flex:1"><h3>Calibration</h3><div id="calChart"></div></div>
+  </div>
+
+  <div class="single-game-box">
+    <h3>Single Game Simulator</h3>
+    <div class="sg-grid">
+      <div class="sg-group"><label for="sgHomeSeason">Home Season</label><select id="sgHomeSeason"></select></div>
+      <div class="sg-group"><label for="sgHomeTeam">Home Team</label><select id="sgHomeTeam"></select></div>
+      <div class="sg-group"><label for="sgAwaySeason">Away Season</label><select id="sgAwaySeason"></select></div>
+      <div class="sg-group"><label for="sgAwayTeam">Away Team</label><select id="sgAwayTeam"></select></div>
+    </div>
+    <div class="sg-actions">
+      <button class="sg-btn" id="sgRunBtn">Simulate 1 Game</button>
+      <span class="sg-status" id="sgStatus">Uses one random draw from the margin distribution (not 10,000 sims).</span>
+    </div>
+    <div class="sg-result" id="sgResult">No game simulated yet.</div>
+  </div>
+
+  <div class="table-wrap"><div class="table-scroll" id="tableWrap"></div></div>
+  <div class="footer">
+    BKE Simulation Core v1 &mdash; Margin-based team-level simulation.
+    &sigma;<sub>league</sub> = <span id="footSigma"></span>,
+    HCA = <span id="footHCA"></span>,
+    N = <span id="footN"></span>
+  </div>
+</div>
+
+<script>
+const DATA = {"config":{"sigma_league":3.0,"home_court_advantage":2.0,"n_simulations":10000,"random_seed":42,"direct_playoff_rank":6,"play_in_rank":10},"seasons":{"2022-23":{"season_stats":{"mae":5.57,"rmse":6.8,"correlation":0.821,"mean_error":-0.0},"team_results":[{"team":"BOS","conference":"East","mu":8.5177,"sigma":5.9269,"projected_wins":67.0,"win_std":3.34,"win_p5":61,"win_p25":65,"win_median":67,"win_p75":69,"win_p95":72,"win_min":52,"win_max":78,"projected_conf_rank":1.06,"direct_playoff_probability":1.0,"top_10_probability":1.0,"playin_only_probability":0.0,"playoff_probability":1.0,"win_50_plus_prob":1.0,"win_60_plus_prob":0.9852,"projected_rank":1,"actual_wins":57,"actual_losses":25,"actual_games":82,"win_error":10.0},{"team":"BKN","conference":"East","mu":5.5235,"sigma":6.0,"projected_wins":58.2,"win_std":3.9,"win_p5":52,"win_p25":56,"win_median":58,"win_p75":61,"win_p95":64,"win_min":44,"win_max":72,"projected_conf_rank":2.32,"direct_playoff_probability":0.9971,"top_10_probability":1.0,"playin_only_probability":0.0029,"playoff_probability":0.9971,"win_50_plus_prob":0.9858,"win_60_plus_prob":0.3778,"projected_rank":2,"actual_wins":45,"actual_losses":37,"actual_games":82,"win_error":13.2},{"team":"MIL","conference":"East","mu":3.7845,"sigma":6.0,"projected_wins":52.9,"win_std":4.13,"win_p5":46,"win_p25":50,"win_median":53,"win_p75":56,"win_p95":59,"win_min":37,"win_max":68,"projected_conf_rank":3.79,"direct_playoff_probability":0.9319,"top_10_probability":0.9996,"playin_only_probability":0.0677,"playoff_probability":0.9319,"win_50_plus_prob":0.7938,"win_60_plus_prob":0.0498,"projected_rank":3,"actual_wins":58,"actual_losses":24,"actual_games":82,"win_error":-5.1},{"team":"UTA","conference":"West","mu":2.6454,"sigma":5.6372,"projected_wins":50.4,"win_std":4.11,"win_p5":44,"win_p25":48,"win_median":50,"win_p75":53,"win_p95":57,"win_min":36,"win_max":66,"projected_conf_rank":2.98,"direct_playoff_probability":0.9208,"top_10_probability":0.9971,"playin_only_probability":0.0763,"playoff_probability":0.9208,"win_50_plus_prob":0.5889,"win_60_plus_prob":0.0122,"projected_rank":4,"actual_wins":37,"actual_losses":45,"actual_games":82,"win_error":13.4},{"team":"DEN","conference":"West","mu":2.3125,"sigma":5.319,"projected_wins":49.5,"win_std":4.18,"win_p5":43,"win_p25":47,"win_median":49,"win_p75":52,"win_p95":56,"win_min":33,"win_max":64,"projected_conf_rank":3.43,"direct_playoff_probability":0.8821,"top_10_probability":0.9947,"playin_only_probability":0.1126,"playoff_probability":0.8821,"win_50_plus_prob":0.4981,"win_60_plus_prob":0.0082,"projected_rank":5,"actual_wins":53,"actual_losses":29,"actual_games":82,"win_error":-3.5},{"team":"WAS","conference":"East","mu":2.5312,"sigma":5.0639,"projected_wins":49.1,"win_std":4.1,"win_p5":42,"win_p25":46,"win_median":49,"win_p75":52,"win_p95":56,"win_min":32,"win_max":65,"projected_conf_rank":5.28,"direct_playoff_probability":0.7467,"top_10_probability":0.9954,"playin_only_probability":0.2487,"playoff_probability":0.7467,"win_50_plus_prob":0.4642,"win_60_plus_prob":0.0048,"projected_rank":6,"actual_wins":35,"actual_losses":47,"actual_games":82,"win_error":14.1},{"team":"TOR","conference":"East","mu":2.4646,"sigma":5.2329,"projected_wins":48.6,"win_std":4.14,"win_p5":42,"win_p25":46,"win_median":49,"win_p75":51,"win_p95":55,"win_min":32,"win_max":64,"projected_conf_rank":5.52,"direct_playoff_probability":0.7036,"top_10_probability":0.9934,"playin_only_probability":0.2898,"playoff_probability":0.7036,"win_50_plus_prob":0.4161,"win_60_plus_prob":0.0035,"projected_rank":7,"actual_wins":41,"actual_losses":41,"actual_games":82,"win_error":7.6},{"team":"CLE","conference":"East","mu":2.1638,"sigma":5.1265,"projected_wins":48.0,"win_std":4.15,"win_p5":41,"win_p25":45,"win_median":48,"win_p75":51,"win_p95":55,"win_min":31,"win_max":62,"projected_conf_rank":5.8,"direct_playoff_probability":0.6495,"top_10_probability":0.993,"playin_only_probability":0.3435,"playoff_probability":0.6495,"win_50_plus_prob":0.3568,"win_60_plus_prob":0.0023,"projected_rank":8,"actual_wins":51,"actual_losses":31,"actual_games":82,"win_error":-3.0},{"team":"OKC","conference":"West","mu":1.9215,"sigma":6.0,"projected_wins":47.6,"win_std":4.3,"win_p5":40,"win_p25":45,"win_median":48,"win_p75":51,"win_p95":55,"win_min":31,"win_max":62,"projected_conf_rank":4.49,"direct_playoff_probability":0.7716,"top_10_probability":0.9811,"playin_only_probability":0.2095,"playoff_probability":0.7716,"win_50_plus_prob":0.3305,"win_60_plus_prob":0.0018,"projected_rank":9,"actual_wins":40,"actual_losses":42,"actual_games":82,"win_error":7.6},{"team":"GSW","conference":"West","mu":1.6528,"sigma":5.8248,"projected_wins":46.9,"win_std":4.21,"win_p5":40,"win_p25":44,"win_median":47,"win_p75":50,"win_p95":54,"win_min":25,"win_max":62,"projected_conf_rank":4.9,"direct_playoff_probability":0.722,"top_10_probability":0.973,"playin_only_probability":0.251,"playoff_probability":0.722,"win_50_plus_prob":0.2698,"win_60_plus_prob":0.001,"projected_rank":10,"actual_wins":44,"actual_losses":38,"actual_games":82,"win_error":2.9},{"team":"LAC","conference":"West","mu":1.5462,"sigma":5.3753,"projected_wins":46.7,"win_std":4.23,"win_p5":40,"win_p25":44,"win_median":47,"win_p75":50,"win_p95":54,"win_min":30,"win_max":62,"projected_conf_rank":5.0,"direct_playoff_probability":0.7069,"top_10_probability":0.9733,"playin_only_probability":0.2664,"playoff_probability":0.7069,"win_50_plus_prob":0.2538,"win_60_plus_prob":0.0008,"projected_rank":11,"actual_wins":44,"actual_losses":38,"actual_games":82,"win_error":2.7},{"team":"DAL","conference":"West","mu":1.1717,"sigma":6.0,"projected_wins":45.5,"win_std":4.25,"win_p5":38,"win_p25":43,"win_median":45,"win_p75":48,"win_p95":52,"win_min":29,"win_max":60,"projected_conf_rank":5.78,"direct_playoff_probability":0.601,"top_10_probability":0.9494,"playin_only_probability":0.3484,"playoff_probability":0.601,"win_50_plus_prob":0.1717,"win_60_plus_prob":0.0007,"projected_rank":12,"actual_wins":38,"actual_losses":44,"actual_games":82,"win_error":7.5},{"team":"MIA","conference":"East","mu":1.5696,"sigma":5.3797,"projected_wins":45.3,"win_std":4.24,"win_p5":38,"win_p25":42,"win_median":45,"win_p75":48,"win_p95":52,"win_min":28,"win_max":61,"projected_conf_rank":7.06,"direct_playoff_probability":0.3843,"top_10_probability":0.9618,"playin_only_probability":0.5775,"playoff_probability":0.3843,"win_50_plus_prob":0.158,"win_60_plus_prob":0.0005,"projected_rank":13,"actual_wins":44,"actual_losses":38,"actual_games":82,"win_error":1.3},{"team":"PHI","conference":"East","mu":1.7198,"sigma":5.7746,"projected_wins":45.3,"win_std":4.28,"win_p5":38,"win_p25":42,"win_median":45,"win_p75":48,"win_p95":52,"win_min":29,"win_max":62,"projected_conf_rank":7.04,"direct_playoff_probability":0.3868,"top_10_probability":0.9621,"playin_only_probability":0.5753,"playoff_probability":0.3868,"win_50_plus_prob":0.1654,"win_60_plus_prob":0.0006,"projected_rank":14,"actual_wins":54,"actual_losses":28,"actual_games":82,"win_error":-8.7},{"team":"MEM","conference":"West","mu":0.8077,"sigma":5.8435,"projected_wins":44.0,"win_std":4.31,"win_p5":37,"win_p25":41,"win_median":44,"win_p75":47,"win_p95":51,"win_min":28,"win_max":61,"projected_conf_rank":6.74,"direct_playoff_probability":0.4561,"top_10_probability":0.9069,"playin_only_probability":0.4508,"playoff_probability":0.4561,"win_50_plus_prob":0.1038,"win_60_plus_prob":0.0002,"projected_rank":15,"actual_wins":51,"actual_losses":31,"actual_games":82,"win_error":-7.0},{"team":"MIN","conference":"West","mu":0.5871,"sigma":5.8087,"projected_wins":43.4,"win_std":4.27,"win_p5":36,"win_p25":40,"win_median":43,"win_p75":46,"win_p95":50,"win_min":27,"win_max":60,"projected_conf_rank":7.14,"direct_playoff_probability":0.3971,"top_10_probability":0.8813,"playin_only_probability":0.4842,"playoff_probability":0.3971,"win_50_plus_prob":0.0749,"win_60_plus_prob":0.0002,"projected_rank":16,"actual_wins":42,"actual_losses":40,"actual_games":82,"win_error":1.4},{"team":"ATL","conference":"East","mu":0.6115,"sigma":5.7128,"projected_wins":42.2,"win_std":4.21,"win_p5":35,"win_p25":39,"win_median":42,"win_p75":45,"win_p95":49,"win_min":26,"win_max":57,"projected_conf_rank":8.49,"direct_playoff_probability":0.153,"top_10_probability":0.8653,"playin_only_probability":0.7123,"playoff_probability":0.153,"win_50_plus_prob":0.0412,"win_60_plus_prob":0.0,"projected_rank":17,"actual_wins":41,"actual_losses":41,"actual_games":82,"win_error":1.2},{"team":"SAC","conference":"West","mu":0.1898,"sigma":5.8031,"projected_wins":42.0,"win_std":4.23,"win_p5":35,"win_p25":39,"win_median":42,"win_p75":45,"win_p95":49,"win_min":24,"win_max":60,"projected_conf_rank":8.0,"direct_playoff_probability":0.2713,"top_10_probability":0.8161,"playin_only_probability":0.5448,"playoff_probability":0.2713,"win_50_plus_prob":0.0364,"win_60_plus_prob":0.0001,"projected_rank":18,"actual_wins":48,"actual_losses":34,"actual_games":82,"win_error":-6.0},{"team":"NOP","conference":"West","mu":-0.4976,"sigma":5.7332,"projected_wins":39.5,"win_std":4.26,"win_p5":33,"win_p25":37,"win_median":40,"win_p75":42,"win_p95":47,"win_min":24,"win_max":56,"projected_conf_rank":9.42,"direct_playoff_probability":0.1245,"top_10_probability":0.6114,"playin_only_probability":0.4869,"playoff_probability":0.1245,"win_50_plus_prob":0.0109,"win_60_plus_prob":0.0,"projected_rank":19,"actual_wins":42,"actual_losses":40,"actual_games":82,"win_error":-2.5},{"team":"LAL","conference":"West","mu":-0.4542,"sigma":5.4648,"projected_wins":39.2,"win_std":4.26,"win_p5":32,"win_p25":36,"win_median":39,"win_p75":42,"win_p95":46,"win_min":24,"win_max":53,"projected_conf_rank":9.58,"direct_playoff_probability":0.1163,"top_10_probability":0.5854,"playin_only_probability":0.4691,"playoff_probability":0.1163,"win_50_plus_prob":0.0066,"win_60_plus_prob":0.0,"projected_rank":20,"actual_wins":43,"actual_losses":39,"actual_games":82,"win_error":-3.8},{"team":"NYK","conference":"East","mu":-0.2154,"sigma":5.4941,"projected_wins":38.6,"win_std":4.2,"win_p5":32,"win_p25":36,"win_median":39,"win_p75":41,"win_p95":46,"win_min":23,"win_max":55,"projected_conf_rank":10.06,"direct_playoff_probability":0.0357,"top_10_probability":0.5948,"playin_only_probability":0.5591,"playoff_probability":0.0357,"win_50_plus_prob":0.0047,"win_60_plus_prob":0.0,"projected_rank":21,"actual_wins":47,"actual_losses":35,"actual_games":82,"win_error":-8.4},{"team":"PHX","conference":"West","mu":-1.2653,"sigma":5.7264,"projected_wins":35.9,"win_std":4.21,"win_p5":29,"win_p25":33,"win_median":36,"win_p75":39,"win_p95":43,"win_min":21,"win_max":52,"projected_conf_rank":11.09,"direct_playoff_probability":0.0283,"top_10_probability":0.2758,"playin_only_probability":0.2475,"playoff_probability":0.0283,"win_50_plus_prob":0.0011,"win_60_plus_prob":0.0,"projected_rank":22,"actual_wins":45,"actual_losses":37,"actual_games":82,"win_error":-9.1},{"team":"IND","conference":"East","mu":-1.2433,"sigma":5.7252,"projected_wins":35.5,"win_std":4.17,"win_p5":29,"win_p25":33,"win_median":36,"win_p75":38,"win_p95":42,"win_min":21,"win_max":51,"projected_conf_rank":11.27,"direct_playoff_probability":0.0059,"top_10_probability":0.2874,"playin_only_probability":0.2815,"playoff_probability":0.0059,"win_50_plus_prob":0.0006,"win_60_plus_prob":0.0,"projected_rank":23,"actual_wins":35,"actual_losses":47,"actual_games":82,"win_error":0.5},{"team":"ORL","conference":"East","mu":-1.5456,"sigma":5.3995,"projected_wins":34.1,"win_std":4.15,"win_p5":27,"win_p25":31,"win_median":34,"win_p75":37,"win_p95":41,"win_min":20,"win_max":49,"projected_conf_rank":11.75,"direct_playoff_probability":0.0033,"top_10_probability":0.184,"playin_only_probability":0.1807,"playoff_probability":0.0033,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":24,"actual_wins":34,"actual_losses":48,"actual_games":82,"win_error":0.1},{"team":"CHI","conference":"East","mu":-1.598,"sigma":5.0735,"projected_wins":33.7,"win_std":4.13,"win_p5":27,"win_p25":31,"win_median":34,"win_p75":36,"win_p95":40,"win_min":17,"win_max":49,"projected_conf_rank":11.9,"direct_playoff_probability":0.0021,"top_10_probability":0.1568,"playin_only_probability":0.1547,"playoff_probability":0.0021,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":25,"actual_wins":40,"actual_losses":42,"actual_games":82,"win_error":-6.3},{"team":"POR","conference":"West","mu":-2.6478,"sigma":6.0,"projected_wins":31.5,"win_std":4.18,"win_p5":25,"win_p25":29,"win_median":31,"win_p75":34,"win_p95":38,"win_min":16,"win_max":47,"projected_conf_rank":12.44,"direct_playoff_probability":0.002,"top_10_probability":0.0545,"playin_only_probability":0.0525,"playoff_probability":0.002,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":26,"actual_wins":33,"actual_losses":49,"actual_games":82,"win_error":-1.5},{"team":"CHA","conference":"East","mu":-3.7018,"sigma":5.6737,"projected_wins":26.9,"win_std":3.96,"win_p5":20,"win_p25":24,"win_median":27,"win_p75":30,"win_p95":33,"win_min":12,"win_max":46,"projected_conf_rank":13.66,"direct_playoff_probability":0.0001,"top_10_probability":0.0064,"playin_only_probability":0.0063,"playoff_probability":0.0001,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":27,"actual_wins":27,"actual_losses":55,"actual_games":82,"win_error":-0.1},{"team":"HOU","conference":"West","mu":-7.3737,"sigma":5.1834,"projected_wins":16.3,"win_std":3.43,"win_p5":11,"win_p25":14,"win_median":16,"win_p75":19,"win_p95":22,"win_min":4,"win_max":30,"projected_conf_rank":14.32,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":28,"actual_wins":22,"actual_losses":60,"actual_games":82,"win_error":-5.7},{"team":"SAS","conference":"West","mu":-8.4025,"sigma":5.3598,"projected_wins":14.1,"win_std":3.29,"win_p5":9,"win_p25":12,"win_median":14,"win_p75":16,"win_p95":20,"win_min":3,"win_max":29,"projected_conf_rank":14.67,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":29,"actual_wins":22,"actual_losses":60,"actual_games":82,"win_error":-7.9},{"team":"DET","conference":"East","mu":-9.3013,"sigma":6.0,"projected_wins":12.1,"win_std":3.12,"win_p5":7,"win_p25":10,"win_median":12,"win_p75":14,"win_p95":17,"win_min":3,"win_max":23,"projected_conf_rank":15.0,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":30,"actual_wins":17,"actual_losses":65,"actual_games":82,"win_error":-4.9}]},"2023-24":{"season_stats":{"mae":6.06,"rmse":7.05,"correlation":0.867,"mean_error":-0.0},"team_results":[{"team":"BOS","conference":"East","mu":8.9151,"sigma":5.6292,"projected_wins":69.3,"win_std":3.11,"win_p5":64,"win_p25":67,"win_median":69,"win_p75":71,"win_p95":74,"win_min":57,"win_max":79,"projected_conf_rank":1.0,"direct_playoff_probability":1.0,"top_10_probability":1.0,"playin_only_probability":0.0,"playoff_probability":1.0,"win_50_plus_prob":1.0,"win_60_plus_prob":0.9986,"projected_rank":1,"actual_wins":64,"actual_losses":18,"actual_games":82,"win_error":5.3},{"team":"OKC","conference":"West","mu":7.6531,"sigma":6.0,"projected_wins":64.1,"win_std":3.52,"win_p5":58,"win_p25":62,"win_median":64,"win_p75":66,"win_p95":70,"win_min":50,"win_max":77,"projected_conf_rank":1.5,"direct_playoff_probability":0.9998,"top_10_probability":1.0,"playin_only_probability":0.0002,"playoff_probability":0.9998,"win_50_plus_prob":1.0,"win_60_plus_prob":0.9037,"projected_rank":2,"actual_wins":57,"actual_losses":25,"actual_games":82,"win_error":7.1},{"team":"MIN","conference":"West","mu":6.3433,"sigma":5.1915,"projected_wins":61.2,"win_std":3.63,"win_p5":55,"win_p25":59,"win_median":61,"win_p75":64,"win_p95":67,"win_min":44,"win_max":73,"projected_conf_rank":2.21,"direct_playoff_probability":0.9972,"top_10_probability":1.0,"playin_only_probability":0.0028,"playoff_probability":0.9972,"win_50_plus_prob":0.9991,"win_60_plus_prob":0.6826,"projected_rank":3,"actual_wins":56,"actual_losses":26,"actual_games":82,"win_error":5.2},{"team":"LAC","conference":"West","mu":5.7166,"sigma":5.3441,"projected_wins":59.2,"win_std":3.78,"win_p5":53,"win_p25":57,"win_median":59,"win_p75":62,"win_p95":65,"win_min":46,"win_max":73,"projected_conf_rank":2.79,"direct_playoff_probability":0.9905,"top_10_probability":1.0,"playin_only_probability":0.0095,"playoff_probability":0.9905,"win_50_plus_prob":0.9949,"win_60_plus_prob":0.4725,"projected_rank":4,"actual_wins":51,"actual_losses":31,"actual_games":82,"win_error":8.2},{"team":"MIA","conference":"East","mu":3.1484,"sigma":5.4867,"projected_wins":54.4,"win_std":3.97,"win_p5":48,"win_p25":52,"win_median":54,"win_p75":57,"win_p95":61,"win_min":38,"win_max":67,"projected_conf_rank":2.27,"direct_playoff_probability":0.9981,"top_10_probability":1.0,"playin_only_probability":0.0019,"playoff_probability":0.9981,"win_50_plus_prob":0.8902,"win_60_plus_prob":0.0926,"projected_rank":5,"actual_wins":46,"actual_losses":36,"actual_games":82,"win_error":8.4},{"team":"PHX","conference":"West","mu":3.2939,"sigma":5.2832,"projected_wins":51.6,"win_std":4.05,"win_p5":45,"win_p25":49,"win_median":52,"win_p75":54,"win_p95":58,"win_min":34,"win_max":68,"projected_conf_rank":5.65,"direct_playoff_probability":0.6896,"top_10_probability":0.9948,"playin_only_probability":0.3052,"playoff_probability":0.6896,"win_50_plus_prob":0.7031,"win_60_plus_prob":0.025,"projected_rank":6,"actual_wins":49,"actual_losses":33,"actual_games":82,"win_error":2.6},{"team":"NOP","conference":"West","mu":3.3429,"sigma":6.0,"projected_wins":50.9,"win_std":4.03,"win_p5":44,"win_p25":48,"win_median":51,"win_p75":54,"win_p95":58,"win_min":35,"win_max":65,"projected_conf_rank":5.96,"direct_playoff_probability":0.631,"top_10_probability":0.9935,"playin_only_probability":0.3625,"playoff_probability":0.631,"win_50_plus_prob":0.6431,"win_60_plus_prob":0.0145,"projected_rank":7,"actual_wins":49,"actual_losses":33,"actual_games":82,"win_error":1.9},{"team":"DEN","conference":"West","mu":2.9352,"sigma":4.9572,"projected_wins":50.5,"win_std":4.01,"win_p5":44,"win_p25":48,"win_median":50,"win_p75":53,"win_p95":57,"win_min":33,"win_max":64,"projected_conf_rank":6.17,"direct_playoff_probability":0.5854,"top_10_probability":0.9934,"playin_only_probability":0.408,"playoff_probability":0.5854,"win_50_plus_prob":0.5902,"win_60_plus_prob":0.0111,"projected_rank":8,"actual_wins":57,"actual_losses":25,"actual_games":82,"win_error":-6.5},{"team":"LAL","conference":"West","mu":3.1668,"sigma":5.0036,"projected_wins":50.4,"win_std":4.06,"win_p5":44,"win_p25":48,"win_median":50,"win_p75":53,"win_p95":57,"win_min":35,"win_max":65,"projected_conf_rank":6.18,"direct_playoff_probability":0.5805,"top_10_probability":0.9907,"playin_only_probability":0.4102,"playoff_probability":0.5805,"win_50_plus_prob":0.5933,"win_60_plus_prob":0.0118,"projected_rank":9,"actual_wins":47,"actual_losses":35,"actual_games":82,"win_error":3.4},{"team":"NYK","conference":"East","mu":1.5104,"sigma":5.7698,"projected_wins":47.5,"win_std":4.04,"win_p5":41,"win_p25":45,"win_median":47,"win_p75":50,"win_p95":54,"win_min":32,"win_max":61,"projected_conf_rank":4.03,"direct_playoff_probability":0.9279,"top_10_probability":1.0,"playin_only_probability":0.0721,"playoff_probability":0.9279,"win_50_plus_prob":0.307,"win_60_plus_prob":0.0013,"projected_rank":10,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":-2.5},{"team":"GSW","conference":"West","mu":2.1401,"sigma":5.6769,"projected_wins":47.3,"win_std":4.13,"win_p5":40,"win_p25":44,"win_median":47,"win_p75":50,"win_p95":54,"win_min":31,"win_max":62,"projected_conf_rank":7.64,"direct_playoff_probability":0.2777,"top_10_probability":0.9538,"playin_only_probability":0.6761,"playoff_probability":0.2777,"win_50_plus_prob":0.2978,"win_60_plus_prob":0.0012,"projected_rank":11,"actual_wins":46,"actual_losses":36,"actual_games":82,"win_error":1.3},{"team":"PHI","conference":"East","mu":0.948,"sigma":6.0,"projected_wins":46.0,"win_std":4.12,"win_p5":39,"win_p25":43,"win_median":46,"win_p75":49,"win_p95":53,"win_min":32,"win_max":61,"projected_conf_rank":4.55,"direct_playoff_probability":0.8624,"top_10_probability":1.0,"playin_only_probability":0.1376,"playoff_probability":0.8624,"win_50_plus_prob":0.1963,"win_60_plus_prob":0.0005,"projected_rank":12,"actual_wins":47,"actual_losses":35,"actual_games":82,"win_error":-1.0},{"team":"DAL","conference":"West","mu":1.3815,"sigma":5.6923,"projected_wins":44.9,"win_std":4.11,"win_p5":38,"win_p25":42,"win_median":45,"win_p75":48,"win_p95":52,"win_min":30,"win_max":61,"projected_conf_rank":8.7,"direct_playoff_probability":0.1232,"top_10_probability":0.8789,"playin_only_probability":0.7557,"playoff_probability":0.1232,"win_50_plus_prob":0.1299,"win_60_plus_prob":0.0002,"projected_rank":13,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":-5.1},{"team":"SAC","conference":"West","mu":1.7598,"sigma":6.0,"projected_wins":44.8,"win_std":4.06,"win_p5":38,"win_p25":42,"win_median":45,"win_p75":48,"win_p95":51,"win_min":28,"win_max":60,"projected_conf_rank":8.73,"direct_playoff_probability":0.1219,"top_10_probability":0.8814,"playin_only_probability":0.7595,"playoff_probability":0.1219,"win_50_plus_prob":0.1234,"win_60_plus_prob":0.0001,"projected_rank":14,"actual_wins":46,"actual_losses":36,"actual_games":82,"win_error":-1.2},{"team":"IND","conference":"East","mu":0.2278,"sigma":5.906,"projected_wins":43.2,"win_std":4.1,"win_p5":36,"win_p25":40,"win_median":43,"win_p75":46,"win_p95":50,"win_min":28,"win_max":60,"projected_conf_rank":5.68,"direct_playoff_probability":0.6604,"top_10_probability":0.9994,"playin_only_probability":0.339,"playoff_probability":0.6604,"win_50_plus_prob":0.0613,"win_60_plus_prob":0.0001,"projected_rank":15,"actual_wins":47,"actual_losses":35,"actual_games":82,"win_error":-3.8},{"team":"MIL","conference":"East","mu":0.0623,"sigma":6.0,"projected_wins":42.8,"win_std":4.12,"win_p5":36,"win_p25":40,"win_median":43,"win_p75":46,"win_p95":50,"win_min":28,"win_max":56,"projected_conf_rank":5.83,"direct_playoff_probability":0.6266,"top_10_probability":0.9995,"playin_only_probability":0.3729,"playoff_probability":0.6266,"win_50_plus_prob":0.0522,"win_60_plus_prob":0.0,"projected_rank":16,"actual_wins":49,"actual_losses":33,"actual_games":82,"win_error":-6.2},{"team":"CLE","conference":"East","mu":-0.5249,"sigma":5.3922,"projected_wins":41.5,"win_std":4.14,"win_p5":35,"win_p25":39,"win_median":41,"win_p75":44,"win_p95":48,"win_min":27,"win_max":57,"projected_conf_rank":6.39,"direct_playoff_probability":0.4842,"top_10_probability":0.9982,"playin_only_probability":0.514,"playoff_probability":0.4842,"win_50_plus_prob":0.0256,"win_60_plus_prob":0.0,"projected_rank":17,"actual_wins":48,"actual_losses":34,"actual_games":82,"win_error":-6.5},{"team":"ORL","conference":"East","mu":-0.8399,"sigma":6.0,"projected_wins":40.6,"win_std":4.14,"win_p5":34,"win_p25":38,"win_median":41,"win_p75":43,"win_p95":47,"win_min":25,"win_max":54,"projected_conf_rank":6.74,"direct_playoff_probability":0.4029,"top_10_probability":0.9963,"playin_only_probability":0.5934,"playoff_probability":0.4029,"win_50_plus_prob":0.0153,"win_60_plus_prob":0.0,"projected_rank":18,"actual_wins":47,"actual_losses":35,"actual_games":82,"win_error":-6.4},{"team":"HOU","conference":"West","mu":-0.6998,"sigma":5.8715,"projected_wins":37.8,"win_std":4.16,"win_p5":31,"win_p25":35,"win_median":38,"win_p75":41,"win_p95":45,"win_min":23,"win_max":54,"projected_conf_rank":11.17,"direct_playoff_probability":0.0028,"top_10_probability":0.2139,"playin_only_probability":0.2111,"playoff_probability":0.0028,"win_50_plus_prob":0.0021,"win_60_plus_prob":0.0,"projected_rank":19,"actual_wins":41,"actual_losses":41,"actual_games":82,"win_error":-3.2},{"team":"SAS","conference":"West","mu":-1.5692,"sigma":5.6949,"projected_wins":34.3,"win_std":4.1,"win_p5":28,"win_p25":31,"win_median":34,"win_p75":37,"win_p95":41,"win_min":17,"win_max":49,"projected_conf_rank":12.12,"direct_playoff_probability":0.0003,"top_10_probability":0.055,"playin_only_probability":0.0547,"playoff_probability":0.0003,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":20,"actual_wins":22,"actual_losses":60,"actual_games":82,"win_error":12.3},{"team":"MEM","conference":"West","mu":-1.8826,"sigma":6.0,"projected_wins":33.8,"win_std":4.14,"win_p5":27,"win_p25":31,"win_median":34,"win_p75":37,"win_p95":41,"win_min":18,"win_max":51,"projected_conf_rank":12.2,"direct_playoff_probability":0.0001,"top_10_probability":0.0446,"playin_only_probability":0.0445,"playoff_probability":0.0001,"win_50_plus_prob":0.0002,"win_60_plus_prob":0.0,"projected_rank":21,"actual_wins":27,"actual_losses":55,"actual_games":82,"win_error":6.8},{"team":"TOR","conference":"East","mu":-2.6693,"sigma":5.2343,"projected_wins":33.5,"win_std":4.06,"win_p5":27,"win_p25":31,"win_median":34,"win_p75":36,"win_p95":40,"win_min":20,"win_max":49,"projected_conf_rank":9.19,"direct_playoff_probability":0.0311,"top_10_probability":0.881,"playin_only_probability":0.8499,"playoff_probability":0.0311,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":22,"actual_wins":25,"actual_losses":57,"actual_games":82,"win_error":8.5},{"team":"ATL","conference":"East","mu":-3.4075,"sigma":5.1219,"projected_wins":30.7,"win_std":3.97,"win_p5":24,"win_p25":28,"win_median":31,"win_p75":33,"win_p95":37,"win_min":14,"win_max":47,"projected_conf_rank":10.08,"direct_playoff_probability":0.0059,"top_10_probability":0.7067,"playin_only_probability":0.7008,"playoff_probability":0.0059,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":23,"actual_wins":36,"actual_losses":46,"actual_games":82,"win_error":-5.3},{"team":"DET","conference":"East","mu":-5.0318,"sigma":6.0,"projected_wins":26.3,"win_std":3.91,"win_p5":20,"win_p25":24,"win_median":26,"win_p75":29,"win_p95":33,"win_min":13,"win_max":44,"projected_conf_rank":11.65,"direct_playoff_probability":0.0003,"top_10_probability":0.2164,"playin_only_probability":0.2161,"playoff_probability":0.0003,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":24,"actual_wins":14,"actual_losses":68,"actual_games":82,"win_error":12.3},{"team":"BKN","conference":"East","mu":-5.4462,"sigma":5.3761,"projected_wins":24.1,"win_std":3.73,"win_p5":18,"win_p25":22,"win_median":24,"win_p75":27,"win_p95":30,"win_min":10,"win_max":40,"projected_conf_rank":12.48,"direct_playoff_probability":0.0002,"top_10_probability":0.0898,"playin_only_probability":0.0896,"playoff_probability":0.0002,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":25,"actual_wins":32,"actual_losses":50,"actual_games":82,"win_error":-7.9},{"team":"CHA","conference":"East","mu":-5.9406,"sigma":6.0,"projected_wins":23.5,"win_std":3.83,"win_p5":17,"win_p25":21,"win_median":23,"win_p75":26,"win_p95":30,"win_min":9,"win_max":39,"projected_conf_rank":12.74,"direct_playoff_probability":0.0,"top_10_probability":0.0699,"playin_only_probability":0.0699,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":26,"actual_wins":21,"actual_losses":61,"actual_games":82,"win_error":2.5},{"team":"CHI","conference":"East","mu":-6.3534,"sigma":5.6663,"projected_wins":21.8,"win_std":3.79,"win_p5":16,"win_p25":19,"win_median":22,"win_p75":24,"win_p95":28,"win_min":9,"win_max":36,"projected_conf_rank":13.37,"direct_playoff_probability":0.0,"top_10_probability":0.0327,"playin_only_probability":0.0327,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":27,"actual_wins":39,"actual_losses":43,"actual_games":82,"win_error":-17.2},{"team":"UTA","conference":"West","mu":-5.3987,"sigma":5.3769,"projected_wins":21.7,"win_std":3.7,"win_p5":16,"win_p25":19,"win_median":22,"win_p75":24,"win_p95":28,"win_min":10,"win_max":36,"projected_conf_rank":13.99,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":28,"actual_wins":31,"actual_losses":51,"actual_games":82,"win_error":-9.3},{"team":"WAS","conference":"East","mu":-6.871,"sigma":5.2977,"projected_wins":20.0,"win_std":3.6,"win_p5":14,"win_p25":18,"win_median":20,"win_p75":22,"win_p95":26,"win_min":8,"win_max":36,"projected_conf_rank":13.97,"direct_playoff_probability":0.0,"top_10_probability":0.0101,"playin_only_probability":0.0101,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":29,"actual_wins":15,"actual_losses":67,"actual_games":82,"win_error":5.0},{"team":"POR","conference":"West","mu":-9.3846,"sigma":5.6847,"projected_wins":12.2,"win_std":3.06,"win_p5":7,"win_p25":10,"win_median":12,"win_p75":14,"win_p95":17,"win_min":1,"win_max":26,"projected_conf_rank":14.97,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":30,"actual_wins":21,"actual_losses":61,"actual_games":82,"win_error":-8.8}]},"2024-25":{"season_stats":{"mae":3.76,"rmse":4.34,"correlation":0.9507,"mean_error":-0.17},"team_results":[{"team":"OKC","conference":"West","mu":10.7381,"sigma":5.8268,"projected_wins":70.4,"win_std":2.91,"win_p5":66,"win_p25":68,"win_median":70,"win_p75":72,"win_p95":75,"win_min":57,"win_max":80,"projected_conf_rank":1.0,"direct_playoff_probability":1.0,"top_10_probability":1.0,"playin_only_probability":0.0,"playoff_probability":1.0,"win_50_plus_prob":1.0,"win_60_plus_prob":0.9997,"projected_rank":1,"actual_wins":68,"actual_losses":14,"actual_games":82,"win_error":2.4},{"team":"BOS","conference":"East","mu":9.0756,"sigma":6.0,"projected_wins":68.9,"win_std":3.16,"win_p5":64,"win_p25":67,"win_median":69,"win_p75":71,"win_p95":74,"win_min":54,"win_max":80,"projected_conf_rank":1.02,"direct_playoff_probability":1.0,"top_10_probability":1.0,"playin_only_probability":0.0,"playoff_probability":1.0,"win_50_plus_prob":1.0,"win_60_plus_prob":0.9964,"projected_rank":2,"actual_wins":61,"actual_losses":21,"actual_games":82,"win_error":7.9},{"team":"CLE","conference":"East","mu":4.9176,"sigma":6.0,"projected_wins":58.0,"win_std":3.79,"win_p5":52,"win_p25":55,"win_median":58,"win_p75":61,"win_p95":64,"win_min":43,"win_max":72,"projected_conf_rank":2.15,"direct_playoff_probability":0.9999,"top_10_probability":1.0,"playin_only_probability":0.0001,"playoff_probability":0.9999,"win_50_plus_prob":0.9866,"win_60_plus_prob":0.3527,"projected_rank":3,"actual_wins":64,"actual_losses":18,"actual_games":82,"win_error":-6.0},{"team":"GSW","conference":"West","mu":3.9319,"sigma":5.7422,"projected_wins":53.4,"win_std":3.98,"win_p5":47,"win_p25":51,"win_median":53,"win_p75":56,"win_p95":60,"win_min":38,"win_max":67,"projected_conf_rank":3.95,"direct_playoff_probability":0.8766,"top_10_probability":0.9989,"playin_only_probability":0.1223,"playoff_probability":0.8766,"win_50_plus_prob":0.8355,"win_60_plus_prob":0.0622,"projected_rank":4,"actual_wins":48,"actual_losses":34,"actual_games":82,"win_error":5.4},{"team":"DEN","conference":"West","mu":3.4519,"sigma":5.4679,"projected_wins":52.2,"win_std":4.04,"win_p5":45,"win_p25":49,"win_median":52,"win_p75":55,"win_p95":59,"win_min":38,"win_max":68,"projected_conf_rank":4.52,"direct_playoff_probability":0.8065,"top_10_probability":0.9979,"playin_only_probability":0.1914,"playoff_probability":0.8065,"win_50_plus_prob":0.7462,"win_60_plus_prob":0.0336,"projected_rank":5,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":2.2},{"team":"LAC","conference":"West","mu":3.6291,"sigma":5.6209,"projected_wins":52.1,"win_std":3.96,"win_p5":46,"win_p25":49,"win_median":52,"win_p75":55,"win_p95":59,"win_min":38,"win_max":67,"projected_conf_rank":4.56,"direct_playoff_probability":0.802,"top_10_probability":0.9975,"playin_only_probability":0.1955,"playoff_probability":0.802,"win_50_plus_prob":0.7413,"win_60_plus_prob":0.0295,"projected_rank":6,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":2.1},{"team":"NYK","conference":"East","mu":2.795,"sigma":5.5619,"projected_wins":51.8,"win_std":4.01,"win_p5":45,"win_p25":49,"win_median":52,"win_p75":55,"win_p95":58,"win_min":36,"win_max":66,"projected_conf_rank":3.16,"direct_playoff_probability":0.9936,"top_10_probability":1.0,"playin_only_probability":0.0064,"playoff_probability":0.9936,"win_50_plus_prob":0.7241,"win_60_plus_prob":0.0251,"projected_rank":7,"actual_wins":51,"actual_losses":31,"actual_games":82,"win_error":0.8},{"team":"MIN","conference":"West","mu":3.1693,"sigma":5.5237,"projected_wins":50.8,"win_std":4.02,"win_p5":44,"win_p25":48,"win_median":51,"win_p75":54,"win_p95":57,"win_min":36,"win_max":66,"projected_conf_rank":5.2,"direct_playoff_probability":0.7107,"top_10_probability":0.9941,"playin_only_probability":0.2834,"playoff_probability":0.7107,"win_50_plus_prob":0.6301,"win_60_plus_prob":0.014,"projected_rank":8,"actual_wins":49,"actual_losses":33,"actual_games":82,"win_error":1.8},{"team":"MEM","conference":"West","mu":2.8348,"sigma":6.0,"projected_wins":50.1,"win_std":4.04,"win_p5":43,"win_p25":47,"win_median":50,"win_p75":53,"win_p95":57,"win_min":31,"win_max":65,"projected_conf_rank":5.61,"direct_playoff_probability":0.6444,"top_10_probability":0.9888,"playin_only_probability":0.3444,"playoff_probability":0.6444,"win_50_plus_prob":0.567,"win_60_plus_prob":0.0092,"projected_rank":9,"actual_wins":48,"actual_losses":34,"actual_games":82,"win_error":2.1},{"team":"HOU","conference":"West","mu":2.6198,"sigma":5.5012,"projected_wins":48.1,"win_std":4.0,"win_p5":42,"win_p25":45,"win_median":48,"win_p75":51,"win_p95":55,"win_min":32,"win_max":62,"projected_conf_rank":6.69,"direct_playoff_probability":0.4441,"top_10_probability":0.9764,"playin_only_probability":0.5323,"playoff_probability":0.4441,"win_50_plus_prob":0.3679,"win_60_plus_prob":0.0016,"projected_rank":10,"actual_wins":52,"actual_losses":30,"actual_games":82,"win_error":-3.9},{"team":"LAL","conference":"West","mu":2.2562,"sigma":6.0,"projected_wins":47.9,"win_std":4.1,"win_p5":41,"win_p25":45,"win_median":48,"win_p75":51,"win_p95":55,"win_min":31,"win_max":63,"projected_conf_rank":6.79,"direct_playoff_probability":0.4232,"top_10_probability":0.9715,"playin_only_probability":0.5483,"playoff_probability":0.4232,"win_50_plus_prob":0.3434,"win_60_plus_prob":0.0017,"projected_rank":11,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":-2.1},{"team":"SAC","conference":"West","mu":1.3344,"sigma":5.5527,"projected_wins":45.4,"win_std":4.14,"win_p5":39,"win_p25":43,"win_median":45,"win_p75":48,"win_p95":52,"win_min":30,"win_max":60,"projected_conf_rank":8.1,"direct_playoff_probability":0.2124,"top_10_probability":0.9037,"playin_only_probability":0.6913,"playoff_probability":0.2124,"win_50_plus_prob":0.1538,"win_60_plus_prob":0.0003,"projected_rank":12,"actual_wins":40,"actual_losses":42,"actual_games":82,"win_error":5.4},{"team":"MIL","conference":"East","mu":0.9482,"sigma":6.0,"projected_wins":45.0,"win_std":4.07,"win_p5":38,"win_p25":42,"win_median":45,"win_p75":48,"win_p95":52,"win_min":30,"win_max":60,"projected_conf_rank":5.04,"direct_playoff_probability":0.8393,"top_10_probability":0.9983,"playin_only_probability":0.159,"playoff_probability":0.8393,"win_50_plus_prob":0.1362,"win_60_plus_prob":0.0001,"projected_rank":13,"actual_wins":48,"actual_losses":34,"actual_games":82,"win_error":-3.0},{"team":"ORL","conference":"East","mu":0.3311,"sigma":5.8677,"projected_wins":44.1,"win_std":4.13,"win_p5":37,"win_p25":41,"win_median":44,"win_p75":47,"win_p95":51,"win_min":30,"win_max":59,"projected_conf_rank":5.37,"direct_playoff_probability":0.7777,"top_10_probability":0.9966,"playin_only_probability":0.2189,"playoff_probability":0.7777,"win_50_plus_prob":0.0973,"win_60_plus_prob":0.0,"projected_rank":14,"actual_wins":41,"actual_losses":41,"actual_games":82,"win_error":3.1},{"team":"DAL","conference":"West","mu":0.7368,"sigma":5.1524,"projected_wins":42.5,"win_std":4.07,"win_p5":36,"win_p25":40,"win_median":42,"win_p75":45,"win_p95":49,"win_min":26,"win_max":59,"projected_conf_rank":9.37,"direct_playoff_probability":0.0665,"top_10_probability":0.7499,"playin_only_probability":0.6834,"playoff_probability":0.0665,"win_50_plus_prob":0.0438,"win_60_plus_prob":0.0,"projected_rank":15,"actual_wins":39,"actual_losses":43,"actual_games":82,"win_error":3.5},{"team":"IND","conference":"East","mu":-0.0221,"sigma":6.0,"projected_wins":41.6,"win_std":4.07,"win_p5":35,"win_p25":39,"win_median":42,"win_p75":44,"win_p95":48,"win_min":28,"win_max":56,"projected_conf_rank":6.38,"direct_playoff_probability":0.5531,"top_10_probability":0.9874,"playin_only_probability":0.4343,"playoff_probability":0.5531,"win_50_plus_prob":0.0243,"win_60_plus_prob":0.0,"projected_rank":16,"actual_wins":50,"actual_losses":32,"actual_games":82,"win_error":-8.4},{"team":"MIA","conference":"East","mu":-0.6394,"sigma":5.7646,"projected_wins":39.7,"win_std":4.13,"win_p5":33,"win_p25":37,"win_median":40,"win_p75":43,"win_p95":46,"win_min":25,"win_max":57,"projected_conf_rank":7.19,"direct_playoff_probability":0.3626,"top_10_probability":0.9635,"playin_only_probability":0.6009,"playoff_probability":0.3626,"win_50_plus_prob":0.0089,"win_60_plus_prob":0.0,"projected_rank":17,"actual_wins":37,"actual_losses":45,"actual_games":82,"win_error":2.7},{"team":"SAS","conference":"West","mu":-0.0658,"sigma":5.6156,"projected_wins":39.3,"win_std":4.05,"win_p5":33,"win_p25":37,"win_median":39,"win_p75":42,"win_p95":46,"win_min":25,"win_max":52,"projected_conf_rank":10.48,"direct_playoff_probability":0.0136,"top_10_probability":0.388,"playin_only_probability":0.3744,"playoff_probability":0.0136,"win_50_plus_prob":0.0052,"win_60_plus_prob":0.0,"projected_rank":18,"actual_wins":34,"actual_losses":48,"actual_games":82,"win_error":5.3},{"team":"DET","conference":"East","mu":-0.9072,"sigma":5.8242,"projected_wins":38.9,"win_std":4.15,"win_p5":32,"win_p25":36,"win_median":39,"win_p75":42,"win_p95":46,"win_min":25,"win_max":54,"projected_conf_rank":7.54,"direct_playoff_probability":0.2941,"top_10_probability":0.947,"playin_only_probability":0.6529,"playoff_probability":0.2941,"win_50_plus_prob":0.0062,"win_60_plus_prob":0.0,"projected_rank":19,"actual_wins":44,"actual_losses":38,"actual_games":82,"win_error":-5.1},{"team":"CHI","conference":"East","mu":-1.7904,"sigma":6.0,"projected_wins":36.4,"win_std":4.09,"win_p5":30,"win_p25":34,"win_median":36,"win_p75":39,"win_p95":43,"win_min":19,"win_max":53,"projected_conf_rank":8.63,"direct_playoff_probability":0.1253,"top_10_probability":0.8546,"playin_only_probability":0.7293,"playoff_probability":0.1253,"win_50_plus_prob":0.0008,"win_60_plus_prob":0.0,"projected_rank":20,"actual_wins":39,"actual_losses":43,"actual_games":82,"win_error":-2.6},{"team":"ATL","conference":"East","mu":-2.5768,"sigma":6.0,"projected_wins":33.4,"win_std":4.06,"win_p5":27,"win_p25":31,"win_median":33,"win_p75":36,"win_p95":40,"win_min":19,"win_max":48,"projected_conf_rank":9.87,"direct_playoff_probability":0.033,"top_10_probability":0.618,"playin_only_probability":0.585,"playoff_probability":0.033,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":21,"actual_wins":40,"actual_losses":42,"actual_games":82,"win_error":-6.6},{"team":"PHI","conference":"East","mu":-3.042,"sigma":6.0,"projected_wins":32.1,"win_std":4.12,"win_p5":25,"win_p25":29,"win_median":32,"win_p75":35,"win_p95":39,"win_min":16,"win_max":49,"projected_conf_rank":10.32,"direct_playoff_probability":0.0202,"top_10_probability":0.4823,"playin_only_probability":0.4621,"playoff_probability":0.0202,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":22,"actual_wins":24,"actual_losses":58,"actual_games":82,"win_error":8.1},{"team":"PHX","conference":"West","mu":-2.5221,"sigma":5.9483,"projected_wins":31.8,"win_std":4.03,"win_p5":25,"win_p25":29,"win_median":32,"win_p75":34,"win_p95":39,"win_min":17,"win_max":47,"projected_conf_rank":12.24,"direct_playoff_probability":0.0,"top_10_probability":0.0244,"playin_only_probability":0.0244,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":23,"actual_wins":36,"actual_losses":46,"actual_games":82,"win_error":-4.2},{"team":"POR","conference":"West","mu":-3.1432,"sigma":5.9199,"projected_wins":30.2,"win_std":4.04,"win_p5":24,"win_p25":27,"win_median":30,"win_p75":33,"win_p95":37,"win_min":15,"win_max":46,"projected_conf_rank":12.55,"direct_playoff_probability":0.0,"top_10_probability":0.0089,"playin_only_probability":0.0089,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":24,"actual_wins":36,"actual_losses":46,"actual_games":82,"win_error":-5.8},{"team":"TOR","conference":"East","mu":-4.2722,"sigma":5.8821,"projected_wins":28.1,"win_std":4.04,"win_p5":22,"win_p25":25,"win_median":28,"win_p75":31,"win_p95":35,"win_min":13,"win_max":44,"projected_conf_rank":11.61,"direct_playoff_probability":0.0012,"top_10_probability":0.1474,"playin_only_probability":0.1462,"playoff_probability":0.0012,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":25,"actual_wins":30,"actual_losses":52,"actual_games":82,"win_error":-1.9},{"team":"BKN","conference":"East","mu":-6.4773,"sigma":6.0,"projected_wins":21.4,"win_std":3.68,"win_p5":15,"win_p25":19,"win_median":21,"win_p75":24,"win_p95":28,"win_min":8,"win_max":36,"projected_conf_rank":13.44,"direct_playoff_probability":0.0,"top_10_probability":0.0036,"playin_only_probability":0.0036,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":26,"actual_wins":26,"actual_losses":56,"actual_games":82,"win_error":-4.6},{"team":"NOP","conference":"West","mu":-6.7454,"sigma":6.0,"projected_wins":19.0,"win_std":3.55,"win_p5":13,"win_p25":17,"win_median":19,"win_p75":21,"win_p95":25,"win_min":7,"win_max":35,"projected_conf_rank":14.18,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":27,"actual_wins":21,"actual_losses":61,"actual_games":82,"win_error":-2.0},{"team":"WAS","conference":"East","mu":-7.2446,"sigma":5.9271,"projected_wins":19.0,"win_std":3.56,"win_p5":13,"win_p25":17,"win_median":19,"win_p75":21,"win_p95":25,"win_min":8,"win_max":33,"projected_conf_rank":14.05,"direct_playoff_probability":0.0,"top_10_probability":0.0005,"playin_only_probability":0.0005,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":28,"actual_wins":18,"actual_losses":64,"actual_games":82,"win_error":1.0},{"team":"CHA","conference":"East","mu":-7.7715,"sigma":6.0,"projected_wins":18.3,"win_std":3.54,"win_p5":13,"win_p25":16,"win_median":18,"win_p75":21,"win_p95":24,"win_min":7,"win_max":34,"projected_conf_rank":14.22,"direct_playoff_probability":0.0,"top_10_probability":0.0008,"playin_only_probability":0.0008,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":29,"actual_wins":19,"actual_losses":63,"actual_games":82,"win_error":-0.7},{"team":"UTA","conference":"West","mu":-8.3844,"sigma":6.0,"projected_wins":15.0,"win_std":3.27,"win_p5":10,"win_p25":13,"win_median":15,"win_p75":17,"win_p95":21,"win_min":3,"win_max":29,"projected_conf_rank":14.78,"direct_playoff_probability":0.0,"top_10_probability":0.0,"playin_only_probability":0.0,"playoff_probability":0.0,"win_50_plus_prob":0.0,"win_60_plus_prob":0.0,"projected_rank":30,"actual_wins":17,"actual_losses":65,"actual_games":82,"win_error":-2.0}]}},"validation":{"config":{"sigma_league":3.0,"home_court_advantage":2.0},"game_level":{"2022-23":{"n_games":1230,"brier_score":0.228128,"log_loss":0.653556,"accuracy":0.6488,"home_win_rate_actual":0.5805,"home_win_rate_predicted":0.5798,"margin_rmse":12.9047,"margin_mae":10.1425},"2023-24":{"n_games":1230,"brier_score":0.214806,"log_loss":0.619078,"accuracy":0.6561,"home_win_rate_actual":0.5431,"home_win_rate_predicted":0.5746,"margin_rmse":14.1335,"margin_mae":11.0523},"2024-25":{"n_games":1225,"brier_score":0.205287,"log_loss":0.597543,"accuracy":0.6922,"home_win_rate_actual":0.5445,"home_win_rate_predicted":0.5733,"margin_rmse":13.812,"margin_mae":10.7595}},"calibration":{"2022-23":[{"bin_low":0.0,"bin_high":0.1,"count":8,"predicted_rate":0.0629,"actual_rate":0.25,"calibration_error":0.1871},{"bin_low":0.1,"bin_high":0.2,"count":62,"predicted_rate":0.1599,"actual_rate":0.2742,"calibration_error":0.1143},{"bin_low":0.2,"bin_high":0.3,"count":68,"predicted_rate":0.2467,"actual_rate":0.3382,"calibration_error":0.0916},{"bin_low":0.3,"bin_high":0.4,"count":83,"predicted_rate":0.3534,"actual_rate":0.4217,"calibration_error":0.0683},{"bin_low":0.4,"bin_high":0.5,"count":167,"predicted_rate":0.458,"actual_rate":0.4491,"calibration_error":0.0089},{"bin_low":0.5,"bin_high":0.6,"count":242,"predicted_rate":0.5514,"actual_rate":0.6157,"calibration_error":0.0643},{"bin_low":0.6,"bin_high":0.7,"count":265,"predicted_rate":0.6486,"actual_rate":0.6604,"calibration_error":0.0118},{"bin_low":0.7,"bin_high":0.8,"count":155,"predicted_rate":0.7443,"actual_rate":0.6129,"calibration_error":0.1314},{"bin_low":0.8,"bin_high":0.9,"count":104,"predicted_rate":0.8529,"actual_rate":0.7981,"calibration_error":0.0549},{"bin_low":0.9,"bin_high":1.0,"count":76,"predicted_rate":0.9312,"actual_rate":0.7895,"calibration_error":0.1418}],"2023-24":[{"bin_low":0.0,"bin_high":0.1,"count":29,"predicted_rate":0.0726,"actual_rate":0.1724,"calibration_error":0.0998},{"bin_low":0.1,"bin_high":0.2,"count":55,"predicted_rate":0.1511,"actual_rate":0.3091,"calibration_error":0.158},{"bin_low":0.2,"bin_high":0.3,"count":113,"predicted_rate":0.2479,"actual_rate":0.2743,"calibration_error":0.0264},{"bin_low":0.3,"bin_high":0.4,"count":128,"predicted_rate":0.3531,"actual_rate":0.3203,"calibration_error":0.0328},{"bin_low":0.4,"bin_high":0.5,"count":144,"predicted_rate":0.4473,"actual_rate":0.4931,"calibration_error":0.0458},{"bin_low":0.5,"bin_high":0.6,"count":156,"predicted_rate":0.549,"actual_rate":0.5064,"calibration_error":0.0426},{"bin_low":0.6,"bin_high":0.7,"count":164,"predicted_rate":0.6477,"actual_rate":0.561,"calibration_error":0.0868},{"bin_low":0.7,"bin_high":0.8,"count":175,"predicted_rate":0.753,"actual_rate":0.6457,"calibration_error":0.1073},{"bin_low":0.8,"bin_high":0.9,"count":165,"predicted_rate":0.8494,"actual_rate":0.7879,"calibration_error":0.0616},{"bin_low":0.9,"bin_high":1.0,"count":101,"predicted_rate":0.9397,"actual_rate":0.8812,"calibration_error":0.0585}],"2024-25":[{"bin_low":0.0,"bin_high":0.1,"count":20,"predicted_rate":0.0544,"actual_rate":0.0,"calibration_error":0.0544},{"bin_low":0.1,"bin_high":0.2,"count":85,"predicted_rate":0.1575,"actual_rate":0.1647,"calibration_error":0.0072},{"bin_low":0.2,"bin_high":0.3,"count":94,"predicted_rate":0.2555,"actual_rate":0.3723,"calibration_error":0.1169},{"bin_low":0.3,"bin_high":0.4,"count":113,"predicted_rate":0.3463,"actual_rate":0.3186,"calibration_error":0.0277},{"bin_low":0.4,"bin_high":0.5,"count":147,"predicted_rate":0.4494,"actual_rate":0.3673,"calibration_error":0.082},{"bin_low":0.5,"bin_high":0.6,"count":157,"predicted_rate":0.5471,"actual_rate":0.535,"calibration_error":0.0121},{"bin_low":0.6,"bin_high":0.7,"count":183,"predicted_rate":0.6475,"actual_rate":0.6557,"calibration_error":0.0082},{"bin_low":0.7,"bin_high":0.8,"count":164,"predicted_rate":0.7491,"actual_rate":0.6646,"calibration_error":0.0845},{"bin_low":0.8,"bin_high":0.9,"count":156,"predicted_rate":0.8471,"actual_rate":0.7821,"calibration_error":0.065},{"bin_low":0.9,"bin_high":1.0,"count":106,"predicted_rate":0.9363,"actual_rate":0.8774,"calibration_error":0.0589}]},"season_level":{"overall":{"n_team_seasons":90,"mae":5.13,"rmse":6.19,"correlation":0.8861,"mean_error":-0.06},"per_season":{"2022-23":{"n_teams":30,"mae":5.57,"rmse":6.8,"correlation":0.821,"mean_error":0.0,"max_overestimate":14.1,"max_underestimate":-9.1},"2023-24":{"n_teams":30,"mae":6.06,"rmse":7.05,"correlation":0.867,"mean_error":-0.0,"max_overestimate":12.3,"max_underestimate":-17.2},"2024-25":{"n_teams":30,"mae":3.76,"rmse":4.34,"correlation":0.9507,"mean_error":-0.17,"max_overestimate":8.1,"max_underestimate":-8.4}}},"aggregate_calibration_error":0.0597}};
+
+let currentSeason = null;
+let sortCol = "projected_rank";
+let sortDir = "asc";
+let currentSimulatedGame = null;
+
+// ── Init ──
+(function init() {
+  const seasons = Object.keys(DATA.seasons).sort();
+  currentSeason = seasons[seasons.length - 1];
+
+  // Footer
+  const cfg = DATA.config || {};
+  document.getElementById("footSigma").textContent = cfg.sigma_league || "?";
+  document.getElementById("footHCA").textContent = cfg.home_court_advantage || "?";
+  document.getElementById("footN").textContent = (cfg.n_simulations || 0).toLocaleString();
+
+  // Season tabs
+  const tabsEl = document.getElementById("seasonTabs");
+  seasons.forEach(s => {
+    const tab = document.createElement("div");
+    tab.className = "season-tab" + (s === currentSeason ? " active" : "");
+    tab.textContent = s;
+    tab.onclick = () => switchSeason(s);
+    tabsEl.appendChild(tab);
+  });
+
+  initSingleGameSimulator(seasons);
+
+  render();
+})();
+
+function switchSeason(s) {
+  currentSeason = s;
+  document.querySelectorAll(".season-tab").forEach(t => {
+    t.classList.toggle("active", t.textContent === s);
+  });
+  sortCol = "projected_rank";
+  sortDir = "asc";
+  render();
+}
+
+function render() {
+  const sdata = DATA.seasons[currentSeason];
+  if (!sdata) return;
+  renderStats(sdata);
+  renderTable(sdata);
+  renderWinsChart(sdata);
+  renderCalibration();
+}
+
+// ── Stats Cards ──
+function renderStats(sdata) {
+  const ss = sdata.season_stats || {};
+  const vg = (DATA.validation && DATA.validation.game_level && DATA.validation.game_level[currentSeason]) || {};
+  const vs = (DATA.validation && DATA.validation.season_level && DATA.validation.season_level.per_season && DATA.validation.season_level.per_season[currentSeason]) || {};
+
+  const cards = [
+    { label:"Correlation", value: fmt(ss.correlation, 3), cls:"val-green", detail:"Proj vs Actual wins" },
+    { label:"MAE", value: fmt(ss.mae, 2), cls:"val-accent", detail:"Avg win error" },
+    { label:"RMSE", value: fmt(ss.rmse, 2), cls:"val-accent", detail:"Root mean sq error" },
+    { label:"Brier Score", value: fmt(vg.brier_score, 4), cls:"val-orange", detail:"Game-level (0.25=naive)" },
+    { label:"Accuracy", value: vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "—", cls:"val-green", detail:"Game pick accuracy" },
+    { label:"Log Loss", value: fmt(vg.log_loss, 4), cls:"val-purple", detail:"(0.693=coin flip)" },
+    { label:"Margin RMSE", value: fmt(vg.margin_rmse, 1), cls:"val-accent", detail:"Predicted vs actual margin" },
+    { label:"Teams", value: (sdata.team_results || []).length, cls:"val-accent", detail: currentSeason },
+  ];
+
+  const el = document.getElementById("statsRow");
+  el.innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value || "—"}</div>
+      <div class="detail">${c.detail}</div>
+    </div>
+  `).join("");
+}
+
+// ── Table ──
+function renderTable(sdata) {
+  let teams = [...(sdata.team_results || [])];
+
+  // Sort
+  teams.sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null) va = 0;
+    if (vb == null) vb = 0;
+    return sortDir === "asc" ? (va > vb ? 1 : va < vb ? -1 : 0) : (va < vb ? 1 : va > vb ? -1 : 0);
+  });
+
+  const cols = [
+    { key:"projected_rank", label:"Rank", cls:"rank" },
+    { key:"team", label:"Team", cls:"team" },
+    { key:"conference", label:"Conf", cls:"num" },
+    { key:"projected_conf_rank", label:"Conf Rk", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"—" },
+    { key:"mu", label:"Net Rtg", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" },
+    { key:"sigma", label:"Vol", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" },
+    { key:"projected_wins", label:"Proj W", cls:"num", fmt:v=>v!=null?v.toFixed(1):"—" },
+    { key:"win_p5", label:"90% CI", cls:"conf-band", fmt:(v,r)=>`${r.win_p5}-${r.win_p95}` },
+    { key:"actual_wins", label:"Actual W", cls:"num", fmt:v=>v!=null?v:"—" },
+    { key:"win_error", label:"Error", cls:"num", fmt:(v,r) => {
+      if (v == null) return "—";
+      const abs = Math.abs(v);
+      const sign = v > 0 ? "+" : "";
+      const cls = abs <= 3 ? "err-good" : abs <= 7 ? "err-ok" : "err-bad";
+      return `<span class="${cls}">${sign}${v.toFixed(1)}</span>`;
+    } },
+    { key:"direct_playoff_probability", label:"Top 6 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" },
+    { key:"top_10_probability", label:"Top 10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" },
+    { key:"playin_only_probability", label:"7-10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" },
+    { key:"win_std", label:"Win SD", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" },
+  ];
+
+  let html = "<table><thead><tr>";
+  cols.forEach(c => {
+    const cls = c.key === sortCol ? (sortDir === "asc" ? "sorted-asc" : "sorted-desc") : "";
+    html += `<th class="${cls}" data-col="${c.key}">${c.label}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+
+  teams.forEach(t => {
+    html += "<tr>";
+    cols.forEach(c => {
+      const raw = c.key === "win_p5" && c.label === "90% CI" ? t["win_p5"] : t[c.key];
+      const display = c.fmt ? c.fmt(raw, t) : (raw != null ? raw : "—");
+      html += `<td class="${c.cls || ""}">${display}</td>`;
+    });
+    html += "</tr>";
+  });
+
+  html += "</tbody></table>";
+  document.getElementById("tableWrap").innerHTML = html;
+
+  // Header click → sort
+  document.querySelectorAll("#tableWrap th").forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (sortCol === col) {
+        sortDir = sortDir === "asc" ? "desc" : "asc";
+      } else {
+        sortCol = col;
+        sortDir = col === "team" ? "asc" : "desc";
+      }
+      renderTable(sdata);
+    });
+  });
+}
+
+// ── Wins Chart (Horizontal Bars) ──
+function renderWinsChart(sdata) {
+  const teams = [...(sdata.team_results || [])].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
+  const n = teams.length;
+  const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
+  const h = n * (barH + gap) + 40;
+  const chartW = 700;
+  const maxWins = Math.max(82, ...teams.map(t => Math.max(t.projected_wins || 0, t.actual_wins || 0, t.win_p95 || 0)));
+
+  const xScale = (chartW - leftMargin - rightMargin) / maxWins;
+
+  let svg = `<svg width="100%" viewBox="0 0 ${chartW} ${h}" style="max-height:${Math.min(h, 900)}px">`;
+
+  // 41-win reference line (.500 record)
+  const x41 = leftMargin + 41 * xScale;
+  svg += `<line x1="${x41}" y1="0" x2="${x41}" y2="${h}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.4"/>`;
+  svg += `<text x="${x41}" y="12" text-anchor="middle" font-size="10" fill="var(--text-muted)">41 Wins</text>`;
+
+  teams.forEach((t, i) => {
+    const y = 20 + i * (barH + gap);
+    const projW = leftMargin + (t.projected_wins || 0) * xScale;
+    const actW = t.actual_wins != null ? leftMargin + t.actual_wins * xScale : null;
+    const p5x = leftMargin + (t.win_p5 || 0) * xScale;
+    const p95x = leftMargin + (t.win_p95 || 0) * xScale;
+
+    // Confidence band (p5-p95) — light background
+    svg += `<rect x="${p5x}" y="${y+2}" width="${p95x - p5x}" height="${barH-4}" rx="2" fill="var(--accent)" opacity="0.12"/>`;
+
+    // Projected wins bar
+    svg += `<rect x="${leftMargin}" y="${y+4}" width="${projW - leftMargin}" height="${barH-8}" rx="2" fill="var(--accent)" opacity="0.7"/>`;
+
+    // Actual wins marker
+    if (actW != null) {
+      svg += `<line x1="${actW}" y1="${y+1}" x2="${actW}" y2="${y+barH-1}" stroke="var(--green)" stroke-width="2.5"/>`;
+    }
+
+    // Team label
+    svg += `<text x="${leftMargin - 4}" y="${y + barH/2 + 4}" text-anchor="end" font-size="11" font-weight="600">${t.team}</text>`;
+
+    // Values
+    const errStr = t.win_error != null ? ` (${t.win_error > 0 ? "+" : ""}${t.win_error.toFixed(1)})` : "";
+    svg += `<text x="${Math.max(projW, actW || 0) + 6}" y="${y + barH/2 + 4}" font-size="10" fill="var(--text-muted)">${(t.projected_wins||0).toFixed(0)}P / ${t.actual_wins != null ? t.actual_wins : "?"}A${errStr}</text>`;
+  });
+
+  // Legend
+  svg += `<rect x="${chartW - 200}" y="${h - 18}" width="12" height="6" rx="1" fill="var(--accent)" opacity="0.7"/>`;
+  svg += `<text x="${chartW - 184}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Projected</text>`;
+  svg += `<line x1="${chartW - 120}" y1="${h - 18}" x2="${chartW - 120}" y2="${h - 12}" stroke="var(--green)" stroke-width="2.5"/>`;
+  svg += `<text x="${chartW - 114}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Actual</text>`;
+  svg += `<rect x="${chartW - 80}" y="${h - 18}" width="20" height="6" rx="1" fill="var(--accent)" opacity="0.12"/>`;
+  svg += `<text x="${chartW - 56}" y="${h - 12}" font-size="10" fill="var(--text-muted)">90% CI</text>`;
+
+  svg += "</svg>";
+  document.getElementById("winsChart").innerHTML = svg;
+}
+
+// ── Calibration Chart ──
+function renderCalibration() {
+  const calData = DATA.validation && DATA.validation.calibration && DATA.validation.calibration[currentSeason];
+  if (!calData || calData.length === 0) {
+    document.getElementById("calChart").innerHTML = '<div style="color:var(--text-muted);padding:20px">No calibration data</div>';
+    return;
+  }
+
+  const w = 320, h = 280, pad = 40;
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+
+  let svg = `<svg width="100%" viewBox="0 0 ${w} ${h}">`;
+
+  // Perfect calibration line
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.5"/>`;
+
+  // Axes
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad + plotH}" stroke="var(--border)" stroke-width="1"/>`;
+  svg += `<line x1="${pad}" y1="${pad}" x2="${pad}" y2="${pad + plotH}" stroke="var(--border)" stroke-width="1"/>`;
+
+  // Labels
+  svg += `<text x="${w/2}" y="${h - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Predicted Win Prob</text>`;
+  svg += `<text x="10" y="${h/2}" text-anchor="middle" font-size="10" fill="var(--text-muted)" transform="rotate(-90,10,${h/2})">Actual Win Rate</text>`;
+
+  // Tick labels
+  for (let i = 0; i <= 10; i += 2) {
+    const v = i / 10;
+    const x = pad + v * plotW;
+    const y = pad + plotH - v * plotH;
+    svg += `<text x="${x}" y="${pad + plotH + 14}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
+    svg += `<text x="${pad - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
+  }
+
+  // Data points
+  calData.forEach(bin => {
+    const px = pad + bin.predicted_rate * plotW;
+    const py = pad + plotH - bin.actual_rate * plotH;
+    const r = Math.max(3, Math.min(8, Math.sqrt(bin.count) * 0.8));
+    svg += `<circle cx="${px}" cy="${py}" r="${r}" fill="var(--accent)" opacity="0.85"/>`;
+  });
+
+  // Connect points with line
+  let path = "";
+  calData.forEach((bin, i) => {
+    const px = pad + bin.predicted_rate * plotW;
+    const py = pad + plotH - bin.actual_rate * plotH;
+    path += (i === 0 ? "M" : "L") + `${px},${py}`;
+  });
+  svg += `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.6"/>`;
+
+  svg += "</svg>";
+  document.getElementById("calChart").innerHTML = svg;
+}
+
+// ── Single-Game Simulator ──
+function initSingleGameSimulator(seasons) {
+  const homeSeasonEl = document.getElementById("sgHomeSeason");
+  const awaySeasonEl = document.getElementById("sgAwaySeason");
+  homeSeasonEl.innerHTML = "";
+  awaySeasonEl.innerHTML = "";
+
+  seasons.forEach(s => {
+    const o1 = document.createElement("option");
+    o1.value = s;
+    o1.textContent = s;
+    homeSeasonEl.appendChild(o1);
+
+    const o2 = document.createElement("option");
+    o2.value = s;
+    o2.textContent = s;
+    awaySeasonEl.appendChild(o2);
+  });
+
+  homeSeasonEl.value = currentSeason;
+  awaySeasonEl.value = currentSeason;
+
+  populateTeamOptions(homeSeasonEl.value, "sgHomeTeam");
+  populateTeamOptions(awaySeasonEl.value, "sgAwayTeam");
+
+  homeSeasonEl.addEventListener("change", () => {
+    populateTeamOptions(homeSeasonEl.value, "sgHomeTeam");
+  });
+  awaySeasonEl.addEventListener("change", () => {
+    populateTeamOptions(awaySeasonEl.value, "sgAwayTeam");
+  });
+
+  document.getElementById("sgRunBtn").addEventListener("click", runSingleGameSimulation);
+}
+
+function populateTeamOptions(season, teamSelectId) {
+  const el = document.getElementById(teamSelectId);
+  const teams = ((DATA.seasons[season] || {}).team_results || [])
+    .slice()
+    .sort((a, b) => (a.team || "").localeCompare(b.team || ""));
+  el.innerHTML = teams.map(t => `<option value="${t.team}">${t.team}</option>`).join("");
+}
+
+function getTeamEntry(season, teamAbbr) {
+  const rows = ((DATA.seasons[season] || {}).team_results || []);
+  for (const row of rows) {
+    if (row.team === teamAbbr) return row;
+  }
+  return null;
+}
+
+function erf(x) {
+  const sign = x >= 0 ? 1 : -1;
+  const ax = Math.abs(x);
+  const p = 0.3275911;
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const t = 1.0 / (1.0 + p * ax);
+  const y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax));
+  return sign * y;
+}
+
+function normalCdf(x) {
+  return 0.5 * (1 + erf(x / Math.sqrt(2)));
+}
+
+function randn() {
+  let u = 0;
+  let v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+function runSingleGameSimulation() {
+  const homeSeason = document.getElementById("sgHomeSeason").value;
+  const awaySeason = document.getElementById("sgAwaySeason").value;
+  const homeTeam = document.getElementById("sgHomeTeam").value;
+  const awayTeam = document.getElementById("sgAwayTeam").value;
+
+  const home = getTeamEntry(homeSeason, homeTeam);
+  const away = getTeamEntry(awaySeason, awayTeam);
+
+  if (!home || !away) {
+    document.getElementById("sgResult").innerHTML = "Unable to find one or both teams in the selected seasons.";
+    return;
+  }
+
+  const cfg = DATA.config || {};
+  const sigmaLeague = Number(cfg.sigma_league || 3.0);
+  const hca = Number(cfg.home_court_advantage || 2.0);
+
+  const homeMu = Number(home.mu || 0);
+  const awayMu = Number(away.mu || 0);
+  const homeSigma = Number(home.sigma || 0);
+  const awaySigma = Number(away.sigma || 0);
+
+  const deltaMu = (homeMu + hca) - awayMu;
+  const sigmaGame = Math.sqrt(homeSigma * homeSigma + awaySigma * awaySigma + sigmaLeague * sigmaLeague);
+  const z = sigmaGame > 0 ? deltaMu / sigmaGame : 0;
+  const homeWinProb = normalCdf(z);
+  const sampledMargin = deltaMu + sigmaGame * randn();
+
+  currentSimulatedGame = {
+    homeSeason,
+    awaySeason,
+    homeTeam,
+    awayTeam,
+    homeMu,
+    awayMu,
+    homeSigma,
+    awaySigma,
+    deltaMu,
+    sigmaGame,
+    homeWinProb,
+    awayWinProb: 1 - homeWinProb,
+    sampledMargin,
+    winner: sampledMargin >= 0 ? `${homeTeam} (${homeSeason})` : `${awayTeam} (${awaySeason})`,
+    timestamp: new Date().toLocaleString(),
+  };
+
+  renderSingleGameResult();
+}
+
+function renderSingleGameResult() {
+  const el = document.getElementById("sgResult");
+  if (!currentSimulatedGame) {
+    el.innerHTML = "No game simulated yet.";
+    return;
+  }
+
+  const g = currentSimulatedGame;
+  el.innerHTML = `
+    <div class="row"><span>Matchup</span><strong>${g.homeTeam} (${g.homeSeason}) vs ${g.awayTeam} (${g.awaySeason})</strong></div>
+    <div class="row"><span>Expected Margin (home)</span><strong>${g.deltaMu.toFixed(2)}</strong></div>
+    <div class="row"><span>Game Sigma</span><strong>${g.sigmaGame.toFixed(2)}</strong></div>
+    <div class="row"><span>Home Win Probability</span><strong>${(g.homeWinProb * 100).toFixed(1)}%</strong></div>
+    <div class="row"><span>Single Draw Margin (home)</span><strong>${g.sampledMargin.toFixed(2)}</strong></div>
+    <div class="row"><span>Winner (this run)</span><strong>${g.winner}</strong></div>
+    <div class="row"><span>Simulated At</span><span>${g.timestamp}</span></div>
+  `;
+}
+
+// ── Util ──
+function fmt(v, dec) {
+  if (v == null || v === undefined) return "—";
+  return Number(v).toFixed(dec);
+}
+
+</script>
+</body>
+</html>

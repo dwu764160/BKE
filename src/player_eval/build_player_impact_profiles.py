@@ -24,7 +24,14 @@ from src.player_eval.constants import (
     PLAYERS_META_PATH,
     POSITION_ESTIMATES_PATH,
     STEP1_VALIDATION_REPORT,
+    STEP4_VALIDATION_REPORT,
     HISTORICAL_DIR,
+    AVAIL_AGE_BREAKPOINTS,
+    AVAIL_AGE_FACTORS,
+    AVAIL_MAJOR_ROTATION_MPG,
+    AVAIL_HIGH_SALARY_THRESHOLD,
+    AVAIL_FULL_SEASON_GAMES,
+    AVAIL_MIN_EXPECTED_GAMES,
 )
 from src.utils.player_name_normalizer import (
     apply_player_name_normalization,
@@ -64,6 +71,63 @@ def _season_to_int(series: pd.Series) -> pd.Series:
 def _pct_to_rate(series: pd.Series) -> pd.Series:
     vals = pd.to_numeric(series, errors="coerce")
     return np.where(vals > 1.0, vals / 100.0, vals)
+
+
+def _compute_age_factor(age: float) -> float:
+    """Piecewise linear age penalty. Returns factor in [AVAIL_AGE_FACTORS[-1], 1.0]."""
+    if np.isnan(age) or age < AVAIL_AGE_BREAKPOINTS[0]:
+        return AVAIL_AGE_FACTORS[0]  # 1.0 — young, no penalty
+    for i, bp in enumerate(AVAIL_AGE_BREAKPOINTS):
+        if age < bp:
+            # interpolate between previous factor and this factor
+            prev_bp = AVAIL_AGE_BREAKPOINTS[i - 1] if i > 0 else 0
+            prev_f = AVAIL_AGE_FACTORS[i]
+            next_f = AVAIL_AGE_FACTORS[i]
+            return next_f
+        if i < len(AVAIL_AGE_BREAKPOINTS) - 1:
+            next_bp = AVAIL_AGE_BREAKPOINTS[i + 1]
+            if age <= next_bp:
+                # linear interpolation between breakpoints
+                t = (age - bp) / (next_bp - bp)
+                return AVAIL_AGE_FACTORS[i + 1] * (1 - t) + AVAIL_AGE_FACTORS[i + 2] * t
+    # Beyond last breakpoint
+    return AVAIL_AGE_FACTORS[-1]
+
+
+def _compute_availability_score(
+    games: float, age: float, mpg: float, salary: float,
+    predicted_mpg: float = 0.0,
+) -> float:
+    """Compute player availability score (0-1).
+
+    Higher = more available/reliable.  Factors:
+      1. games_ratio: games played / expected games
+      2. age_factor: piecewise linear age penalty
+      3. Role expectation: major rotation / high-salary players are expected to
+         play 82 games; lower-minute players have a softer expectation.
+    """
+    age_factor = _compute_age_factor(age)
+
+    # Determine expected games based on role
+    effective_mpg = max(mpg, predicted_mpg) if not np.isnan(predicted_mpg) else mpg
+    is_major = (
+        effective_mpg >= AVAIL_MAJOR_ROTATION_MPG
+        or (not np.isnan(salary) and salary >= AVAIL_HIGH_SALARY_THRESHOLD)
+    )
+    if is_major:
+        expected_games = AVAIL_FULL_SEASON_GAMES
+    else:
+        # Scale expected games: bench players expected fewer games
+        # Linear scale from MIN_EXPECTED to 82 based on MPG fraction
+        mpg_frac = min(effective_mpg / AVAIL_MAJOR_ROTATION_MPG, 1.0)
+        expected_games = (
+            AVAIL_MIN_EXPECTED_GAMES
+            + (AVAIL_FULL_SEASON_GAMES - AVAIL_MIN_EXPECTED_GAMES) * mpg_frac
+        )
+
+    games_ratio = min(games / max(expected_games, 1.0), 1.0)
+    availability = games_ratio * age_factor
+    return float(np.clip(availability, 0.0, 1.0))
 
 
 def _softmax_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -155,6 +219,8 @@ class PlayerImpactProfile:
     defensive_shrinkage_lambda: float
     # --- Financial ---
     salary: float
+    # --- Availability ---
+    availability_score: float  # 0-1, combines games played ratio, age factor, role expectation
 
 
 def _load_bke_json(path: Path) -> pd.DataFrame:
@@ -703,6 +769,13 @@ def main() -> None:
             defensive_shrinkage_lambda=_safe_float(row["defensive_shrinkage_lambda"], default=0.0),
             # Financial
             salary=_safe_float(row["salary"], default=np.nan),
+            # Availability
+            availability_score=_compute_availability_score(
+                games=_safe_float(row["games"], default=0.0),
+                age=_safe_float(row["age"], default=25.0),
+                mpg=_safe_float(row["mpg"], default=0.0),
+                salary=_safe_float(row["salary"], default=np.nan),
+            ),
         )
 
         profile_rows.append(profile)
@@ -778,6 +851,14 @@ def main() -> None:
             "unknown_count": int(flat_df["player_name"].astype(str).str.lower().eq("unknown").sum()),
             "unique_names": int(flat_df["player_name"].astype(str).nunique()),
         },
+        "availability_summary": {
+            "mean": float(flat_df["availability_score"].mean()),
+            "std": float(flat_df["availability_score"].std(ddof=0)),
+            "min": float(flat_df["availability_score"].min()),
+            "max": float(flat_df["availability_score"].max()),
+            "median": float(flat_df["availability_score"].median()),
+            "bounds_violations": int(((flat_df["availability_score"] < 0) | (flat_df["availability_score"] > 1)).sum()),
+        },
         "notes": [
             "Offensive archetypes: all 11 embedding dimensions L1-normalized to preserve source role mix proportions.",
             "Defensive archetypes: 7 role scores softmax-normalized (poa through mobile_big).",
@@ -785,8 +866,45 @@ def main() -> None:
             "hustle_pctl sourced from defensive_archetypes_v2 percentile; foul_rate = PF per 36 minutes.",
             "on_off_diff = actual team on/off net rating differential from BKE decomposition (not individual NET_RTG).",
             "Stability integrates v2.9 diagnostics + v3.0 shrinkage lambda.",
+            "availability_score = games_ratio * age_factor; role-adjusted (major rotation / high salary expected 82 GP, bench softer).",
         ],
     }
+
+    # Step 4 specific validation report
+    avail_report = {
+        "rows": int(len(flat_df)),
+        "seasons": sorted(flat_df["season"].astype(str).unique().tolist(), key=lambda s: int(s[:4])),
+        "availability_summary": validation_report["availability_summary"],
+        "by_age_band": {},
+        "by_role": {},
+        "constants_used": {
+            "age_breakpoints": AVAIL_AGE_BREAKPOINTS,
+            "age_factors": AVAIL_AGE_FACTORS,
+            "major_rotation_mpg": AVAIL_MAJOR_ROTATION_MPG,
+            "high_salary_threshold": AVAIL_HIGH_SALARY_THRESHOLD,
+            "full_season_games": AVAIL_FULL_SEASON_GAMES,
+            "min_expected_games": AVAIL_MIN_EXPECTED_GAMES,
+        },
+    }
+    # Availability by age band
+    for label, lo, hi in [("<25", 0, 25), ("25-29", 25, 30), ("30-34", 30, 35), ("35+", 35, 50)]:
+        mask = (flat_df["age"] >= lo) & (flat_df["age"] < hi)
+        if mask.sum() > 0:
+            avail_report["by_age_band"][label] = {
+                "count": int(mask.sum()),
+                "mean": float(flat_df.loc[mask, "availability_score"].mean()),
+                "median": float(flat_df.loc[mask, "availability_score"].median()),
+            }
+    # Availability by role (major rotation vs bench)
+    major_mask = (flat_df["mpg"] >= AVAIL_MAJOR_ROTATION_MPG) | (flat_df["salary"] >= AVAIL_HIGH_SALARY_THRESHOLD)
+    for label, mask in [("major_rotation", major_mask), ("bench", ~major_mask)]:
+        if mask.sum() > 0:
+            avail_report["by_role"][label] = {
+                "count": int(mask.sum()),
+                "mean": float(flat_df.loc[mask, "availability_score"].mean()),
+                "median": float(flat_df.loc[mask, "availability_score"].median()),
+            }
+    STEP4_VALIDATION_REPORT.write_text(json.dumps(avail_report, indent=2), encoding="utf-8")
 
     PLAYER_PROFILES_PARQUET.parent.mkdir(parents=True, exist_ok=True)
     flat_df.to_parquet(PLAYER_PROFILES_PARQUET, index=False)
@@ -797,6 +915,7 @@ def main() -> None:
     print(f"Saved Step 1 profiles parquet: {PLAYER_PROFILES_PARQUET}")
     print(f"Saved Step 1 profiles pickle: {PLAYER_PROFILES_PKL}")
     print(f"Saved Step 1 validation report: {STEP1_VALIDATION_REPORT}")
+    print(f"Saved Step 4 availability report: {STEP4_VALIDATION_REPORT}")
     print(json.dumps(validation_report, indent=2))
 
 
