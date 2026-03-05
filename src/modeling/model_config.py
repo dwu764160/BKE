@@ -284,11 +284,12 @@ class PercentileConfig:
 
     # Position buckets for positional percentiles
     position_buckets: Dict[str, List[str]] = field(default_factory=lambda: {
-        "Guard": ["PG", "SG", "G"],
-        "Guard-Forward": ["SG-SF", "SF-SG", "GF"],
-        "Forward": ["SF", "PF", "F"],
-        "Forward-Center": ["PF-C", "C-PF", "FC"],
-        "Center": ["C"],
+        # Canonical labels are listed first; legacy shorthand is retained for compatibility.
+        "Guard": ["Guard", "PG", "SG", "G"],
+        "Guard-Forward": ["Guard-Forward", "Forward-Guard", "SG-SF", "SF-SG", "GF", "FG", "G-F", "F-G"],
+        "Forward": ["Forward", "SF", "PF", "F", "Wing"],
+        "Forward-Center": ["Forward-Center", "Center-Forward", "PF-C", "C-PF", "FC", "CF", "F-C", "C-F"],
+        "Center": ["Center", "C"],
     })
 
     # Minimum cohort size for reliable percentile computation

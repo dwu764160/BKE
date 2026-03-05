@@ -257,6 +257,25 @@ Validation: balanced braces (278/278), valid JSON, all 7 functions present, no X
   - player data viewer rebuild
 - Note: `dbke_v30_defense_shrinkage.py` still reports `phase_c: FAIL` by its internal validation gate (script completed and output JSON written).
 
+2026-03-05 — Simulation Step 2 implementation handoff status
+- Request status: 3/3 user-requested steps complete.
+- Backend status:
+  - Clutch fetch integrated in pipeline and profile aggregate.
+  - Lineup projection script implemented and rerun after validation payload patch.
+  - Validation payload now includes `actual_starter_ids` and `actual_clutch_ids` for frontend drilldowns.
+- Frontend status:
+  - `app/simulation_viewer.py` restored and rewritten with two tabs:
+    - Step 1 season simulation view (stats/charts/table/single-game sim)
+    - Step 2 lineup projection view (season cards + clickable team modal)
+  - `app/simulation.html` regenerated successfully.
+- Runtime checks completed:
+  - `python3 -m py_compile app/simulation_viewer.py src/simulation/lineup_projection.py src/simulation/simulation_config.py src/data_fetch/fetch_player_clutch_stats.py src/profile_aggregate/build_profile_aggregate.py`
+  - `python3 src/simulation/lineup_projection.py`
+  - `python3 app/simulation_viewer.py`
+- Documentation updates completed:
+  - `readme.md` pipeline order + outputs updated for clutch/Step 2.
+  - `reference/simulation/Simulation_Core_Summary.md` appended with 2026-03-05 Step 2 entry.
+
 2026-02-28 — Defensive archetype confidence EXP D rollout complete
 - Applied EXP D confidence in `src/data_compute/compute_defensive_archetypes_v2.py`.
 - Repaired syntax/runtime issues in the same file (`load_tracking_defense`, `load_speed_distance`).
@@ -894,4 +913,34 @@ MOST RECENT ENTRY (2026-07-16):
 - Consider adding full possession-data mode for Layer 4 (slower but more accurate)
 - Tune component weights based on validation against external metrics
 - Add uncertainty estimation
+
+CONTEXT:
+- Task: evaluate position-band audit findings for actual impact, implement only minimal-impact fixes across backend/frontend, rerun affected steps, and document canonical philosophy.
+- Env: Linux, Python 3.10
+- Key files changed: `src/simulation/lineup_projection.py`, `app/simulation_viewer.py`, `src/modeling/model_config.py`, `src/data_compute/compute_defensive_archetypes.py`, `readme.md`, `.github/copilot-instructions.md`, `reference/simulation/Simulation_Core_Summary.md`
+- Status: ✅ Minimal-impact items implemented and reproduced; high-impact items intentionally deferred pending approval.
+
+FAILURE_REASON:
+- N/A (no execution failure). Remaining work is decision-gated: high-impact cohort/taxonomy changes can alter percentile baselines and ranks.
+
+ATTEMPTED_METHODS:
+- Measured hybrid-collapse exposure in decomposition outputs.
+- Measured Step 2 fallback role-mapping exposure.
+- Implemented low-risk policy/payload/config/UI updates only.
+- Re-ran Step 2 projection and simulation viewer generation.
+- Re-ran v27 constructor and compared output checksum for drift detection.
+
+SOURCES_READ:
+- Local: `data/processed/bke/bke_v28_decomposition.parquet`
+- Local: `reports/simulation_step2_validation.json`
+- Local: `src/simulation/lineup_projection.py`
+- Local: `app/simulation_viewer.py`
+- Local: `src/modeling/model_config.py`
+- Local: `.github/copilot-instructions.md`
+- Local: `readme.md`
+- Local: `reference/simulation/Simulation_Core_Summary.md`
+
+NEXT_STEPS (explicit):
+- If approved, implement hybrid-preserving decomposition cohorting for `position_bucket` and rerun grouped-percentile diagnostics.
+- If not approved, keep current minimal-impact patch set as the policy baseline and monitor Step 2 starter/rotation gaps with continuity features.
 

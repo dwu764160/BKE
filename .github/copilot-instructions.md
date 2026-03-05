@@ -54,6 +54,10 @@ The [loop](loop/) folder is your live context and planning hub. You must:
 - Season identifiers must be formatted as `YYYY-YY` (e.g., `2023-24`).
 - **Centralize all logic and thresholds** (e.g., archetype cutoffs) in a single script per stage (e.g., [src/data_compute/compute_player_archetypes.py]). Never scatter constants across files.
 - **All future player-related stats** (computed or fetched) must be normalized and aggregated into the Profile Aggregate via `src/profile_aggregate/build_profile_aggregate.py`. This is the single source of truth for downstream products. New fields added to player impact profiles are automatically available in the aggregate via the Step 1 → Aggregate pipeline flow.
+- **Position-band philosophy (canonical):** The canonical player position bands are `Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, and `Center`.
+- Preserve canonical position-band labels in outputs and metadata; do not collapse hybrid bands (`Guard-Forward`, `Forward-Center`) into single-position buckets in core compute/model stages.
+- If a stage requires structural lineup constraints, derive a separate coarse role layer (`Guard`, `Wing`, `Big`) while keeping canonical `position_band` alongside it.
+- Keep legacy position aliases only for compatibility in readers/config, and list canonical labels first in any grouped-bucket definitions.
 - When adding new code:
   - Add new pipeline steps as explicit scripts alongside existing stage files.
   - Wire new steps into the documented order in [readme.md](readme.md) and update the data layout section.

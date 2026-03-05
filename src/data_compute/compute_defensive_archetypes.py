@@ -469,8 +469,10 @@ def classify_all_defenders(features: pd.DataFrame) -> pd.DataFrame:
 # =============================================================================
 def main():
     print("=" * 70)
-    print("DEFENSIVE ARCHETYPE CLASSIFICATION")
+    print("DEFENSIVE ARCHETYPE CLASSIFICATION (LEGACY)")
     print("=" * 70)
+    print("⚠️  This legacy script is retained for historical reference only.")
+    print("⚠️  Active pipeline should use src/data_compute/compute_defensive_archetypes_v2.py")
     
     # Load all data
     print("\n📊 Loading data...")

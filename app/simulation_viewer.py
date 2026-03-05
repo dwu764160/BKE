@@ -1,22 +1,21 @@
 """
 app/simulation_viewer.py
 =============================================================================
-Generate a standalone interactive HTML viewer for Simulation Core results.
+Generate a standalone interactive HTML viewer for Simulation Core outputs.
 
-Features:
-  - Season selector tabs
-  - Team rankings table sorted by projected wins with confidence bands
-  - Projected vs actual wins horizontal bar chart
-  - Season-level stats cards (MAE, RMSE, correlation, Brier, accuracy)
-  - Team detail expandable rows (distributions, probabilities)
-  - Calibration chart (predicted vs actual win rates)
-  - Color-coded prediction errors
-  - Sortable columns
-  - Dark theme matching existing BKE viewers
+View 1 (Step 1):
+  - Season simulation stats, charts, sortable table
+  - Single-game simulator
 
-Input:
+View 2 (Step 2):
+  - Lineup projection summary cards
+  - Clickable team cards (per season)
+  - Team modal with starter/rotation/clutch details and validation signals
+
+Inputs:
   reports/simulation_step1_season_results.json
   reports/simulation_step1_validation.json
+  reports/simulation_step2_lineup_profiles.json
 
 Output:
   app/simulation.html
@@ -34,6 +33,7 @@ import numpy as np
 
 SEASON_RESULTS = "reports/simulation_step1_season_results.json"
 VALIDATION_RESULTS = "reports/simulation_step1_validation.json"
+LINEUP_RESULTS = "reports/simulation_step2_lineup_profiles.json"
 OUTPUT_HTML = "app/simulation.html"
 
 
@@ -50,6 +50,7 @@ def _safe(v):
 def generate_html(
     season_path: str = SEASON_RESULTS,
     validation_path: str = VALIDATION_RESULTS,
+    lineup_path: str = LINEUP_RESULTS,
     output_path: str = OUTPUT_HTML,
 ) -> str:
     if not os.path.exists(season_path):
@@ -66,15 +67,19 @@ def generate_html(
         with open(validation_path, "r", encoding="utf-8") as f:
             validation_data = json.load(f)
 
-    # Build combined data blob
+    lineup_data = {}
+    if os.path.exists(lineup_path):
+        with open(lineup_path, "r", encoding="utf-8") as f:
+            lineup_data = json.load(f)
+
     data_blob = {
         "config": season_data.get("config", {}),
         "seasons": season_data.get("seasons", {}),
         "validation": validation_data,
+        "lineup_step2": lineup_data,
     }
 
     data_json = json.dumps(data_blob, separators=(",", ":"))
-
     html = _build_html(data_json)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -86,127 +91,284 @@ def generate_html(
 
 
 def _build_html(data_json: str) -> str:
-    return f"""<!DOCTYPE html>
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BKE Simulation Core — Season Projections</title>
+<title>BKE Simulation Core</title>
 <style>
-:root {{
+:root {
   --bg: #0d1117; --surface: #161b22; --border: #30363d;
   --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff;
   --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
   --yellow: #e3b341;
-}}
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:14px; }}
-.container {{ max-width:1440px; margin:0 auto; padding:20px; }}
-h1 {{ font-size:26px; font-weight:700; color:var(--accent); margin-bottom:2px; }}
-.subtitle {{ color:var(--text-muted); font-size:13px; margin-bottom:20px; }}
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+  font-size:14px;
+}
+.container { max-width:1440px; margin:0 auto; padding:20px; }
+h1 { font-size:26px; font-weight:700; color:var(--accent); margin-bottom:2px; }
+.subtitle { color:var(--text-muted); font-size:13px; margin-bottom:16px; }
+
+/* View Tabs */
+.view-tabs { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.view-tab {
+  border:1px solid var(--border); background:var(--surface); color:var(--text-muted);
+  border-radius:8px; padding:8px 12px; font-size:12px; font-weight:700; cursor:pointer;
+  text-transform:uppercase; letter-spacing:0.4px;
+}
+.view-tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+.view-panel.hidden { display:none; }
 
 /* Season Tabs */
-.season-tabs {{ display:flex; gap:0; margin-bottom:20px; }}
-.season-tab {{ padding:10px 24px; background:var(--surface); border:1px solid var(--border); color:var(--text-muted); cursor:pointer; font-size:14px; font-weight:600; transition:all 0.15s; user-select:none; }}
-.season-tab:first-child {{ border-radius:8px 0 0 8px; }}
-.season-tab:last-child {{ border-radius:0 8px 8px 0; }}
-.season-tab.active {{ background:var(--accent); color:#fff; border-color:var(--accent); }}
-.season-tab:hover:not(.active) {{ color:var(--text); background:rgba(88,166,255,0.1); }}
+.season-tabs { display:flex; gap:0; margin-bottom:20px; flex-wrap:wrap; }
+.season-tab {
+  padding:10px 24px; background:var(--surface); border:1px solid var(--border);
+  color:var(--text-muted); cursor:pointer; font-size:14px; font-weight:600;
+  transition:all 0.15s; user-select:none;
+}
+.season-tab:first-child { border-radius:8px 0 0 8px; }
+.season-tab:last-child { border-radius:0 8px 8px 0; }
+.season-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.season-tab:hover:not(.active) { color:var(--text); background:rgba(88,166,255,0.1); }
 
 /* Stats Cards */
-.stats-row {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }}
-.stat-card {{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:14px 18px; min-width:130px; flex:1; }}
-.stat-card .label {{ font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }}
-.stat-card .value {{ font-size:22px; font-weight:700; margin-top:4px; }}
-.stat-card .detail {{ font-size:11px; color:var(--text-muted); margin-top:2px; }}
-.val-green {{ color:var(--green); }}
-.val-accent {{ color:var(--accent); }}
-.val-orange {{ color:var(--orange); }}
-.val-purple {{ color:var(--purple); }}
+.stats-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+.stat-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:14px 18px; min-width:130px; flex:1;
+}
+.stat-card .label { font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
+.stat-card .value { font-size:22px; font-weight:700; margin-top:4px; }
+.stat-card .detail { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.val-green { color:var(--green); }
+.val-accent { color:var(--accent); }
+.val-orange { color:var(--orange); }
+.val-purple { color:var(--purple); }
 
 /* Charts Row */
-.charts-row {{ display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap; }}
-.chart-box {{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; flex:1; min-width:320px; }}
-.chart-box h3 {{ font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }}
-svg text {{ fill:var(--text); font-family:inherit; }}
+.charts-row { display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+.chart-box {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:16px; flex:1; min-width:320px;
+}
+.chart-box h3 {
+  font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.3px;
+}
+svg text { fill:var(--text); font-family:inherit; }
 
 /* Single Game Sim */
-.single-game-box {{ background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:20px; }}
-.single-game-box h3 {{ font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }}
-.sg-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:10px; }}
-.sg-group label {{ display:block; font-size:11px; color:var(--text-muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.3px; }}
-.sg-group select {{ width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px; font-size:13px; }}
-.sg-actions {{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }}
-.sg-btn {{ background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 12px; font-weight:700; cursor:pointer; }}
-.sg-btn:hover {{ filter:brightness(1.05); }}
-.sg-status {{ font-size:12px; color:var(--text-muted); }}
-.sg-result {{ background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; }}
-.sg-result .row {{ display:flex; justify-content:space-between; gap:10px; margin-bottom:4px; }}
-.sg-result .row:last-child {{ margin-bottom:0; }}
+.single-game-box {
+  background:var(--surface); border:1px solid var(--border); border-radius:8px;
+  padding:16px; margin-bottom:20px;
+}
+.single-game-box h3 {
+  font-size:14px; color:var(--text-muted); margin-bottom:12px; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.3px;
+}
+.sg-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:10px; }
+.sg-group label {
+  display:block; font-size:11px; color:var(--text-muted); margin-bottom:4px;
+  text-transform:uppercase; letter-spacing:0.3px;
+}
+.sg-group select {
+  width:100%; background:var(--bg); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:8px; font-size:13px;
+}
+.sg-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+.sg-btn {
+  background:var(--accent); color:#fff; border:0; border-radius:6px;
+  padding:8px 12px; font-weight:700; cursor:pointer;
+}
+.sg-btn:hover { filter:brightness(1.05); }
+.sg-status { font-size:12px; color:var(--text-muted); }
+.sg-result { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px; font-size:13px; }
+.sg-result .row { display:flex; justify-content:space-between; gap:10px; margin-bottom:4px; }
+.sg-result .row:last-child { margin-bottom:0; }
 
 /* Table */
-.table-wrap {{ border:1px solid var(--border); border-radius:8px; overflow:hidden; }}
-.table-scroll {{ max-height:72vh; overflow-y:auto; }}
-table {{ width:100%; border-collapse:collapse; font-size:13px; }}
-thead {{ position:sticky; top:0; z-index:10; }}
-th {{ background:var(--surface); color:var(--text-muted); text-align:left; padding:10px 12px; border-bottom:2px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; }}
-th:hover {{ color:var(--accent); }}
-th.sorted-asc::after {{ content:" ▲"; color:var(--accent); }}
-th.sorted-desc::after {{ content:" ▼"; color:var(--accent); }}
-td {{ padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }}
-tr:hover {{ background:rgba(88,166,255,0.06); }}
-.rank {{ font-weight:700; color:var(--accent); text-align:right; width:36px; }}
-.team {{ font-weight:700; font-size:14px; }}
-.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
-.err-good {{ color:var(--green); }}
-.err-ok {{ color:var(--orange); }}
-.err-bad {{ color:var(--red); }}
-.conf-band {{ color:var(--text-muted); font-size:12px; }}
-.prob-bar-wrap {{ width:80px; height:14px; background:var(--bg); border-radius:3px; display:inline-block; vertical-align:middle; overflow:hidden; }}
-.prob-bar {{ height:100%; border-radius:3px; }}
-.prob-playoff {{ background:var(--green); }}
-.prob-50 {{ background:var(--accent); }}
-.prob-60 {{ background:var(--purple); }}
+.table-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.table-scroll { max-height:72vh; overflow-y:auto; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+thead { position:sticky; top:0; z-index:10; }
+th {
+  background:var(--surface); color:var(--text-muted); text-align:left;
+  padding:10px 12px; border-bottom:2px solid var(--border); cursor:pointer;
+  user-select:none; white-space:nowrap; font-size:11px; text-transform:uppercase;
+  letter-spacing:0.4px;
+}
+th:hover { color:var(--accent); }
+th.sorted-asc::after { content:" ▲"; color:var(--accent); }
+th.sorted-desc::after { content:" ▼"; color:var(--accent); }
+td { padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+tr:hover { background:rgba(88,166,255,0.06); }
+.rank { font-weight:700; color:var(--accent); text-align:right; width:36px; }
+.team { font-weight:700; font-size:14px; }
+.num { text-align:right; font-variant-numeric:tabular-nums; }
+.err-good { color:var(--green); }
+.err-ok { color:var(--orange); }
+.err-bad { color:var(--red); }
+.conf-band { color:var(--text-muted); font-size:12px; }
 
-/* Tooltip */
-.tooltip {{ position:relative; cursor:help; }}
-.tooltip .tip-text {{ visibility:hidden; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:10px 14px; border-radius:6px; position:absolute; z-index:100; bottom:125%; left:50%; transform:translateX(-50%); width:260px; font-size:12px; line-height:1.5; box-shadow:0 4px 12px rgba(0,0,0,0.4); pointer-events:none; }}
-.tooltip:hover .tip-text {{ visibility:visible; }}
+/* Step 2 Grid */
+.lineup-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
+  gap:12px;
+  margin-bottom:20px;
+}
+.lineup-card {
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px;
+  cursor:pointer;
+  transition:transform 0.12s ease, border-color 0.12s ease;
+}
+.lineup-card:hover { transform:translateY(-2px); border-color:var(--accent); }
+.lineup-card .title-row {
+  display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;
+}
+.lineup-card .title-row .team-name { font-size:16px; font-weight:700; color:var(--accent); }
+.lineup-card .title-row .conf { font-size:11px; color:var(--text-muted); text-transform:uppercase; }
+.lineup-card .mini {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+  font-size:12px;
+  margin-bottom:8px;
+}
+.lineup-card .mini .k { color:var(--text-muted); }
+.lineup-card .mini .v { text-align:right; font-variant-numeric:tabular-nums; }
+.lineup-card .validation {
+  font-size:12px;
+  border-top:1px solid var(--border);
+  padding-top:8px;
+  color:var(--text-muted);
+  display:flex;
+  justify-content:space-between;
+  gap:8px;
+}
+
+/* Step 2 Modal */
+.lineup-modal-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.62); z-index:1000;
+  display:none; align-items:center; justify-content:center; padding:16px;
+}
+.lineup-modal-overlay.open { display:flex; }
+.lineup-modal {
+  width:min(1100px, 96vw); max-height:92vh; overflow:auto;
+  background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;
+}
+.lineup-modal .modal-head {
+  display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;
+}
+.lineup-modal .modal-title { font-size:22px; color:var(--accent); font-weight:700; }
+.lineup-close {
+  border:1px solid var(--border); background:var(--bg); color:var(--text);
+  border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px;
+}
+.lineup-close:hover { border-color:var(--accent); color:var(--accent); }
+.lineup-modal-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:12px;
+}
+.lineup-panel {
+  border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg);
+}
+.lineup-panel h4 {
+  font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.4px;
+  margin-bottom:8px;
+}
+.lineup-panel .kv {
+  display:grid; grid-template-columns:1fr auto; gap:6px 10px; font-size:13px;
+}
+.lineup-panel .kv .k { color:var(--text-muted); }
+.lineup-panel .kv .v { font-variant-numeric:tabular-nums; }
+.player-list {
+  display:grid; gap:6px;
+}
+.player-item {
+  border:1px solid var(--border); border-radius:6px; padding:6px;
+  display:grid; grid-template-columns:1fr auto auto; gap:8px;
+  align-items:center;
+  font-size:12px;
+}
+.player-item .name { font-weight:600; }
+.player-item .role { color:var(--text-muted); }
+.player-item .meta { display:grid; gap:2px; }
+.player-item .arche { color:var(--text-muted); font-size:11px; }
+.player-item .num { font-variant-numeric:tabular-nums; text-align:right; }
 
 /* Footer */
-.footer {{ margin-top:24px; padding:16px; color:var(--text-muted); font-size:11px; text-align:center; border-top:1px solid var(--border); }}
+.footer {
+  margin-top:24px; padding:16px; color:var(--text-muted); font-size:11px;
+  text-align:center; border-top:1px solid var(--border);
+}
+
+@media (max-width: 900px) {
+  .lineup-modal-grid { grid-template-columns:1fr; }
+}
 </style>
 </head>
 <body>
 <div class="container">
   <h1>BKE Simulation Core</h1>
-  <div class="subtitle">Margin-Based Season Projections — 10,000 Monte Carlo Simulations per Season</div>
+  <div class="subtitle">Step 1: Margin-Based Season Simulation + Step 2: Lineup Projection</div>
 
-  <div class="season-tabs" id="seasonTabs"></div>
-  <div class="stats-row" id="statsRow"></div>
-  <div class="charts-row">
-    <div class="chart-box" style="flex:2"><h3>Projected vs Actual Wins</h3><div id="winsChart"></div></div>
-    <div class="chart-box" style="flex:1"><h3>Calibration</h3><div id="calChart"></div></div>
+  <div class="view-tabs" id="viewTabs">
+    <button class="view-tab active" data-view="step1View">Step 1: Season Simulation</button>
+    <button class="view-tab" data-view="step2View">Step 2: Lineup Projection</button>
   </div>
 
-  <div class="single-game-box">
-    <h3>Single Game Simulator</h3>
-    <div class="sg-grid">
-      <div class="sg-group"><label for="sgHomeSeason">Home Season</label><select id="sgHomeSeason"></select></div>
-      <div class="sg-group"><label for="sgHomeTeam">Home Team</label><select id="sgHomeTeam"></select></div>
-      <div class="sg-group"><label for="sgAwaySeason">Away Season</label><select id="sgAwaySeason"></select></div>
-      <div class="sg-group"><label for="sgAwayTeam">Away Team</label><select id="sgAwayTeam"></select></div>
+  <div id="step1View" class="view-panel">
+    <div class="season-tabs" id="seasonTabs"></div>
+    <div class="stats-row" id="statsRow"></div>
+    <div class="charts-row">
+      <div class="chart-box" style="flex:2"><h3>Projected vs Actual Wins</h3><div id="winsChart"></div></div>
+      <div class="chart-box" style="flex:1"><h3>Calibration</h3><div id="calChart"></div></div>
     </div>
-    <div class="sg-actions">
-      <button class="sg-btn" id="sgRunBtn">Simulate 1 Game</button>
-      <span class="sg-status" id="sgStatus">Uses one random draw from the margin distribution (not 10,000 sims).</span>
+
+    <div class="single-game-box">
+      <h3>Single Game Simulator</h3>
+      <div class="sg-grid">
+        <div class="sg-group"><label for="sgHomeSeason">Home Season</label><select id="sgHomeSeason"></select></div>
+        <div class="sg-group"><label for="sgHomeTeam">Home Team</label><select id="sgHomeTeam"></select></div>
+        <div class="sg-group"><label for="sgAwaySeason">Away Season</label><select id="sgAwaySeason"></select></div>
+        <div class="sg-group"><label for="sgAwayTeam">Away Team</label><select id="sgAwayTeam"></select></div>
+      </div>
+      <div class="sg-actions">
+        <button class="sg-btn" id="sgRunBtn">Simulate 1 Game</button>
+        <span class="sg-status" id="sgStatus">Uses one random draw from the margin distribution (not 10,000 sims).</span>
+      </div>
+      <div class="sg-result" id="sgResult">No game simulated yet.</div>
     </div>
-    <div class="sg-result" id="sgResult">No game simulated yet.</div>
+
+    <div class="table-wrap"><div class="table-scroll" id="tableWrap"></div></div>
   </div>
 
-  <div class="table-wrap"><div class="table-scroll" id="tableWrap"></div></div>
+  <div id="step2View" class="view-panel hidden">
+    <div class="season-tabs" id="lineupSeasonTabs"></div>
+    <div class="stats-row" id="lineupStatsRow"></div>
+    <div class="lineup-grid" id="lineupCardGrid"></div>
+  </div>
+
+  <div class="lineup-modal-overlay" id="lineupModalOverlay">
+    <div class="lineup-modal">
+      <div class="modal-head">
+        <div class="modal-title" id="lineupModalTitle">Lineup Details</div>
+        <button class="lineup-close" id="lineupModalClose">Close</button>
+      </div>
+      <div id="lineupModalContent"></div>
+    </div>
+  </div>
+
   <div class="footer">
-    BKE Simulation Core v1 &mdash; Margin-based team-level simulation.
+    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation) and Step 2 (lineup projection).
     &sigma;<sub>league</sub> = <span id="footSigma"></span>,
     HCA = <span id="footHCA"></span>,
     N = <span id="footN"></span>
@@ -214,273 +376,278 @@ tr:hover {{ background:rgba(88,166,255,0.06); }}
 </div>
 
 <script>
-const DATA = {data_json};
+const DATA = __DATA_JSON__;
+const STEP2 = DATA.lineup_step2 || {};
 
 let currentSeason = null;
+let lineupSeason = null;
 let sortCol = "projected_rank";
 let sortDir = "asc";
 let currentSimulatedGame = null;
+let activeView = "step1View";
 
-// ── Init ──
-(function init() {{
-  const seasons = Object.keys(DATA.seasons).sort();
-  currentSeason = seasons[seasons.length - 1];
+function getStep1Seasons() {
+  return Object.keys(DATA.seasons || {}).sort();
+}
 
-  // Footer
-  const cfg = DATA.config || {{}};
+function getStep2Seasons() {
+  return Object.keys((STEP2 && STEP2.seasons) || {}).sort();
+}
+
+(function init() {
+  const seasons = getStep1Seasons();
+  currentSeason = seasons.length ? seasons[seasons.length - 1] : null;
+
+  const cfg = DATA.config || {};
   document.getElementById("footSigma").textContent = cfg.sigma_league || "?";
   document.getElementById("footHCA").textContent = cfg.home_court_advantage || "?";
   document.getElementById("footN").textContent = (cfg.n_simulations || 0).toLocaleString();
 
-  // Season tabs
+  initStep1SeasonTabs();
+  initSingleGameSimulator(seasons);
+  initViewTabs();
+  initStep2View();
+  bindModalEvents();
+  renderStep1();
+})();
+
+function initViewTabs() {
+  document.querySelectorAll("#viewTabs .view-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activeView = btn.dataset.view;
+      document.querySelectorAll("#viewTabs .view-tab").forEach(b => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".view-panel").forEach(panel => {
+        panel.classList.toggle("hidden", panel.id !== activeView);
+      });
+      if (activeView === "step1View") {
+        renderStep1();
+      } else {
+        renderStep2();
+      }
+    });
+  });
+}
+
+function initStep1SeasonTabs() {
+  const seasons = getStep1Seasons();
   const tabsEl = document.getElementById("seasonTabs");
-  seasons.forEach(s => {{
+  tabsEl.innerHTML = "";
+  seasons.forEach(s => {
     const tab = document.createElement("div");
     tab.className = "season-tab" + (s === currentSeason ? " active" : "");
     tab.textContent = s;
     tab.onclick = () => switchSeason(s);
     tabsEl.appendChild(tab);
-  }});
+  });
+}
 
-  initSingleGameSimulator(seasons);
-
-  render();
-}})();
-
-function switchSeason(s) {{
+function switchSeason(s) {
   currentSeason = s;
-  document.querySelectorAll(".season-tab").forEach(t => {{
+  document.querySelectorAll("#seasonTabs .season-tab").forEach(t => {
     t.classList.toggle("active", t.textContent === s);
-  }});
+  });
   sortCol = "projected_rank";
   sortDir = "asc";
-  render();
-}}
+  renderStep1();
+}
 
-function render() {{
+function renderStep1() {
+  if (!currentSeason) return;
   const sdata = DATA.seasons[currentSeason];
   if (!sdata) return;
   renderStats(sdata);
   renderTable(sdata);
   renderWinsChart(sdata);
   renderCalibration();
-}}
+}
 
-// ── Stats Cards ──
-function renderStats(sdata) {{
-  const ss = sdata.season_stats || {{}};
-  const vg = (DATA.validation && DATA.validation.game_level && DATA.validation.game_level[currentSeason]) || {{}};
-  const vs = (DATA.validation && DATA.validation.season_level && DATA.validation.season_level.per_season && DATA.validation.season_level.per_season[currentSeason]) || {{}};
+function renderStats(sdata) {
+  const ss = sdata.season_stats || {};
+  const vg = (DATA.validation && DATA.validation.game_level && DATA.validation.game_level[currentSeason]) || {};
 
   const cards = [
-    {{ label:"Correlation", value: fmt(ss.correlation, 3), cls:"val-green", detail:"Proj vs Actual wins" }},
-    {{ label:"MAE", value: fmt(ss.mae, 2), cls:"val-accent", detail:"Avg win error" }},
-    {{ label:"RMSE", value: fmt(ss.rmse, 2), cls:"val-accent", detail:"Root mean sq error" }},
-    {{ label:"Brier Score", value: fmt(vg.brier_score, 4), cls:"val-orange", detail:"Game-level (0.25=naive)" }},
-    {{ label:"Accuracy", value: vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "—", cls:"val-green", detail:"Game pick accuracy" }},
-    {{ label:"Log Loss", value: fmt(vg.log_loss, 4), cls:"val-purple", detail:"(0.693=coin flip)" }},
-    {{ label:"Margin RMSE", value: fmt(vg.margin_rmse, 1), cls:"val-accent", detail:"Predicted vs actual margin" }},
-    {{ label:"Teams", value: (sdata.team_results || []).length, cls:"val-accent", detail: currentSeason }},
+    { label:"Correlation", value: fmt(ss.correlation, 3), cls:"val-green", detail:"Proj vs Actual wins" },
+    { label:"MAE", value: fmt(ss.mae, 2), cls:"val-accent", detail:"Avg win error" },
+    { label:"RMSE", value: fmt(ss.rmse, 2), cls:"val-accent", detail:"Root mean sq error" },
+    { label:"Brier Score", value: fmt(vg.brier_score, 4), cls:"val-orange", detail:"Game-level (0.25=naive)" },
+    { label:"Accuracy", value: vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "-", cls:"val-green", detail:"Game pick accuracy" },
+    { label:"Log Loss", value: fmt(vg.log_loss, 4), cls:"val-purple", detail:"(0.693=coin flip)" },
+    { label:"Margin RMSE", value: fmt(vg.margin_rmse, 1), cls:"val-accent", detail:"Predicted vs actual margin" },
+    { label:"Teams", value: (sdata.team_results || []).length, cls:"val-accent", detail: currentSeason },
   ];
 
   const el = document.getElementById("statsRow");
   el.innerHTML = cards.map(c => `
     <div class="stat-card">
-      <div class="label">${{c.label}}</div>
-      <div class="value ${{c.cls}}">${{c.value || "—"}}</div>
-      <div class="detail">${{c.detail}}</div>
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value || "-"}</div>
+      <div class="detail">${c.detail}</div>
     </div>
   `).join("");
-}}
+}
 
-// ── Table ──
-function renderTable(sdata) {{
+function renderTable(sdata) {
   let teams = [...(sdata.team_results || [])];
-
-  // Sort
-  teams.sort((a, b) => {{
+  teams.sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (va == null) va = 0;
     if (vb == null) vb = 0;
     return sortDir === "asc" ? (va > vb ? 1 : va < vb ? -1 : 0) : (va < vb ? 1 : va > vb ? -1 : 0);
-  }});
+  });
 
   const cols = [
-    {{ key:"projected_rank", label:"Rank", cls:"rank" }},
-    {{ key:"team", label:"Team", cls:"team" }},
-    {{ key:"conference", label:"Conf", cls:"num" }},
-    {{ key:"projected_conf_rank", label:"Conf Rk", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"—" }},
-    {{ key:"mu", label:"Net Rtg", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" }},
-    {{ key:"sigma", label:"Vol", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" }},
-    {{ key:"projected_wins", label:"Proj W", cls:"num", fmt:v=>v!=null?v.toFixed(1):"—" }},
-    {{ key:"win_p5", label:"90% CI", cls:"conf-band", fmt:(v,r)=>`${{r.win_p5}}-${{r.win_p95}}` }},
-    {{ key:"actual_wins", label:"Actual W", cls:"num", fmt:v=>v!=null?v:"—" }},
-    {{ key:"win_error", label:"Error", cls:"num", fmt:(v,r) => {{
-      if (v == null) return "—";
+    { key:"projected_rank", label:"Rank", cls:"rank" },
+    { key:"team", label:"Team", cls:"team" },
+    { key:"conference", label:"Conf", cls:"num" },
+    { key:"projected_conf_rank", label:"Conf Rk", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"-" },
+    { key:"mu", label:"Net Rtg", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
+    { key:"sigma", label:"Vol", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
+    { key:"projected_wins", label:"Proj W", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"-" },
+    { key:"win_p5", label:"90% CI", cls:"conf-band", fmt:(v,r)=>`${r.win_p5}-${r.win_p95}` },
+    { key:"actual_wins", label:"Actual W", cls:"num", fmt:v=>v!=null?v:"-" },
+    { key:"win_error", label:"Error", cls:"num", fmt:(v) => {
+      if (v == null) return "-";
       const abs = Math.abs(v);
       const sign = v > 0 ? "+" : "";
       const cls = abs <= 3 ? "err-good" : abs <= 7 ? "err-ok" : "err-bad";
-      return `<span class="${{cls}}">${{sign}}${{v.toFixed(1)}}</span>`;
-    }} }},
-    {{ key:"direct_playoff_probability", label:"Top 6 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" }},
-    {{ key:"top_10_probability", label:"Top 10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" }},
-    {{ key:"playin_only_probability", label:"7-10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"—" }},
-    {{ key:"win_std", label:"Win SD", cls:"num", fmt:v=>v!=null?v.toFixed(2):"—" }},
+      return `<span class="${cls}">${sign}${Number(v).toFixed(1)}</span>`;
+    } },
+    { key:"direct_playoff_probability", label:"Top 6 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"-" },
+    { key:"top_10_probability", label:"Top 10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"-" },
+    { key:"playin_only_probability", label:"7-10 %", cls:"num", fmt:v=>v!=null?(v*100).toFixed(0)+"%":"-" },
+    { key:"win_std", label:"Win SD", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
   ];
 
   let html = "<table><thead><tr>";
-  cols.forEach(c => {{
+  cols.forEach(c => {
     const cls = c.key === sortCol ? (sortDir === "asc" ? "sorted-asc" : "sorted-desc") : "";
-    html += `<th class="${{cls}}" data-col="${{c.key}}">${{c.label}}</th>`;
-  }});
+    html += `<th class="${cls}" data-col="${c.key}">${c.label}</th>`;
+  });
   html += "</tr></thead><tbody>";
 
-  teams.forEach(t => {{
+  teams.forEach(t => {
     html += "<tr>";
-    cols.forEach(c => {{
+    cols.forEach(c => {
       const raw = c.key === "win_p5" && c.label === "90% CI" ? t["win_p5"] : t[c.key];
-      const display = c.fmt ? c.fmt(raw, t) : (raw != null ? raw : "—");
-      html += `<td class="${{c.cls || ""}}">${{display}}</td>`;
-    }});
+      const display = c.fmt ? c.fmt(raw, t) : (raw != null ? raw : "-");
+      html += `<td class="${c.cls || ""}">${display}</td>`;
+    });
     html += "</tr>";
-  }});
+  });
 
   html += "</tbody></table>";
   document.getElementById("tableWrap").innerHTML = html;
 
-  // Header click → sort
-  document.querySelectorAll("#tableWrap th").forEach(th => {{
-    th.addEventListener("click", () => {{
+  document.querySelectorAll("#tableWrap th").forEach(th => {
+    th.addEventListener("click", () => {
       const col = th.dataset.col;
-      if (sortCol === col) {{
+      if (sortCol === col) {
         sortDir = sortDir === "asc" ? "desc" : "asc";
-      }} else {{
+      } else {
         sortCol = col;
         sortDir = col === "team" ? "asc" : "desc";
-      }}
+      }
       renderTable(sdata);
-    }});
-  }});
-}}
+    });
+  });
+}
 
-// ── Wins Chart (Horizontal Bars) ──
-function renderWinsChart(sdata) {{
+function renderWinsChart(sdata) {
   const teams = [...(sdata.team_results || [])].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
   const n = teams.length;
   const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
   const h = n * (barH + gap) + 40;
   const chartW = 700;
   const maxWins = Math.max(82, ...teams.map(t => Math.max(t.projected_wins || 0, t.actual_wins || 0, t.win_p95 || 0)));
-
   const xScale = (chartW - leftMargin - rightMargin) / maxWins;
 
-  let svg = `<svg width="100%" viewBox="0 0 ${{chartW}} ${{h}}" style="max-height:${{Math.min(h, 900)}}px">`;
+  let svg = `<svg width="100%" viewBox="0 0 ${chartW} ${h}" style="max-height:${Math.min(h, 900)}px">`;
 
-  // 41-win reference line (.500 record)
   const x41 = leftMargin + 41 * xScale;
-  svg += `<line x1="${{x41}}" y1="0" x2="${{x41}}" y2="${{h}}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.4"/>`;
-  svg += `<text x="${{x41}}" y="12" text-anchor="middle" font-size="10" fill="var(--text-muted)">41 Wins</text>`;
+  svg += `<line x1="${x41}" y1="0" x2="${x41}" y2="${h}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.4"/>`;
+  svg += `<text x="${x41}" y="12" text-anchor="middle" font-size="10" fill="var(--text-muted)">41 Wins</text>`;
 
-  teams.forEach((t, i) => {{
+  teams.forEach((t, i) => {
     const y = 20 + i * (barH + gap);
     const projW = leftMargin + (t.projected_wins || 0) * xScale;
     const actW = t.actual_wins != null ? leftMargin + t.actual_wins * xScale : null;
     const p5x = leftMargin + (t.win_p5 || 0) * xScale;
     const p95x = leftMargin + (t.win_p95 || 0) * xScale;
 
-    // Confidence band (p5-p95) — light background
-    svg += `<rect x="${{p5x}}" y="${{y+2}}" width="${{p95x - p5x}}" height="${{barH-4}}" rx="2" fill="var(--accent)" opacity="0.12"/>`;
+    svg += `<rect x="${p5x}" y="${y+2}" width="${p95x - p5x}" height="${barH-4}" rx="2" fill="var(--accent)" opacity="0.12"/>`;
+    svg += `<rect x="${leftMargin}" y="${y+4}" width="${projW - leftMargin}" height="${barH-8}" rx="2" fill="var(--accent)" opacity="0.7"/>`;
+    if (actW != null) {
+      svg += `<line x1="${actW}" y1="${y+1}" x2="${actW}" y2="${y+barH-1}" stroke="var(--green)" stroke-width="2.5"/>`;
+    }
 
-    // Projected wins bar
-    svg += `<rect x="${{leftMargin}}" y="${{y+4}}" width="${{projW - leftMargin}}" height="${{barH-8}}" rx="2" fill="var(--accent)" opacity="0.7"/>`;
+    svg += `<text x="${leftMargin - 4}" y="${y + barH/2 + 4}" text-anchor="end" font-size="11" font-weight="600">${t.team}</text>`;
+    const errStr = t.win_error != null ? ` (${t.win_error > 0 ? "+" : ""}${Number(t.win_error).toFixed(1)})` : "";
+    svg += `<text x="${Math.max(projW, actW || 0) + 6}" y="${y + barH/2 + 4}" font-size="10" fill="var(--text-muted)">${(t.projected_wins||0).toFixed(0)}P / ${t.actual_wins != null ? t.actual_wins : "?"}A${errStr}</text>`;
+  });
 
-    // Actual wins marker
-    if (actW != null) {{
-      svg += `<line x1="${{actW}}" y1="${{y+1}}" x2="${{actW}}" y2="${{y+barH-1}}" stroke="var(--green)" stroke-width="2.5"/>`;
-    }}
-
-    // Team label
-    svg += `<text x="${{leftMargin - 4}}" y="${{y + barH/2 + 4}}" text-anchor="end" font-size="11" font-weight="600">${{t.team}}</text>`;
-
-    // Values
-    const errStr = t.win_error != null ? ` (${{t.win_error > 0 ? "+" : ""}}${{t.win_error.toFixed(1)}})` : "";
-    svg += `<text x="${{Math.max(projW, actW || 0) + 6}}" y="${{y + barH/2 + 4}}" font-size="10" fill="var(--text-muted)">${{(t.projected_wins||0).toFixed(0)}}P / ${{t.actual_wins != null ? t.actual_wins : "?"}}A${{errStr}}</text>`;
-  }});
-
-  // Legend
-  svg += `<rect x="${{chartW - 200}}" y="${{h - 18}}" width="12" height="6" rx="1" fill="var(--accent)" opacity="0.7"/>`;
-  svg += `<text x="${{chartW - 184}}" y="${{h - 12}}" font-size="10" fill="var(--text-muted)">Projected</text>`;
-  svg += `<line x1="${{chartW - 120}}" y1="${{h - 18}}" x2="${{chartW - 120}}" y2="${{h - 12}}" stroke="var(--green)" stroke-width="2.5"/>`;
-  svg += `<text x="${{chartW - 114}}" y="${{h - 12}}" font-size="10" fill="var(--text-muted)">Actual</text>`;
-  svg += `<rect x="${{chartW - 80}}" y="${{h - 18}}" width="20" height="6" rx="1" fill="var(--accent)" opacity="0.12"/>`;
-  svg += `<text x="${{chartW - 56}}" y="${{h - 12}}" font-size="10" fill="var(--text-muted)">90% CI</text>`;
+  svg += `<rect x="${chartW - 200}" y="${h - 18}" width="12" height="6" rx="1" fill="var(--accent)" opacity="0.7"/>`;
+  svg += `<text x="${chartW - 184}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Projected</text>`;
+  svg += `<line x1="${chartW - 120}" y1="${h - 18}" x2="${chartW - 120}" y2="${h - 12}" stroke="var(--green)" stroke-width="2.5"/>`;
+  svg += `<text x="${chartW - 114}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Actual</text>`;
+  svg += `<rect x="${chartW - 80}" y="${h - 18}" width="20" height="6" rx="1" fill="var(--accent)" opacity="0.12"/>`;
+  svg += `<text x="${chartW - 56}" y="${h - 12}" font-size="10" fill="var(--text-muted)">90% CI</text>`;
 
   svg += "</svg>";
   document.getElementById("winsChart").innerHTML = svg;
-}}
+}
 
-// ── Calibration Chart ──
-function renderCalibration() {{
+function renderCalibration() {
   const calData = DATA.validation && DATA.validation.calibration && DATA.validation.calibration[currentSeason];
-  if (!calData || calData.length === 0) {{
+  if (!calData || calData.length === 0) {
     document.getElementById("calChart").innerHTML = '<div style="color:var(--text-muted);padding:20px">No calibration data</div>';
     return;
-  }}
+  }
 
   const w = 320, h = 280, pad = 40;
   const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  let svg = `<svg width="100%" viewBox="0 0 ${w} ${h}">`;
 
-  let svg = `<svg width="100%" viewBox="0 0 ${{w}} ${{h}}">`;
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad + plotH}" stroke="var(--border)" stroke-width="1"/>`;
+  svg += `<line x1="${pad}" y1="${pad}" x2="${pad}" y2="${pad + plotH}" stroke="var(--border)" stroke-width="1"/>`;
 
-  // Perfect calibration line
-  svg += `<line x1="${{pad}}" y1="${{pad + plotH}}" x2="${{pad + plotW}}" y2="${{pad}}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.5"/>`;
+  svg += `<text x="${w/2}" y="${h - 4}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Predicted Win Prob</text>`;
+  svg += `<text x="10" y="${h/2}" text-anchor="middle" font-size="10" fill="var(--text-muted)" transform="rotate(-90,10,${h/2})">Actual Win Rate</text>`;
 
-  // Axes
-  svg += `<line x1="${{pad}}" y1="${{pad + plotH}}" x2="${{pad + plotW}}" y2="${{pad + plotH}}" stroke="var(--border)" stroke-width="1"/>`;
-  svg += `<line x1="${{pad}}" y1="${{pad}}" x2="${{pad}}" y2="${{pad + plotH}}" stroke="var(--border)" stroke-width="1"/>`;
-
-  // Labels
-  svg += `<text x="${{w/2}}" y="${{h - 4}}" text-anchor="middle" font-size="10" fill="var(--text-muted)">Predicted Win Prob</text>`;
-  svg += `<text x="10" y="${{h/2}}" text-anchor="middle" font-size="10" fill="var(--text-muted)" transform="rotate(-90,10,${{h/2}})">Actual Win Rate</text>`;
-
-  // Tick labels
-  for (let i = 0; i <= 10; i += 2) {{
+  for (let i = 0; i <= 10; i += 2) {
     const v = i / 10;
     const x = pad + v * plotW;
     const y = pad + plotH - v * plotH;
-    svg += `<text x="${{x}}" y="${{pad + plotH + 14}}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${{v.toFixed(1)}}</text>`;
-    svg += `<text x="${{pad - 6}}" y="${{y + 3}}" text-anchor="end" font-size="9" fill="var(--text-muted)">${{v.toFixed(1)}}</text>`;
-  }}
+    svg += `<text x="${x}" y="${pad + plotH + 14}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
+    svg += `<text x="${pad - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v.toFixed(1)}</text>`;
+  }
 
-  // Data points
-  calData.forEach(bin => {{
+  calData.forEach(bin => {
     const px = pad + bin.predicted_rate * plotW;
     const py = pad + plotH - bin.actual_rate * plotH;
     const r = Math.max(3, Math.min(8, Math.sqrt(bin.count) * 0.8));
-    svg += `<circle cx="${{px}}" cy="${{py}}" r="${{r}}" fill="var(--accent)" opacity="0.85"/>`;
-  }});
+    svg += `<circle cx="${px}" cy="${py}" r="${r}" fill="var(--accent)" opacity="0.85"/>`;
+  });
 
-  // Connect points with line
   let path = "";
-  calData.forEach((bin, i) => {{
+  calData.forEach((bin, i) => {
     const px = pad + bin.predicted_rate * plotW;
     const py = pad + plotH - bin.actual_rate * plotH;
-    path += (i === 0 ? "M" : "L") + `${{px}},${{py}}`;
-  }});
-  svg += `<path d="${{path}}" fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.6"/>`;
+    path += (i === 0 ? "M" : "L") + `${px},${py}`;
+  });
+  svg += `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5" opacity="0.6"/>`;
 
   svg += "</svg>";
   document.getElementById("calChart").innerHTML = svg;
-}}
+}
 
-// ── Single-Game Simulator ──
-function initSingleGameSimulator(seasons) {{
+function initSingleGameSimulator(seasons) {
   const homeSeasonEl = document.getElementById("sgHomeSeason");
   const awaySeasonEl = document.getElementById("sgAwaySeason");
   homeSeasonEl.innerHTML = "";
   awaySeasonEl.innerHTML = "";
 
-  seasons.forEach(s => {{
+  seasons.forEach(s => {
     const o1 = document.createElement("option");
     o1.value = s;
     o1.textContent = s;
@@ -490,41 +657,38 @@ function initSingleGameSimulator(seasons) {{
     o2.value = s;
     o2.textContent = s;
     awaySeasonEl.appendChild(o2);
-  }});
+  });
 
-  homeSeasonEl.value = currentSeason;
-  awaySeasonEl.value = currentSeason;
+  if (currentSeason) {
+    homeSeasonEl.value = currentSeason;
+    awaySeasonEl.value = currentSeason;
+  }
 
   populateTeamOptions(homeSeasonEl.value, "sgHomeTeam");
   populateTeamOptions(awaySeasonEl.value, "sgAwayTeam");
 
-  homeSeasonEl.addEventListener("change", () => {{
-    populateTeamOptions(homeSeasonEl.value, "sgHomeTeam");
-  }});
-  awaySeasonEl.addEventListener("change", () => {{
-    populateTeamOptions(awaySeasonEl.value, "sgAwayTeam");
-  }});
-
+  homeSeasonEl.addEventListener("change", () => populateTeamOptions(homeSeasonEl.value, "sgHomeTeam"));
+  awaySeasonEl.addEventListener("change", () => populateTeamOptions(awaySeasonEl.value, "sgAwayTeam"));
   document.getElementById("sgRunBtn").addEventListener("click", runSingleGameSimulation);
-}}
+}
 
-function populateTeamOptions(season, teamSelectId) {{
+function populateTeamOptions(season, teamSelectId) {
   const el = document.getElementById(teamSelectId);
-  const teams = ((DATA.seasons[season] || {{}}).team_results || [])
+  const teams = ((DATA.seasons[season] || {}).team_results || [])
     .slice()
     .sort((a, b) => (a.team || "").localeCompare(b.team || ""));
-  el.innerHTML = teams.map(t => `<option value="${{t.team}}">${{t.team}}</option>`).join("");
-}}
+  el.innerHTML = teams.map(t => `<option value="${t.team}">${t.team}</option>`).join("");
+}
 
-function getTeamEntry(season, teamAbbr) {{
-  const rows = ((DATA.seasons[season] || {{}}).team_results || []);
-  for (const row of rows) {{
+function getTeamEntry(season, teamAbbr) {
+  const rows = ((DATA.seasons[season] || {}).team_results || []);
+  for (const row of rows) {
     if (row.team === teamAbbr) return row;
-  }}
+  }
   return null;
-}}
+}
 
-function erf(x) {{
+function erf(x) {
   const sign = x >= 0 ? 1 : -1;
   const ax = Math.abs(x);
   const p = 0.3275911;
@@ -536,21 +700,21 @@ function erf(x) {{
   const t = 1.0 / (1.0 + p * ax);
   const y = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax));
   return sign * y;
-}}
+}
 
-function normalCdf(x) {{
+function normalCdf(x) {
   return 0.5 * (1 + erf(x / Math.sqrt(2)));
-}}
+}
 
-function randn() {{
+function randn() {
   let u = 0;
   let v = 0;
   while (u === 0) u = Math.random();
   while (v === 0) v = Math.random();
   return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}}
+}
 
-function runSingleGameSimulation() {{
+function runSingleGameSimulation() {
   const homeSeason = document.getElementById("sgHomeSeason").value;
   const awaySeason = document.getElementById("sgAwaySeason").value;
   const homeTeam = document.getElementById("sgHomeTeam").value;
@@ -559,15 +723,14 @@ function runSingleGameSimulation() {{
   const home = getTeamEntry(homeSeason, homeTeam);
   const away = getTeamEntry(awaySeason, awayTeam);
 
-  if (!home || !away) {{
+  if (!home || !away) {
     document.getElementById("sgResult").innerHTML = "Unable to find one or both teams in the selected seasons.";
     return;
-  }}
+  }
 
-  const cfg = DATA.config || {{}};
+  const cfg = DATA.config || {};
   const sigmaLeague = Number(cfg.sigma_league || 3.0);
   const hca = Number(cfg.home_court_advantage || 2.0);
-
   const homeMu = Number(home.mu || 0);
   const awayMu = Number(away.mu || 0);
   const homeSigma = Number(home.sigma || 0);
@@ -579,55 +742,288 @@ function runSingleGameSimulation() {{
   const homeWinProb = normalCdf(z);
   const sampledMargin = deltaMu + sigmaGame * randn();
 
-  currentSimulatedGame = {{
+  currentSimulatedGame = {
     homeSeason,
     awaySeason,
     homeTeam,
     awayTeam,
-    homeMu,
-    awayMu,
-    homeSigma,
-    awaySigma,
     deltaMu,
     sigmaGame,
     homeWinProb,
-    awayWinProb: 1 - homeWinProb,
     sampledMargin,
-    winner: sampledMargin >= 0 ? `${{homeTeam}} (${{homeSeason}})` : `${{awayTeam}} (${{awaySeason}})`,
+    winner: sampledMargin >= 0 ? `${homeTeam} (${homeSeason})` : `${awayTeam} (${awaySeason})`,
     timestamp: new Date().toLocaleString(),
-  }};
+  };
 
   renderSingleGameResult();
-}}
+}
 
-function renderSingleGameResult() {{
+function renderSingleGameResult() {
   const el = document.getElementById("sgResult");
-  if (!currentSimulatedGame) {{
+  if (!currentSimulatedGame) {
     el.innerHTML = "No game simulated yet.";
     return;
-  }}
-
+  }
   const g = currentSimulatedGame;
   el.innerHTML = `
-    <div class="row"><span>Matchup</span><strong>${{g.homeTeam}} (${{g.homeSeason}}) vs ${{g.awayTeam}} (${{g.awaySeason}})</strong></div>
-    <div class="row"><span>Expected Margin (home)</span><strong>${{g.deltaMu.toFixed(2)}}</strong></div>
-    <div class="row"><span>Game Sigma</span><strong>${{g.sigmaGame.toFixed(2)}}</strong></div>
-    <div class="row"><span>Home Win Probability</span><strong>${{(g.homeWinProb * 100).toFixed(1)}}%</strong></div>
-    <div class="row"><span>Single Draw Margin (home)</span><strong>${{g.sampledMargin.toFixed(2)}}</strong></div>
-    <div class="row"><span>Winner (this run)</span><strong>${{g.winner}}</strong></div>
-    <div class="row"><span>Simulated At</span><span>${{g.timestamp}}</span></div>
+    <div class="row"><span>Matchup</span><strong>${g.homeTeam} (${g.homeSeason}) vs ${g.awayTeam} (${g.awaySeason})</strong></div>
+    <div class="row"><span>Expected Margin (home)</span><strong>${g.deltaMu.toFixed(2)}</strong></div>
+    <div class="row"><span>Game Sigma</span><strong>${g.sigmaGame.toFixed(2)}</strong></div>
+    <div class="row"><span>Home Win Probability</span><strong>${(g.homeWinProb * 100).toFixed(1)}%</strong></div>
+    <div class="row"><span>Single Draw Margin (home)</span><strong>${g.sampledMargin.toFixed(2)}</strong></div>
+    <div class="row"><span>Winner (this run)</span><strong>${g.winner}</strong></div>
+    <div class="row"><span>Simulated At</span><span>${g.timestamp}</span></div>
   `;
-}}
+}
 
-// ── Util ──
-function fmt(v, dec) {{
-  if (v == null || v === undefined) return "—";
+function initStep2View() {
+  const seasons = getStep2Seasons();
+  const tabs = document.getElementById("lineupSeasonTabs");
+  tabs.innerHTML = "";
+
+  if (!seasons.length) {
+    document.getElementById("lineupStatsRow").innerHTML = `
+      <div class="stat-card"><div class="label">Step 2</div><div class="value val-orange">No Data</div><div class="detail">Run: python3 src/simulation/lineup_projection.py</div></div>
+    `;
+    document.getElementById("lineupCardGrid").innerHTML = "";
+    return;
+  }
+
+  lineupSeason = seasons[seasons.length - 1];
+  seasons.forEach(s => {
+    const tab = document.createElement("div");
+    tab.className = "season-tab" + (s === lineupSeason ? " active" : "");
+    tab.textContent = s;
+    tab.onclick = () => switchLineupSeason(s);
+    tabs.appendChild(tab);
+  });
+
+  renderStep2();
+}
+
+function switchLineupSeason(season) {
+  lineupSeason = season;
+  document.querySelectorAll("#lineupSeasonTabs .season-tab").forEach(t => {
+    t.classList.toggle("active", t.textContent === season);
+  });
+  renderStep2();
+}
+
+function renderStep2() {
+  const seasons = (STEP2 && STEP2.seasons) || {};
+  const seasonData = seasons[lineupSeason];
+  if (!seasonData) return;
+  renderStep2Stats(seasonData);
+  renderStep2Cards(seasonData);
+}
+
+function renderStep2Stats(seasonData) {
+  const s = seasonData.summary || {};
+  const cards = [
+    {
+      label: "Starter Overlap",
+      value: s.starter_overlap_count_mean != null ? Number(s.starter_overlap_count_mean).toFixed(2) : "-",
+      cls: (s.starter_target_met ? "val-green" : "val-orange"),
+      detail: "Predicted vs observed top-possession lineup (players)"
+    },
+    {
+      label: "Clutch Overlap",
+      value: s.clutch_overlap_count_mean != null ? Number(s.clutch_overlap_count_mean).toFixed(2) : "-",
+      cls: (s.clutch_target_met ? "val-green" : "val-orange"),
+      detail: "Predicted vs top-5 clutch-minute players"
+    },
+    {
+      label: "Rotation Corr",
+      value: s.rotation_corr != null ? Number(s.rotation_corr).toFixed(3) : "-",
+      cls: (s.rotation_target_met ? "val-green" : "val-purple"),
+      detail: "Predicted rotation strength vs bench-heavy lineup NET_RTG"
+    },
+    {
+      label: "Teams",
+      value: s.n_teams != null ? String(s.n_teams) : "-",
+      cls: "val-accent",
+      detail: lineupSeason
+    },
+  ];
+
+  document.getElementById("lineupStatsRow").innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value}</div>
+      <div class="detail">${c.detail}</div>
+    </div>
+  `).join("");
+}
+
+function renderStep2Cards(seasonData) {
+  const teams = (seasonData.teams || []).slice().sort((a, b) => (a.team_abbreviation || "").localeCompare(b.team_abbreviation || ""));
+  const grid = document.getElementById("lineupCardGrid");
+
+  if (!teams.length) {
+    grid.innerHTML = `<div class="stat-card"><div class="label">Lineup Cards</div><div class="value val-orange">No Teams</div><div class="detail">No Step 2 rows for ${lineupSeason}</div></div>`;
+    return;
+  }
+
+  grid.innerHTML = teams.map(team => {
+    const v = team.validation || {};
+    return `
+      <div class="lineup-card" data-team="${team.team_abbreviation}">
+        <div class="title-row">
+          <div class="team-name">${team.team_abbreviation}</div>
+          <div class="conf">${team.conference || "Unknown"}</div>
+        </div>
+        <div class="mini">
+          <div class="k">Starter</div><div class="v">${fmt(team.mu_start, 2)} / ${fmt(team.sigma_start, 2)}</div>
+          <div class="k">Rotation</div><div class="v">${fmt(team.mu_rotation, 2)} / ${fmt(team.sigma_rotation, 2)}</div>
+          <div class="k">Clutch</div><div class="v">${fmt(team.mu_clutch, 2)} / ${fmt(team.sigma_clutch, 2)}</div>
+          <div class="k">Pool Size</div><div class="v">${team.n_players_pool || "-"}</div>
+        </div>
+        <div class="validation">
+          <span>S: ${v.starter_overlap != null ? v.starter_overlap : "-"}/5</span>
+          <span>C: ${v.clutch_overlap != null ? v.clutch_overlap : "-"}/5</span>
+          <span>R: ${v.rotation_actual_net != null ? fmt(v.rotation_actual_net, 2) : "-"}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  document.querySelectorAll("#lineupCardGrid .lineup-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const team = card.dataset.team;
+      openLineupModal(lineupSeason, team);
+    });
+  });
+}
+
+function findStep2Team(season, teamAbbr) {
+  const seasonData = (((STEP2 || {}).seasons || {})[season] || {});
+  const teams = seasonData.teams || [];
+  return teams.find(t => t.team_abbreviation === teamAbbr) || null;
+}
+
+function renderPlayerList(players) {
+  const cleanPlayers = (players || []).filter(p => !!cleanNameLabel(p.player_name));
+  if (!cleanPlayers.length) {
+    return `<div style="color:var(--text-muted);font-size:12px">No players</div>`;
+  }
+  return `<div class="player-list">` + cleanPlayers.map(p => `
+    <div class="player-item">
+      <div class="meta">
+        <div class="name">${cleanNameLabel(p.player_name)}</div>
+        <div class="role">${cleanText(p.role) || "-"}${cleanText(p.position_band) ? ` · ${cleanText(p.position_band)}` : ""}</div>
+        <div class="arche">OFF: ${cleanText(p.off_archetype) || "-"} | DEF: ${cleanText(p.def_archetype) || "-"}</div>
+      </div>
+      <div class="num">MIN ${fmt(p.minutes, 1)}</div>
+      <div class="num">S ${fmt(p.score, 3)}</div>
+    </div>
+  `).join("") + `</div>`;
+}
+
+function openLineupModal(season, teamAbbr) {
+  const team = findStep2Team(season, teamAbbr);
+  if (!team) return;
+
+  const v = team.validation || {};
+  const actualStarterNames = uniqueNamedList(v.actual_starter_names || []);
+  const actualClutchNames = uniqueNamedList(v.actual_clutch_names || []);
+
+  document.getElementById("lineupModalTitle").textContent = `${team.team_abbreviation} (${season})`;
+
+  const html = `
+    <div class="lineup-modal-grid">
+      <div class="lineup-panel">
+        <h4>Phase Metrics</h4>
+        <div class="kv">
+          <div class="k">Starter Mu / Sigma</div><div class="v">${fmt(team.mu_start,2)} / ${fmt(team.sigma_start,2)}</div>
+          <div class="k">Rotation Mu / Sigma</div><div class="v">${fmt(team.mu_rotation,2)} / ${fmt(team.sigma_rotation,2)}</div>
+          <div class="k">Clutch Mu / Sigma</div><div class="v">${fmt(team.mu_clutch,2)} / ${fmt(team.sigma_clutch,2)}</div>
+          <div class="k">Team Clutch Minutes</div><div class="v">${fmt(team.team_clutch_minutes_total,1)}</div>
+          <div class="k">Pool Size</div><div class="v">${team.n_players_pool || "-"}</div>
+        </div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Validation</h4>
+        <div class="kv">
+          <div class="k">Starter Overlap</div><div class="v">${v.starter_overlap != null ? v.starter_overlap + "/5" : "-"}</div>
+          <div class="k">Clutch Overlap</div><div class="v">${v.clutch_overlap != null ? v.clutch_overlap + "/5" : "-"}</div>
+          <div class="k">Rotation Predicted</div><div class="v">${fmt(v.rotation_predicted,2)}</div>
+          <div class="k">Rotation Actual (bench-heavy)</div><div class="v">${fmt(v.rotation_actual_net,2)}</div>
+          <div class="k">Observed Starter Players</div><div class="v">${actualStarterNames.length || 0}</div>
+          <div class="k">Observed Clutch Players</div><div class="v">${actualClutchNames.length || 0}</div>
+        </div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Predicted Starters</h4>
+        ${renderPlayerList(team.starter_players || [])}
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Predicted Clutch Lineup</h4>
+        ${renderPlayerList(team.clutch_players || [])}
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Observed Starter Players (Proxy)</h4>
+        <div style="font-size:12px;color:var(--text-muted)">${actualStarterNames.length ? actualStarterNames.join(", ") : "No observed starter proxy"}</div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Observed Clutch Players</h4>
+        <div style="font-size:12px;color:var(--text-muted)">${actualClutchNames.length ? actualClutchNames.join(", ") : "No observed clutch lineup"}</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("lineupModalContent").innerHTML = html;
+  document.getElementById("lineupModalOverlay").classList.add("open");
+}
+
+function bindModalEvents() {
+  const overlay = document.getElementById("lineupModalOverlay");
+  const closeBtn = document.getElementById("lineupModalClose");
+  closeBtn.addEventListener("click", () => overlay.classList.remove("open"));
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) {
+      overlay.classList.remove("open");
+    }
+  });
+}
+
+function fmt(v, dec) {
+  if (v == null || v === undefined || Number.isNaN(Number(v))) return "-";
   return Number(v).toFixed(dec);
-}}
+}
 
+function cleanText(value) {
+  if (value == null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const low = text.toLowerCase();
+  if (["nan", "none", "null", "unknown", "n/a", "na"].includes(low)) return null;
+  return text;
+}
+
+function cleanNameLabel(value) {
+  return cleanText(value);
+}
+
+function uniqueNamedList(values) {
+  const seen = new Set();
+  const out = [];
+  (values || []).forEach(v => {
+    const name = cleanNameLabel(v);
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    out.push(name);
+  });
+  return out;
+}
 </script>
 </body>
 </html>"""
+    return html.replace("__DATA_JSON__", data_json)
 
 
 if __name__ == "__main__":

@@ -910,3 +910,57 @@ v4.3 changes (applied 2026-02-07):
 		python3 app/player_data_viewer.py
 		```
 - **NEW:** Salary fetcher (`src/data_fetch/fetch_player_salaries.py`) scrapes ESPN, outputs per-season parquet files (`player_salaries_2022-23.parquet`, etc). Viewer now loads these and displays salary in the player modal subtitle for the correct season.
+
+2026-03-05 — Simulation Core Step 2 Sprint (clutch fetch + lineup model + frontend tab)
+- Scope completed across 3 requested steps:
+	- Step 1: clutch fetch + aggregate integration
+	- Step 2: lineup projection model with validation outputs
+	- Step 3: simulation viewer frontend upgrade (new Step 2 tab with clickable team cards)
+- Files added:
+	- `src/data_fetch/fetch_player_clutch_stats.py`
+	- `src/simulation/lineup_projection.py`
+- Files updated:
+	- `src/player_eval/constants.py`
+	- `src/profile_aggregate/build_profile_aggregate.py`
+	- `src/simulation/simulation_config.py`
+	- `app/simulation_viewer.py`
+	- `readme.md`
+	- `reference/simulation/Simulation_Core_Summary.md`
+- Clutch fetch validation (runtime):
+	- 2022-23: 470 rows
+	- 2023-24: 474 rows
+	- 2024-25: 504 rows
+	- Combined: 1448 rows (`data/historical/player_clutch_stats_all.parquet`)
+- Aggregate rebuild validation:
+	- `aggregate/player_profile_aggregate.parquet`: 1971 rows x 924 cols
+	- `reports/profile_aggregate_validation.json` includes clutch group + `clutch_minutes` coverage `0.7346524606798579`
+- Step 2 lineup model validation snapshot (`python3 src/simulation/lineup_projection.py`):
+	- team-seasons: 90
+	- starter overlap mean: 3.556/5 (0.7111)
+	- clutch overlap mean: 4.289/5 (0.8578)
+	- rotation corr: 0.5367
+	- outputs written:
+		- `data/processed/simulation/simulation_step2_lineup_profiles.parquet`
+		- `reports/simulation_step2_lineup_profiles.json`
+		- `reports/simulation_step2_validation.json`
+- Frontend:
+	- `python3 app/simulation_viewer.py` regenerated `app/simulation.html`
+	- Step 1 and Step 2 views both available in one standalone page.
+
+2026-03-05 — Position-band impact audit + minimal-impact implementation (frontend/backend)
+- Scope: evaluate each position-band audit item for real impact on current metrics/models, implement only low-risk items, reproduce outputs, and defer high-impact items pending approval.
+- Implemented low-impact changes:
+	- `src/simulation/lineup_projection.py`: robust hybrid role parsing + `position_band` carried in Step 2 player payloads.
+	- `app/simulation_viewer.py`: player list now shows `role · position_band`.
+	- `src/modeling/model_config.py`: canonical position labels listed first in `position_buckets` with legacy aliases retained for compatibility.
+	- `src/data_compute/compute_defensive_archetypes.py`: explicit legacy warning banner pointing to v2 script.
+- Exposure findings used for change classification:
+	- Decomposition hybrid-collapse exposure: `198/198` hybrid rows collapsed in `bke_v28_decomposition.parquet` (`Forward-Center` and `Guard-Forward` aliases mapped to non-hybrid buckets).
+	- Step 2 fallback exposure: `0/1680` rows missing role mapping, so fallback risk is effectively zero in current data.
+- Reproduction / drift checks:
+	- `python3 src/simulation/lineup_projection.py` rerun: unchanged metrics (`starter_overlap_rate_mean=0.7111`, `clutch_overlap_rate_mean=0.8578`, `rotation_correlation=0.5367`).
+	- `python3 app/simulation_viewer.py` rerun: `app/simulation.html` regenerated.
+	- `python3 src/modeling/construct_bke_scores_v27.py` rerun: raw file MD5 changes per run because payload includes `generated_at`; stable-content MD5 (excluding `generated_at`) is unchanged (`d5588c20dcdb083d6b9724e50982b87d`).
+- Deferred high-impact items (require explicit user approval before implementation):
+	- Preserve hybrid bands end-to-end in decomposition cohorting (would change grouped percentile baselines and ranks).
+	- Matchup/position taxonomy redesign across modeling inputs.

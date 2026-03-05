@@ -23,9 +23,10 @@ Sources merged:
   12. DARKO                         (external DPM model data)
   13. Players metadata              (bio: height, weight, wingspan, experience)
   14. Salary data                   (per-season contract info)
-  15. Game logs aggregates          (MPG variance, DNP estimation)
-  16. Step 1 impact profiles        (curated impact/behavioral features)
-  17. BKE diagnostic reports        (stability, shrinkage)
+    15. Game logs aggregates          (MPG variance, DNP estimation)
+    16. Player clutch stats           (clutch minutes/production by season)
+    17. Step 1 impact profiles        (curated impact/behavioral features)
+    18. BKE diagnostic reports        (stability, shrinkage)
 
 Output:
   aggregate/player_profile_aggregate.parquet
@@ -52,6 +53,8 @@ from src.player_eval.constants import (
     BKE_DECOMP_PATH,
     BKE_SCORES_PATH,
     BKE_V29_PLAYER_DIAGNOSTIC_PATH,
+    CLUTCH_STATS_ALL_PATH,
+    CLUTCH_STATS_GLOB,
     COMPLETE_STATS_PATH,
     DARKO_DIR,
     DBKE_V30_SHRINKAGE_PATH,
@@ -280,6 +283,92 @@ def _load_game_log_aggregates() -> pd.DataFrame:
     return agg
 
 
+def _load_clutch_stats() -> pd.DataFrame:
+    """Load player clutch stats fetched from LeagueDashPlayerClutch."""
+    frames = []
+
+    if CLUTCH_STATS_ALL_PATH.exists():
+        all_df = _safe_load(CLUTCH_STATS_ALL_PATH)
+        if not all_df.empty:
+            frames.append(all_df)
+    else:
+        for file in sorted(HISTORICAL_DIR.glob(CLUTCH_STATS_GLOB)):
+            df = _safe_load(file)
+            if not df.empty:
+                frames.append(df)
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+    rename_map = {}
+    if "PLAYER_ID" in df.columns:
+        rename_map["PLAYER_ID"] = "player_id"
+    if "SEASON" in df.columns:
+        rename_map["SEASON"] = "season"
+    df = df.rename(columns=rename_map)
+
+    if "player_id" not in df.columns or "season" not in df.columns:
+        return pd.DataFrame()
+
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+
+    # Ensure clutch columns are explicitly prefixed to avoid merge collisions.
+    candidates = [
+        "player_name",
+        "team_id",
+        "team_abbreviation",
+        "clutch_gp",
+        "clutch_minutes",
+        "clutch_pts",
+        "clutch_ast",
+        "clutch_reb",
+        "clutch_plus_minus",
+    ]
+    for col in candidates:
+        if col in df.columns and not col.startswith("clutch_") and col not in {"player_name"}:
+            df = df.rename(columns={col: f"clutch_{col}"})
+
+    # Keep one row per player-season (top clutch-minute sample for traded players).
+    min_col = "clutch_minutes" if "clutch_minutes" in df.columns else None
+    if min_col is not None:
+        df[min_col] = pd.to_numeric(df[min_col], errors="coerce").fillna(0.0)
+        df = df.sort_values(min_col, ascending=False)
+    df = _dedup(df)
+
+    keep = ["player_id", "season"]
+    for col in [
+        "clutch_team_id",
+        "clutch_team_abbreviation",
+        "clutch_gp",
+        "clutch_minutes",
+        "clutch_pts",
+        "clutch_ast",
+        "clutch_reb",
+        "clutch_plus_minus",
+    ]:
+        if col in df.columns:
+            keep.append(col)
+
+    # Backward compatibility for older fetch outputs without explicit clutch_ prefixes.
+    if "team_id" in df.columns and "clutch_team_id" not in keep:
+        df = df.rename(columns={"team_id": "clutch_team_id"})
+        keep.append("clutch_team_id")
+    if "team_abbreviation" in df.columns and "clutch_team_abbreviation" not in keep:
+        df = df.rename(columns={"team_abbreviation": "clutch_team_abbreviation"})
+        keep.append("clutch_team_abbreviation")
+    if "gp" in df.columns and "clutch_gp" not in keep:
+        df = df.rename(columns={"gp": "clutch_gp"})
+        keep.append("clutch_gp")
+    if "min" in df.columns and "clutch_minutes" not in keep:
+        df = df.rename(columns={"min": "clutch_minutes"})
+        keep.append("clutch_minutes")
+
+    keep = [c for c in keep if c in df.columns]
+    return df[keep]
+
+
 def _load_bke_json_scores() -> pd.DataFrame:
     """Extract per-player BKE scores from JSON (OBKE, DBKE, percentiles, dimensions)."""
     if not BKE_SCORES_PATH.exists():
@@ -480,12 +569,17 @@ def main() -> None:
         spine = spine.merge(bio, on="player_id", how="left")
     print(f"  [14] + Bio metadata: {len(spine.columns)} cols")
 
-    # 15. Step 1 curated profiles
+    # 15. Clutch stats
+    clutch = _load_clutch_stats()
+    spine = _smart_merge(spine, clutch, merge_key, "clutch", how="left")
+    print(f"  [15] + Clutch stats: {len(spine.columns)} cols")
+
+    # 16. Step 1 curated profiles
     step1 = _load_step1_profiles()
     spine = _smart_merge(spine, step1, merge_key, "s1", how="left")
-    print(f"  [15] + Step 1 profiles: {len(spine.columns)} cols")
+    print(f"  [16] + Step 1 profiles: {len(spine.columns)} cols")
 
-    # 16. Name normalization (ID-first and alias-aware)
+    # 17. Name normalization (ID-first and alias-aware)
     name_sources = [
         (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
         (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
@@ -545,11 +639,13 @@ def main() -> None:
             "defensive": int(len([c for c in spine.columns if c.startswith("defarche_") or "defensive" in c.lower()])),
             "bke_json": int(len([c for c in spine.columns if c.startswith("bke_")])),
             "game_logs": int(len([c for c in spine.columns if c.startswith("gl_")])),
+            "clutch": int(len([c for c in spine.columns if c.startswith("clutch_")])),
             "step1_pec": int(len([c for c in spine.columns if c.startswith("pec_")])),
         },
         "coverage": {
             "salary": float(spine.get("salary", pd.Series(dtype=float)).notna().mean()),
             "game_logs": float(spine.get("gl_games_total", pd.Series(dtype=float)).notna().mean()),
+            "clutch_minutes": float(spine.get("clutch_minutes", pd.Series(dtype=float)).notna().mean()),
             "bio_height": float(spine.get("height_inches", pd.Series(dtype=float)).notna().mean()),
             "mpg": float(spine.get("agg_mpg", pd.Series(dtype=float)).notna().mean()),
         },

@@ -476,14 +476,527 @@ No playoffs adjustments.
 No player stat simulation.
 Pure margin math.
 
+Your adjustment makes sense and actually improves identifiability of the lineup model. Using **clutch data first** gives us a real behavioral signal from coaches instead of purely inferred roles.
+
+Below is the **clean Step-2 design**, incorporating your decisions and tightening the math.
+
 ---
 
-If you want next:
+# Simulation Core — Step 2: Lineup Projection Model
 
-We can either:
+Purpose of Step 2:
 
-* Formalize the exact file/module architecture
-* Or derive closed-form approximation for season win expectation (to reduce Monte Carlo load)
-* Or design the hyperparameter calibration pipeline mathematically
+Convert **player-level impact ratings from PEC Step 3** into **three team strength phases** that more closely match how NBA games are played.
 
-Choose direction.
+Those phases are:
+
+```
+1. Starters
+2. Rotation strength
+3. Clutch lineup
+```
+
+These will later feed into **Step 3 game simulation weighting**.
+
+Step 2 adds **coaching behavior and lineup structure** without introducing archetype interactions yet.
+
+---
+
+# Design Philosophy
+
+Real NBA games operate in **three structural phases**:
+
+### Phase 1 — Opening Lineups
+
+First ~6 minutes of each half.
+
+Characteristics:
+
+* highest continuity
+* strongest positional structure
+* often includes all stars
+
+---
+
+### Phase 2 — Rotations
+
+Middle ~60% of game.
+
+Characteristics:
+
+* staggered stars
+* bench players introduced
+* performance depends heavily on **bench depth**
+
+---
+
+### Phase 3 — Clutch
+
+Final ~5 minutes when game margin is small.
+
+Characteristics:
+
+* best players reinserted
+* coaching preferences dominate
+* small-ball or specialist lineups appear
+
+---
+
+The simulator must capture **these phases separately**.
+
+---
+
+# Input Data
+
+From PEC Step 3:
+
+For each player ( i )
+
+```
+impact_i
+volatility_i
+minutes_i
+position_profile_i
+defensive_archetype_band_i
+```
+
+Additional dataset required:
+
+```
+NBA clutch statistics
+```
+
+Fields needed:
+
+```
+clutch_minutes
+team_id
+player_id
+```
+
+Clutch definition:
+
+```
+score margin ≤ 7
+last 5 minutes of game
+```
+
+---
+
+# Layer 1 — Clutch Lineup Model
+
+Clutch lineups are the **most reliable observable lineup signal**.
+
+We combine:
+
+```
+80% clutch minutes signal
+20% best-player signal
+```
+
+This prevents small-sample clutch data from dominating.
+
+---
+
+## Step 1A — Compute Clutch Share
+
+For each player:
+
+[
+C_i = \frac{\text{clutch minutes}_i}{\text{team clutch minutes}}
+]
+
+Normalize:
+
+[
+C_i \in [0,1]
+]
+
+---
+
+## Step 1B — Normalize Player Strength
+
+Impact rating normalized within team:
+
+[
+I_i = \frac{impact_i - \min(impact)}{\max(impact)-\min(impact)}
+]
+
+Minutes normalized:
+
+[
+M_i = \frac{minutes_i}{\max(minutes)}
+]
+
+---
+
+## Step 1C — Clutch Score
+
+[
+S_{clutch,i}
+============
+
+0.80 \cdot C_i
++
+0.20 \cdot
+(0.65 I_i + 0.35 M_i)
+]
+
+Interpretation:
+
+* clutch minutes dominate
+* elite players without clutch samples still rank high
+
+---
+
+## Step 1D — Clutch Lineup Optimization
+
+Select lineup ( L ) maximizing:
+
+[
+\max_{L}
+\sum_{i \in L} S_{clutch,i}
+]
+
+Subject to positional constraints:
+
+```
+≥1 guard
+≥1 wing
+≥1 big
+```
+
+No upper bounds.
+
+This preserves positional logic without over-restricting coaches.
+
+---
+
+## Step 1E — Clutch Unit Strength
+
+Let clutch lineup be ( L_c )
+
+Mean:
+
+[
+\mu_{clutch}
+============
+
+\frac{\sum_{i \in L_c} impact_i \cdot minutes_i}{\sum_{i \in L_c} minutes_i}
+]
+
+Volatility:
+
+[
+\sigma_{clutch}^2
+=================
+
+\frac{1}{5}\sum_{i \in L_c} volatility_i^2
+]
+
+---
+
+# Layer 2 — Starter Projection
+
+Now we incorporate your **clutch bias into starters**.
+
+Reason:
+
+Teams often close with their starters.
+
+But not always.
+
+So clutch lineup should influence starters slightly.
+
+---
+
+## Starter Score
+
+Define normalized variables again:
+
+```
+M_i = normalized minutes
+I_i = normalized impact
+C_i = clutch share
+```
+
+Starter score:
+
+[
+S_{start,i}
+===========
+
+0.50M_i
++
+0.25I_i
++
+0.10Pos_i
++
+0.15C_i
+]
+
+Where:
+
+```
+Pos_i = positional scarcity score
+```
+
+This implements your idea:
+
+```
+-5% minutes
+-10% impact
++15% clutch bias
+```
+
+---
+
+## Starter Optimization
+
+Select lineup ( L_s ) maximizing:
+
+[
+\sum_{i \in L_s} S_{start,i}
+]
+
+Subject to:
+
+```
+≥1 guard
+≥1 wing
+≥1 big
+```
+
+---
+
+## Starter Strength
+
+[
+\mu_{start}
+===========
+
+\frac{\sum_{i \in L_s} impact_i \cdot minutes_i}{\sum_{i \in L_s} minutes_i}
+]
+
+Volatility:
+
+[
+\sigma_{start}^2
+================
+
+\frac{1}{5}\sum_{i \in L_s} volatility_i^2
+]
+
+---
+
+# Layer 3 — Rotation Strength Model
+
+Rotation minutes represent **bench depth and staggered stars**.
+
+Instead of predicting a lineup we estimate the **expected rotation strength**.
+
+This avoids unrealistic substitution assumptions.
+
+---
+
+## Step 3A — Identify Bench Players
+
+Bench set:
+
+[
+B = \text{players not in starter lineup}
+]
+
+---
+
+## Step 3B — Bench Impact
+
+[
+BenchImpact =
+\frac{\sum_{i \in B} impact_i \cdot minutes_i}
+{\sum_{i \in B} minutes_i}
+]
+
+---
+
+## Step 3C — Staggered Starter Contribution
+
+Some starters appear heavily in rotation units.
+
+Define:
+
+[
+R_i = \max(0, minutes_i - 24)
+]
+
+Players above ~24 minutes usually appear in staggered rotations.
+
+Compute:
+
+[
+StaggerImpact =
+\frac{\sum_{i \in L_s} impact_i \cdot R_i}
+{\sum_{i \in L_s} R_i}
+]
+
+---
+
+## Step 3D — Rotation Strength
+
+Combine both signals:
+
+[
+\mu_{rotation}
+==============
+
+\alpha StaggerImpact
++
+(1-\alpha) BenchImpact
+]
+
+Where:
+
+[
+\alpha = 0.55
+]
+
+Reason:
+
+Rotation units usually include **2-3 starters**.
+
+---
+
+## Rotation Volatility
+
+Bench units are less stable.
+
+[
+\sigma_{rotation}^2
+===================
+
+\sigma_{bench}^2
++
+0.5\sigma_{stagger}^2
+]
+
+---
+
+# Final Step 2 Output
+
+For each team:
+
+```
+team_lineup_profile = {
+
+  starters:
+    players
+    mu_start
+    sigma_start
+
+  rotation:
+    mu_rotation
+    sigma_rotation
+
+  clutch:
+    players
+    mu_clutch
+    sigma_clutch
+
+}
+```
+
+Rotation intentionally **does not store a player list**.
+
+It is an aggregate phase.
+
+---
+
+# Validation Layer
+
+Step 2 must be validated before integrating with the simulator.
+
+---
+
+## Starter Prediction Accuracy
+
+Compare predicted starters with real starters.
+
+Metric:
+
+```
+player overlap
+```
+
+Target:
+
+```
+≥80%
+```
+
+---
+
+## Clutch Lineup Accuracy
+
+Compare predicted clutch lineup with real clutch lineup.
+
+Metric:
+
+```
+overlap
+```
+
+Target:
+
+```
+≥3.5 players out of 5
+```
+
+---
+
+## Rotation Model Validation
+
+Use historical lineup net ratings.
+
+Compare:
+
+```
+predicted rotation strength
+vs
+actual non-starter lineup net rating
+```
+
+Metric:
+
+```
+correlation r
+```
+
+Target:
+
+```
+r ≥ 0.70
+```
+
+---
+
+# Why This Step Matters
+
+Without lineup modeling the simulator assumes:
+
+```
+team strength is constant across the game
+```
+
+But real NBA games vary by **phase**.
+
+Example:
+
+```
+Celtics starters elite
+bench weak
+clutch strong
+```
+
+Step 2 captures those differences.
+
+---
