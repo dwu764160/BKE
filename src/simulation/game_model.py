@@ -167,13 +167,23 @@ def build_schedule(season: str, game_logs_path: Path = None) -> List[Game]:
     return sorted(games, key=lambda g: g.date)
 
 
-def load_team_params(season: str = None) -> Dict[str, Dict[str, TeamParams]]:
-    """Load team parameters from Step 3 team feature aggregation.
+def load_team_params(
+    season: str = None,
+    features_path: Path = None,
+) -> Dict[str, Dict[str, TeamParams]]:
+    """Load team parameters from team feature aggregation.
+
+    Args:
+        season: Optional season filter.
+        features_path: Override path for team features parquet.
+            Defaults to TEAM_FEATURES_PATH (backtest) or can be set to
+            FORECAST_TEAM_FEATURES_PATH for forecast mode.
 
     Returns:
       dict of {season: {team_abbr: TeamParams}}
     """
-    tf = pd.read_parquet(TEAM_FEATURES_PATH)
+    src = features_path or TEAM_FEATURES_PATH
+    tf = pd.read_parquet(src)
     tf["season"] = tf["season"].astype(str)
     tf["team_abbreviation"] = tf["team_abbreviation"].astype(str).str.upper()
 
@@ -208,6 +218,64 @@ def load_team_params(season: str = None) -> Dict[str, Dict[str, TeamParams]]:
             conference=abbr_to_conf.get(team, "Unknown"),
         )
     return result
+
+
+def generate_balanced_schedule(
+    season: str,
+    teams: List[str],
+    games_per_team: int = 82,
+    seed: int = 42,
+) -> List[Game]:
+    """Generate a balanced synthetic schedule for forecast mode.
+
+    Each pair of teams plays roughly equal home/away matchups.
+    Total games = (n_teams * games_per_team) / 2.
+    """
+    rng = np.random.RandomState(seed)
+    n = len(teams)
+    games_total = n * games_per_team // 2  # each game has two participants
+
+    # Build round-robin matchups
+    matchups = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            matchups.append((teams[i], teams[j]))
+    rng.shuffle(matchups)
+
+    # Each pair should play ~games_per_team / (n-1) times
+    games_per_pair = games_per_team / (n - 1)
+    home_per_pair = int(np.ceil(games_per_pair / 2))
+    away_per_pair = int(np.floor(games_per_pair / 2))
+
+    games = []
+    game_num = 0
+    for t1, t2 in matchups:
+        # Home games for t1 vs t2
+        for _ in range(home_per_pair):
+            games.append(Game(
+                game_id=f"FORECAST_{season}_{game_num:05d}",
+                date=f"{season[:4]}-10-01",
+                home_team=t1,
+                away_team=t2,
+                season=season,
+            ))
+            game_num += 1
+        # Home games for t2 vs t1
+        for _ in range(away_per_pair):
+            games.append(Game(
+                game_id=f"FORECAST_{season}_{game_num:05d}",
+                date=f"{season[:4]}-10-01",
+                home_team=t2,
+                away_team=t1,
+                season=season,
+            ))
+            game_num += 1
+
+    # Trim to exact target (1230 games for 30 teams × 82 games)
+    if len(games) > games_total:
+        games = games[:games_total]
+
+    return games
 
 
 # ═════════════════════════════════════════════════════════════════════

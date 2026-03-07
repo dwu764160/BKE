@@ -381,4 +381,108 @@ Per-season breakdown:
 - `actual_starter_ids` length minimum: `5`
 - `actual_starter_names` length minimum: `5`
 - rows with non-5 observed starter names: `0`
+
+---
+
+## Entry: 2026-03-06 — Forecast Pipeline (Forward Projection)
+
+### Philosophy & Design Principles
+
+**Forward-looking, no leakage.** The forecast pipeline projects player profiles from a prior season into a future (or simulated-future) season without using any actual data from the target season. This eliminates the backtesting leakage inherent in the original simulation pipeline, where same-season data was used to predict same-season outcomes.
+
+**Archetype=what, Impact=how.** Player impact (BKE, RAPM, etc.) carries forward via age-adjusted regression, not role reassignment. Role assignment remains behavioral; the forecast applies aging curves only to impact metrics.
+
+**Separation of concerns:** The pipeline has four distinct stages:
+1. **Player Projection** — age-adjust impact profiles, map to new teams, estimate rookies
+2. **Team Aggregation** — compute team net ratings from projected profiles (no calibration)
+3. **Season Simulation** — Monte Carlo against synthetic schedule (no actual games)
+4. **Lineup Projection** — derive projected starters/rotation/clutch lineups
+
+### What was built
+
+#### project_next_season.py — Player Profile Projection
+
+**Age Curve (empirically calibrated, BKE-scale):**
+- Breakpoints: [21, 24, 27, 30, 33, 36]
+- Deltas per year: [+0.08, +0.04, +0.01, -0.01, -0.02, -0.02, -0.03]
+- Applied proportionally to BKE, OBKE, DBKE, ORAPM, DRAPM, BPM, WS, VORP
+- RAPM-scale metrics use 12× expansion factor (BKE std ≈ 0.25, RAPM std ≈ 3.0)
+
+**Minute Projection (age-adjusted carry-forward):**
+- Young (<22): +2.0 MPG/yr, Developing (22-27): +0.5 to +1.0, Peak (27-30): stable, Declining (30-34): -1.0, Late (34+): -2.0
+- Per-team normalization to 240 total MPG with iterative cap enforcement (max 40 MPG)
+
+**Team Mapping:**
+- Backtest: `map_players_to_teams_backtest()` — inner join on actual target season data
+- Forecast: `map_players_to_teams_forecast()` — carry forward current team or use roster CSV
+
+**Rookie Tiers:**
+| Tier | BKE | MPG | Usage |
+|------|-----|-----|-------|
+| Lottery | +0.15 | 22 | 0.22 |
+| Mid First | +0.05 | 14 | 0.18 |
+| Late First | 0.00 | 10 | 0.16 |
+| Second Round | -0.05 | 6 | 0.14 |
+| Undrafted | -0.10 | 5 | 0.12 |
+
+**Backtest Validation (projection accuracy):**
+- 2022-23→2023-24: BKE r=0.41, MAE=0.18; MPG r=0.66, MAE=8.5; Team match=100%
+- 2023-24→2024-25: BKE r=0.46, MAE=0.14; MPG r=0.60, MAE=10.1; Team match=100%
+
+#### team_feature_aggregation.py (forecast_mode=True)
+
+When `forecast_mode=True`:
+- Reads from `projected_player_profiles.parquet`
+- Skips minute model merge (uses projected MPG directly)
+- Uses DEFAULT_TEAM_SCALE (20.0) without calibration
+- Skips ablation and actual-data validation
+
+#### game_model.py — Balanced Schedule Generator
+
+Added `generate_balanced_schedule(season, teams, games_per_team=82)`:
+- Creates symmetric round-robin with balanced home/away
+- Produces ~1230 games for 30 teams (82 × 30 / 2 = 1230)
+- Deterministic seed-based shuffling for reproducibility
+
+#### season_sim.py (forecast_mode=True)
+
+When `forecast_mode=True`:
+- Uses `generate_balanced_schedule()` instead of real games
+- Skips `get_actual_records()` comparison
+- Saves to `forecast_season_results.json`
+
+#### run_forecast.py — Pipeline Orchestrator
+
+Orchestrates full pipeline: project → aggregate → simulate → lineup
+
+CLI: `python3 src/simulation/run_forecast.py [--forecast SEASON] [--roster CSV] [--rookies CSV] [--skip-lineup]`
+
+### Results (Backtest — Forecast vs Actual)
+
+| Season | Forecast MAE | Forecast r | Backtest MAE | Backtest r |
+|--------|-------------|------------|-------------|------------|
+| 2023-24 | 9.1 wins | 0.638 | 6.1 wins | 0.867 |
+| 2024-25 | 8.9 wins | 0.655 | 3.8 wins | 0.951 |
+
+The forecast MAE of ~9 wins is expected for a preseason-style projection (Vegas lines typically achieve MAE of 5-6 wins). The correlation of 0.65 means the model correctly identifies team tiers.
+
+### Frontend
+
+The simulation viewer (`app/simulation_viewer.py`) now generates a Forecast tab:
+- Season selection tabs
+- Summary stat cards (BKE r, MPG r, team count, win spread, etc.)
+- Projected wins bar chart with 90% confidence intervals (purple theme, no actual comparison)
+- Sortable team table (rank, team, conference, net rating, volatility, projected wins, CI, playoff probabilities)
+- Projection validation panel with year-to-year carry accuracy
+
+### Output Files
+
+| File | Location |
+|------|----------|
+| Projected profiles | `data/processed/forecast/projected_player_profiles.parquet` |
+| Projected team features | `data/processed/forecast/projected_team_features.parquet` |
+| Season simulation results | `reports/forecast_season_results.json` |
+| Projection validation | `reports/forecast_validation.json` |
+| Lineup profiles | `reports/forecast_lineup_profiles.json` |
+| Forecast lineup parquet | `data/processed/simulation/forecast_step2_lineup_profiles.parquet` |
 - rotation observed target availability: `90/90`

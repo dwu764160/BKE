@@ -103,6 +103,21 @@ python3 src/simulation/lineup_projection.py                 # Simulation Step 2:
 python3 src/simulation/validate_sim.py                      # Simulation Layer 6: validation vs real records (Brier score, log loss, margin RMSE, season-level MAE/r)
 ```
 
+## Forecast Pipeline (Forward Projection)
+```bash
+python3 src/simulation/run_forecast.py                      # Forecast: full pipeline (project profiles → team features → season simulation → lineup projection) — backtest mode by default
+python3 src/simulation/run_forecast.py --forecast 2025-26   # True forecast: project from latest season into target season
+python3 src/simulation/run_forecast.py --skip-lineup        # Skip lineup projection step
+python3 src/player_eval/project_next_season.py              # Standalone: project player profiles to next season (age curve + team mapping + rookie estimation)
+```
+Pipeline stages:
+1. **project_next_season.py** — Age-adjusted carry-forward of player impact profiles (BKE, RAPM, etc.), team mapping (backtest: actual teams; forecast: carry-forward or roster CSV), rookie tier-based defaults, minute normalization to 240/team
+2. **team_feature_aggregation.py** (forecast_mode=True) — Team net ratings from projected profiles, no calibration against actual data
+3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule (no actual games needed)
+4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups
+
+Backtest validation: BKE carry r≈0.41-0.46, MPG carry r≈0.60-0.66, team-level MAE≈9 wins, r≈0.65
+
 ### Position-Band Policy (Canonical)
 - Canonical player position bands are: `Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`.
 - Preserve canonical position-band labels in compute/model outputs; do not collapse hybrid bands into single-position buckets during role assignment or impact modeling.
@@ -116,7 +131,7 @@ python3 app/player_data_viewer.py         # Generate player data viewer (with sa
 python3 scripts/export_bke_components.py  # Export per-player BKE components JSON for interactive viewer
 python3 app/player_bke_viewer.py          # Generate standalone BKE interactive explorer (lambda slider + split toggle)
 python3 app/player_eval_viewer.py         # Generate PEC viewer (player cards, team view, detail modal, predicted vs actual MPG)
-python3 app/simulation_viewer.py          # Generate simulation viewer (Step 1 season simulation + Step 2 lineup projection cards/modals)
+python3 app/simulation_viewer.py          # Generate simulation viewer (Step 1 season simulation + Step 2 lineup projection + Forecast tab)
 python3 src/utils/export_db_to_parquet.py # Export DB tables to parquet
 ```
 
@@ -136,12 +151,12 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 
 # Data layout (locations used by scripts)
 - `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary); clutch files: `player_clutch_stats_2022-23.parquet`, `player_clutch_stats_2023-24.parquet`, `player_clutch_stats_2024-25.parquet`, `player_clutch_stats_all.parquet`
-- `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`, simulation artifacts under `data/processed/simulation/` including `simulation_step2_lineup_profiles.parquet`
+- `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`, simulation artifacts under `data/processed/simulation/` including `simulation_step2_lineup_profiles.parquet`; forecast outputs under `data/processed/forecast/` including `projected_player_profiles.parquet`, `projected_team_features.parquet`
 - `data/processed/player_position_estimates*.parquet` — position share outputs where canonical `primary_position_estimate` should remain in the five-band label set (`Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`).
 - `data/processed/player_eval/` — PEC Step outputs: `player_impact_profiles.parquet`, `player_profiles_season.pkl`, `minute_model_v2.pkl`, `minute_model_predictions_v2.parquet`, `team_feature_aggregation.parquet`
 - `aggregate/` — comprehensive player profile aggregate: `player_profile_aggregate.parquet` (1971 rows x 924 cols, 18 pipeline sources merged)
 - `data/processed/bke/` — BKE decomposition data: `bke_v28_decomposition.parquet`, `bke_v28_decomposition.csv`, `BKE_Scores_v27.json` (includes terminal league-wide percentiles plus grouped transformed percentiles by `position_bucket`, `primary_archetype`, and `defensive_archetype`), `dimension_scores_v28.json`, `layer_scores_v28.json`, `obke_dbke_scores_v28.json`, v3.1 split artifacts `BKE_Scores_v31_60_40.json`, `BKE_Scores_v31_55_45.json`, and (when Layer 3+6 second-pass is additive) `BKE_Scores_v31_60_40_layer36.json`, `BKE_Scores_v31_55_45_layer36.json`, `bke_v31_components.json` (per-player components for interactive viewer)
-- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `player_eval_step1_validation.json`, `player_eval_step2_minute_model_validation.json`, `player_eval_step3_team_features_validation.json`, `profile_aggregate_validation.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`, `simulation_step1_results.json`, `simulation_step1_season_results.json`, `simulation_step1_validation.json`, `simulation_step2_lineup_profiles.json`, `simulation_step2_validation.json`
+- `reports/` — all report/diagnostic/validation outputs: `bke_v28_report.json`, `bke_v28_variance_report.json`, `bke_v28_compression_report.json`, `bke_v27_backtest.json`, `bke_v29_diagnostic_master.json`, `dbke_v30_defense_shrinkage.json`, `bke_v31_experimental_layers.json`, `bke_v31_layer36_second_pass.json`, `modeling_inputs_report.json`, `player_eval_step1_validation.json`, `player_eval_step2_minute_model_validation.json`, `player_eval_step3_team_features_validation.json`, `profile_aggregate_validation.json`, `bref_metric_comparison_{season}.csv`, `defensive_archetypes_v2_impact_report.csv/.txt`, `validation_report_*.json`, `simulation_step1_results.json`, `simulation_step1_season_results.json`, `simulation_step1_validation.json`, `simulation_step2_lineup_profiles.json`, `simulation_step2_validation.json`, `forecast_season_results.json`, `forecast_validation.json`, `forecast_lineup_profiles.json`
 - `data/tracking/` — tracking-derived JSONs
 - `src/player_eval/` — new phase workspace for upcoming player evaluation engine scripts
 - `data_backup_YYYYMMDD/` — dated snapshot backup folders (use `bash scripts/backup_data_snapshot.sh [YYYYMMDD]`)

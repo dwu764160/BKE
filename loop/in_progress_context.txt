@@ -1,3 +1,78 @@
+2026-03-06 — Forecast Pipeline COMPLETE
+- Full forward-projection pipeline built and validated end-to-end
+- All 4 stages working: project_next_season → team_feature_aggregation → season_sim → lineup_projection
+- Frontend updated with Forecast tab in simulation viewer
+- Documentation updated: readme.md, Simulation_Core_Summary.md, context_summary.txt
+- No regressions to existing backtest pipeline
+- Key outputs:
+  - data/processed/forecast/projected_player_profiles.parquet (1148 players, 30 teams per season)
+  - data/processed/forecast/projected_team_features.parquet (60 team-seasons)
+  - reports/forecast_season_results.json (projected wins + playoff probs)
+  - reports/forecast_validation.json (BKE/MPG carry accuracy)
+  - app/simulation.html (updated with Forecast tab)
+
+2026-03-06 — Final user-requested starter/clutch constraints applied
+- Implemented additional Step 2 rules in `src/simulation/lineup_projection.py`:
+  - Starter/clutch projected eligibility gate:
+    - if `off_archetype` OR `def_archetype` is `Insufficient Minutes`, player is ineligible for projected starter/clutch lineups.
+  - Starter structure hard check:
+    - projected starter lineup must include at least one player with `position_band` in `Forward-Center` or `Center`.
+  - Starter low-minute soft penalty:
+    - sub-24 MPG candidates receive score penalty:
+      `penalty = starter_low_minutes_penalty * max(0, (24 - minutes)/24)`
+    - tuned final penalty to `1.10` to address BKN 2024-25 Trendon Watford example.
+- Added centralized constants in `src/simulation/simulation_config.py`:
+  - `STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES=True`
+  - `STEP2_STARTER_REQUIRE_TRUE_BIG=True`
+  - `STEP2_STARTER_TRUE_BIG_BANDS=("Forward-Center", "Center")`
+  - `STEP2_STARTER_LOW_MINUTES_THRESHOLD=24.0`
+  - `STEP2_STARTER_LOW_MINUTES_PENALTY=1.10`
+- Regenerated outputs:
+  - `python3 src/simulation/lineup_projection.py`
+  - `python3 app/simulation_viewer.py`
+- Constraint audit (report JSON):
+  - insufficient-minutes archetype violations (starter/clutch): `0`
+  - starter lineups without true big band: `0`
+  - BKN 2024-25 Trendon Watford in starters: `False`
+- Current Step 2 metrics after final pass:
+  - `n_team_seasons=90`
+  - `starter_overlap_rate_mean=0.7267`
+  - `clutch_overlap_rate_mean=0.8667`
+  - `rotation_corr=0.6048`
+
+2026-03-06 — Simulation Step 2 v1 optimization pass (continuity + clutch core + rotation regime)
+- User request scope completed:
+  - Implemented continuity prior, clutch core constraint, and rotation regime model.
+  - Ran individual ablations, combinations, and a focused regime parameter sweep.
+  - Promoted tuned defaults and reran canonical Step 2 outputs.
+- Code updates:
+  - `src/simulation/lineup_projection.py`
+    - Added continuity helpers, constrained clutch optimizer, and regime-based rotation model.
+    - Added `v1_optimizations` metadata in Step 2 JSON report payload.
+  - `src/simulation/simulation_config.py`
+    - Added optimization toggles/params and promoted tuned regime defaults.
+- Final promoted defaults:
+  - `STEP2_ENABLE_CONTINUITY_PRIOR=True`
+  - `STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT=True`
+  - `STEP2_ENABLE_ROTATION_REGIME_MODEL=True`
+  - `STEP2_REGIME_STAR_COEF=0.8`, `STEP2_REGIME_BENCH_COEF=0.6`
+  - `STEP2_ROT_STAGGER_START_W=0.65`, `STEP2_ROT_STAGGER_BENCH_W=0.35`
+  - `STEP2_ROT_BENCH_START_W=0.30`, `STEP2_ROT_BENCH_BENCH_W=0.70`
+- Experiment outputs:
+  - `reports/simulation_step2_v1_optimization_sweep.json`
+  - `reports/simulation_step2_v1_regime_tuning.json`
+  - `reports/simulation_step2_v1_combo_eval_tuned.json`
+- Canonical rerun outputs refreshed:
+  - `data/processed/simulation/simulation_step2_lineup_profiles.parquet`
+  - `reports/simulation_step2_lineup_profiles.json`
+  - `reports/simulation_step2_validation.json`
+  - `app/simulation.html`
+- Canonical metrics after promotion (90 team-seasons):
+  - `starter_overlap_rate_mean=0.6956`
+  - `clutch_overlap_rate_mean=0.8644`
+  - `rotation_corr=0.5623`
+  - `observed_starter_exact5=90/90`
+
 2026-03-04 — Three-Task Sprint: Availability Factor + Simulation Core + Frontend
 ═══════════════════════════════════════════════════════════════════════════
 ALL THREE TASKS COMPLETE.

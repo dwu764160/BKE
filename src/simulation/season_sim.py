@@ -40,10 +40,13 @@ from src.simulation.game_model import (
     SimConfig,
     TeamParams,
     build_schedule,
+    generate_balanced_schedule,
     load_team_params,
 )
 from src.simulation.simulation_config import (
     DIRECT_PLAYOFF_RANK,
+    FORECAST_SEASON_RESULTS_PATH,
+    FORECAST_TEAM_FEATURES_PATH,
     HISTORICAL_DIR,
     PLAY_IN_RANK,
     REPORTS_DIR,
@@ -238,11 +241,17 @@ def get_actual_records(season: str) -> Dict[str, Dict]:
 # Main
 # ═════════════════════════════════════════════════════════════════════
 
-def main() -> None:
-    print("Simulation Core — Step 1: Season Simulation (Layers 4-5)")
+def main(
+    forecast_mode: bool = False,
+    features_path: Path = None,
+    output_path: Path = None,
+) -> None:
+    mode_label = "FORECAST" if forecast_mode else "BACKTEST"
+    print(f"Simulation Core — Step 1: Season Simulation (Layers 4-5) [{mode_label}]")
     config = SimConfig()
 
-    all_params = load_team_params()
+    src_path = features_path or (FORECAST_TEAM_FEATURES_PATH if forecast_mode else None)
+    all_params = load_team_params(features_path=src_path)
     full_results = {"config": {
         "sigma_league": config.sigma_league,
         "home_court_advantage": config.home_court_advantage,
@@ -250,14 +259,22 @@ def main() -> None:
         "random_seed": config.random_seed,
         "direct_playoff_rank": DIRECT_PLAYOFF_RANK,
         "play_in_rank": PLAY_IN_RANK,
+        "mode": mode_label,
     }, "seasons": {}}
 
     for season in sorted(all_params.keys()):
         print(f"\n{'='*60}")
         print(f"  Season: {season}")
         params = all_params[season]
-        schedule = build_schedule(season)
-        print(f"  Teams: {len(params)}, Games: {len(schedule)}")
+
+        # Build schedule: use actual games for backtest, synthetic for forecast
+        if forecast_mode:
+            teams = sorted(params.keys())
+            schedule = generate_balanced_schedule(season, teams)
+            print(f"  Teams: {len(params)}, Synthetic games: {len(schedule)}")
+        else:
+            schedule = build_schedule(season)
+            print(f"  Teams: {len(params)}, Games: {len(schedule)}")
 
         t0 = time.time()
         win_dists = simulate_season(schedule, params, config)
@@ -265,29 +282,29 @@ def main() -> None:
         print(f"  Simulated {config.n_simulations:,} seasons in {elapsed:.2f}s")
 
         summaries = aggregate_results(win_dists, params)
-        actual = get_actual_records(season)
 
-        # Merge actual records
-        for s in summaries:
-            if s["team"] in actual:
-                s.update(actual[s["team"]])
-                s["win_error"] = round(s["projected_wins"] - actual[s["team"]]["actual_wins"], 1)
-
-        # Season-level stats
-        teams_with_actual = [s for s in summaries if "actual_wins" in s]
+        # Merge actual records (backtest only)
         season_stats = {}
-        if teams_with_actual:
-            errors = [s["win_error"] for s in teams_with_actual]
-            pred = [s["projected_wins"] for s in teams_with_actual]
-            act = [s["actual_wins"] for s in teams_with_actual]
-            season_stats = {
-                "mae": round(float(np.mean(np.abs(errors))), 2),
-                "rmse": round(float(np.sqrt(np.mean(np.array(errors) ** 2))), 2),
-                "correlation": round(float(np.corrcoef(pred, act)[0, 1]), 4),
-                "mean_error": round(float(np.mean(errors)), 2),
-            }
-            print(f"  Season stats: MAE={season_stats['mae']}, "
-                  f"RMSE={season_stats['rmse']}, r={season_stats['correlation']}")
+        if not forecast_mode:
+            actual = get_actual_records(season)
+            for s in summaries:
+                if s["team"] in actual:
+                    s.update(actual[s["team"]])
+                    s["win_error"] = round(s["projected_wins"] - actual[s["team"]]["actual_wins"], 1)
+
+            teams_with_actual = [s for s in summaries if "actual_wins" in s]
+            if teams_with_actual:
+                errors = [s["win_error"] for s in teams_with_actual]
+                pred = [s["projected_wins"] for s in teams_with_actual]
+                act = [s["actual_wins"] for s in teams_with_actual]
+                season_stats = {
+                    "mae": round(float(np.mean(np.abs(errors))), 2),
+                    "rmse": round(float(np.sqrt(np.mean(np.array(errors) ** 2))), 2),
+                    "correlation": round(float(np.corrcoef(pred, act)[0, 1]), 4),
+                    "mean_error": round(float(np.mean(errors)), 2),
+                }
+                print(f"  Season stats: MAE={season_stats['mae']}, "
+                      f"RMSE={season_stats['rmse']}, r={season_stats['correlation']}")
 
         # Print top 5 and bottom 5
         print(f"\n  Top 5:")
@@ -307,9 +324,10 @@ def main() -> None:
         }
 
     # Save
-    out_path = REPORTS_DIR / "simulation_step1_season_results.json"
-    out_path.write_text(json.dumps(full_results, indent=2), encoding="utf-8")
-    print(f"\nSaved: {out_path}")
+    dst = output_path or (FORECAST_SEASON_RESULTS_PATH if forecast_mode else REPORTS_DIR / "simulation_step1_season_results.json")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(json.dumps(full_results, indent=2), encoding="utf-8")
+    print(f"\nSaved: {dst}")
 
 
 if __name__ == "__main__":

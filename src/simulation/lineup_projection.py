@@ -1014,22 +1014,54 @@ def attach_validation(
     }
 
 
-def main() -> None:
-    print("Simulation Core — Step 2: Lineup Projection")
+def main(forecast_mode: bool = False, profiles_path: Path = None) -> None:
+    mode_label = "FORECAST" if forecast_mode else "BACKTEST"
+    print(f"Simulation Core — Step 2: Lineup Projection [{mode_label}]")
     cfg = Step2Config()
 
+    from src.simulation.simulation_config import (
+        FORECAST_LINEUP_PROFILES_PATH,
+        FORECAST_LINEUP_REPORT_PATH,
+    )
+    from src.player_eval.constants import PROJECTED_PROFILES_PATH
+
     full_to_abbr, abbr_to_conf, team_id_to_abbr = _load_team_map()
-    players = load_player_pool(cfg)
+
+    # Load player pool from projected or actual profiles
+    if forecast_mode:
+        src = profiles_path or PROJECTED_PROFILES_PATH
+        if not src.exists():
+            raise FileNotFoundError(f"Projected profiles not found: {src}")
+        # Temporarily override the profile path for load_player_pool
+        import src.simulation.simulation_config as _scfg
+        _orig_path = _scfg.PLAYER_PROFILES_PATH
+        _scfg.PLAYER_PROFILES_PATH = src
+        # Reimport the constant used in load_player_pool
+        global PLAYER_PROFILES_PATH
+        PLAYER_PROFILES_PATH = src
+        players = load_player_pool(cfg)
+        _scfg.PLAYER_PROFILES_PATH = _orig_path
+    else:
+        players = load_player_pool(cfg)
+
     positions = load_positions()
-    clutch = load_clutch_stats()
-    lineups = load_metrics_lineups(full_to_abbr)
-    starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
+
+    if forecast_mode:
+        # No clutch stats or lineup metrics for future seasons
+        clutch = pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
+        lineups = pd.DataFrame(columns=["season", "team_abbreviation", "NET_RTG", "total_poss", "lineup_ids"])
+        starter_games = pd.DataFrame()
+    else:
+        clutch = load_clutch_stats()
+        lineups = load_metrics_lineups(full_to_abbr)
+        starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
 
     print(f"  Players loaded: {len(players)}")
     print(f"  Positions loaded: {len(positions)}")
-    print(f"  Clutch rows loaded: {len(clutch)}")
-    print(f"  Lineup rows loaded: {len(lineups)}")
-    print(f"  Q1 starter game rows loaded: {len(starter_games)}")
+    if not forecast_mode:
+        print(f"  Clutch rows loaded: {len(clutch)}")
+        print(f"  Lineup rows loaded: {len(lineups)}")
+        print(f"  Q1 starter game rows loaded: {len(starter_games)}")
 
     players = players.merge(positions, on=["player_id", "season"], how="left")
     players = players.merge(
@@ -1102,8 +1134,14 @@ def main() -> None:
         )
 
     flat_df = pd.DataFrame(flat_rows)
-    STEP2_LINEUP_PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    flat_df.to_parquet(STEP2_LINEUP_PROFILES_PATH, index=False)
+
+    # Choose output paths based on mode
+    profiles_dst = FORECAST_LINEUP_PROFILES_PATH if forecast_mode else STEP2_LINEUP_PROFILES_PATH
+    report_dst = FORECAST_LINEUP_REPORT_PATH if forecast_mode else STEP2_LINEUP_REPORT_PATH
+    validation_dst = STEP2_VALIDATION_PATH  # validation always goes to same place
+
+    profiles_dst.parent.mkdir(parents=True, exist_ok=True)
+    flat_df.to_parquet(profiles_dst, index=False)
 
     # Build season-keyed JSON for frontend rendering.
     seasons_blob: Dict[str, Dict] = {}
@@ -1127,12 +1165,14 @@ def main() -> None:
         "validation_overall": validation["overall"],
     }
 
-    STEP2_LINEUP_REPORT_PATH.write_text(json.dumps(report_blob, indent=2), encoding="utf-8")
-    STEP2_VALIDATION_PATH.write_text(json.dumps(validation, indent=2), encoding="utf-8")
+    report_dst.parent.mkdir(parents=True, exist_ok=True)
+    report_dst.write_text(json.dumps(report_blob, indent=2), encoding="utf-8")
+    validation_dst.parent.mkdir(parents=True, exist_ok=True)
+    validation_dst.write_text(json.dumps(validation, indent=2), encoding="utf-8")
 
-    print(f"Saved profiles parquet: {STEP2_LINEUP_PROFILES_PATH}")
-    print(f"Saved step2 lineup report: {STEP2_LINEUP_REPORT_PATH}")
-    print(f"Saved step2 validation: {STEP2_VALIDATION_PATH}")
+    print(f"Saved profiles parquet: {profiles_dst}")
+    print(f"Saved step2 lineup report: {report_dst}")
+    print(f"Saved step2 validation: {validation_dst}")
     exact5_count = validation["overall"].get("starter_exact5_count", 0)
     exact5_avail = validation["overall"].get("starter_exact5_available", 0)
     print(f"Observed starters exact-5 check: {exact5_count}/{exact5_avail} team-seasons")

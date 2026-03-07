@@ -1,3 +1,57 @@
+- 2026-03-06 — Forecast Pipeline Complete (Forward Projection from Backtesting)
+	- Built full forecast pipeline: project_next_season.py → team_feature_aggregation(forecast) → season_sim(forecast) → lineup_projection(forecast)
+	- Orchestrator: src/simulation/run_forecast.py with CLI (--forecast SEASON, --roster, --rookies, --skip-lineup)
+	- New files: src/player_eval/project_next_season.py (~400 lines), src/simulation/run_forecast.py (~100 lines)
+	- Modified: team_feature_aggregation.py, game_model.py (balanced schedule generator), season_sim.py, lineup_projection.py, simulation_config.py (forecast paths), constants.py (forecast constants), simulation_viewer.py (forecast tab)
+	- Age curve empirically calibrated: breakpoints [21,24,27,30,33,36], BKE-scale deltas [+0.08,+0.04,+0.01,-0.01,-0.02,-0.02,-0.03]
+	- Rookie tiers: lottery/mid_first/late_first/second_round/undrafted with preset BKE and MPG
+	- Fixed NaN team bug in source profiles (89+202 players with null team_abbreviation filtered out)
+	- Backtest validation: BKE r≈0.41-0.46, MPG r≈0.60-0.66
+	- Forecast team-level: MAE≈9 wins, r≈0.65 (expected for preseason projection)
+	- Frontend: Forecast tab with season tabs, stat cards, projected wins chart, sortable table, validation panel
+	- No regression to original backtest pipeline (still MAE=6.1/3.8, r=0.867/0.951)
+	- Outputs: data/processed/forecast/{projected_player_profiles.parquet, projected_team_features.parquet}, reports/{forecast_season_results.json, forecast_validation.json, forecast_lineup_profiles.json}
+
+- 2026-03-06 — Simulation Step 2 final constraint tuning (starter/clutch eligibility + starter structure)
+	- Added baseline lineup eligibility gates in `src/simulation/lineup_projection.py`:
+		- projected starter/clutch candidates are ineligible when offensive OR defensive archetype is `Insufficient Minutes`.
+		- projected starter lineups must include at least one canonical big (`position_band` in `Forward-Center` or `Center`).
+		- added soft starter score penalty for sub-24 MPG candidates (`starter_low_minutes_threshold=24`, `starter_low_minutes_penalty=1.10`).
+	- New Step 2 constants in `src/simulation/simulation_config.py` centralize these controls.
+	- Canonical rerun + viewer refresh completed:
+		- `python3 src/simulation/lineup_projection.py`
+		- `python3 app/simulation_viewer.py`
+	- Constraint audit checks on `reports/simulation_step2_lineup_profiles.json`:
+		- insufficient-minutes archetype violations in projected starters/clutch: `0`
+		- starter lineups missing true big (`Forward-Center`/`Center`): `0`
+		- 2024-25 BKN Trendon Watford starter case: removed from projected starters.
+	- Post-adjustment metrics (90 team-seasons):
+		- starter_overlap_rate_mean: `0.7267`
+		- clutch_overlap_rate_mean: `0.8667`
+		- rotation_correlation: `0.6048`
+
+- 2026-03-06 — Simulation Step 2 v1 optimization measures implemented + tuned defaults promoted
+	- Implemented in `src/simulation/lineup_projection.py` with centralized knobs in `src/simulation/simulation_config.py`:
+		- continuity prior (`continuity_factor = 1 - kappa * (1 - R)` from prior-season returning minutes)
+		- clutch core constraint (candidate pool + minimum starter carryover + swap cap)
+		- rotation regime model (`p_stagger = sigmoid(a*S - b*B)`) with regime-based rotation blend
+	- Ablation/combination reports generated:
+		- `reports/simulation_step2_v1_optimization_sweep.json`
+		- `reports/simulation_step2_v1_regime_tuning.json`
+		- `reports/simulation_step2_v1_combo_eval_tuned.json`
+	- Final defaults promoted for canonical Step 2 runs:
+		- `regime_star_coef=0.8`, `regime_bench_coef=0.6`
+		- `rot_stagger_start/bench=0.65/0.35`, `rot_bench_start/bench=0.30/0.70`
+		- continuity + clutch core + rotation regime toggles enabled
+	- Canonical rerun completed:
+		- `python3 src/simulation/lineup_projection.py`
+		- `python3 app/simulation_viewer.py`
+	- Post-promotion metrics (90 team-seasons):
+		- starter_overlap_rate_mean: `0.6956`
+		- clutch_overlap_rate_mean: `0.8644` (up from `0.8578`)
+		- rotation_correlation: `0.5623` (up from `0.5526`)
+		- observed-starter exact-5 coverage: `90/90`
+
 - 2026-03-05 — Simulation Step 2 target-definition overhaul + exact-5 observed starters + simulator UX pass
 	- Backend (`src/simulation/lineup_projection.py`) now validates starters from first-quarter PBP on-court lineups, with substitution-cluster verification, then season aggregation to observed starters.
 	- Observed starter outputs are now guaranteed as exact five-player sets for every team-season in Step 2 payloads (`actual_starter_ids`, `actual_starter_names`).

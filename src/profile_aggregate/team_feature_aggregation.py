@@ -745,32 +745,47 @@ def main(
     use_structure: bool = True,
     use_defense: bool = True,
     use_volatility: bool = True,
+    forecast_mode: bool = False,
+    profiles_path: Optional[Path] = None,
+    output_path: Optional[Path] = None,
 ) -> pd.DataFrame:
-    """Build team feature aggregation for all team-seasons."""
-    print("Step 3 — Team Feature Aggregation")
+    """Build team feature aggregation for all team-seasons.
+
+    Args:
+        forecast_mode: When True, reads projected profiles, skips calibration
+            against actuals, and uses DEFAULT_TEAM_SCALE.
+        profiles_path: Override path for input profiles parquet.
+        output_path: Override path for output team features parquet.
+    """
+    mode_label = "FORECAST" if forecast_mode else "BACKTEST"
+    print(f"Step 3 — Team Feature Aggregation ({mode_label})")
     print(f"  Flags: interaction={use_interaction}, structure={use_structure}, "
           f"defense={use_defense}, volatility={use_volatility}")
 
     # ── Load profiles and predictions ──────────────────────────────
-    if not PLAYER_PROFILES_PARQUET.exists():
-        raise FileNotFoundError(f"Step 1 profiles not found: {PLAYER_PROFILES_PARQUET}")
+    from src.player_eval.constants import PROJECTED_PROFILES_PATH, PROJECTED_TEAM_FEATURES_PATH
 
-    profiles = pd.read_parquet(PLAYER_PROFILES_PARQUET)
-    print(f"  Loaded {len(profiles)} player-season profiles")
+    src_path = profiles_path or (PROJECTED_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PARQUET)
+    if not src_path.exists():
+        raise FileNotFoundError(f"Profiles not found: {src_path}")
 
-    # Load minute predictions (for predicted MPG)
-    predictions = pd.DataFrame()
-    if MINUTE_PREDICTIONS_PATH.exists():
-        predictions = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
-        predictions = predictions.rename(columns={
-            "team_abbreviation": "pred_team_abbreviation",
-            "team_id": "pred_team_id",
-        })
-        pred_cols = ["player_id", "season"]
-        for c in predictions.columns:
-            if c not in ["player_id", "season", "player_name"]:
-                pred_cols.append(c)
-        profiles = profiles.merge(predictions[pred_cols], on=["player_id", "season"], how="left")
+    profiles = pd.read_parquet(src_path)
+    print(f"  Loaded {len(profiles)} player-season profiles from {src_path.name}")
+
+    # Load minute predictions (only in backtest mode — forecast profiles already have projected MPG)
+    if not forecast_mode:
+        predictions = pd.DataFrame()
+        if MINUTE_PREDICTIONS_PATH.exists():
+            predictions = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
+            predictions = predictions.rename(columns={
+                "team_abbreviation": "pred_team_abbreviation",
+                "team_id": "pred_team_id",
+            })
+            pred_cols = ["player_id", "season"]
+            for c in predictions.columns:
+                if c not in ["player_id", "season", "player_name"]:
+                    pred_cols.append(c)
+            profiles = profiles.merge(predictions[pred_cols], on=["player_id", "season"], how="left")
 
     # Use actual MPG for team aggregation (we build from actuals, not predictions)
     profiles["mpg"] = pd.to_numeric(profiles["mpg"], errors="coerce").fillna(0.0)
@@ -847,58 +862,59 @@ def main(
     profiles["off_primary_archetype_mapped"] = profiles["off_primary_archetype"].map(_map_archetype)
 
     # ── League std of team net rating (for volatility base) ───────
-    # Compute actual team net ratings from team_game_logs.parquet
     league_std_net = 6.0  # sensible default
     actual_team_data = pd.DataFrame()
-    game_logs_path = HISTORICAL_DIR / "team_game_logs.parquet"
-    teams_path = HISTORICAL_DIR / "teams.parquet"
 
-    # Build team_id → abbreviation mapping
-    team_id_to_abbr = {}
-    if teams_path.exists():
-        teams_meta = pd.read_parquet(teams_path)
-        for _, t in teams_meta.iterrows():
-            tid = str(int(float(t["team_id"])))
-            team_id_to_abbr[tid] = str(t["abbreviation"]).upper()
+    if not forecast_mode:
+        # In backtest mode, load actual team data for calibration/validation
+        game_logs_path = HISTORICAL_DIR / "team_game_logs.parquet"
+        teams_path = HISTORICAL_DIR / "teams.parquet"
 
-    if game_logs_path.exists():
-        game_logs = pd.read_parquet(game_logs_path)
-        game_logs["TEAM_ID"] = game_logs["TEAM_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-        game_logs["SEASON"] = game_logs["SEASON"].astype(str)
-        game_logs["PTS"] = pd.to_numeric(game_logs["PTS"], errors="coerce")
-        game_logs["OPP_PTS"] = pd.to_numeric(game_logs["OPP_PTS"], errors="coerce")
-        game_logs["margin"] = game_logs["PTS"] - game_logs["OPP_PTS"]
-        team_net = game_logs.groupby(["SEASON", "TEAM_ID"]).agg(
-            games=("margin", "count"),
-            avg_margin=("margin", "mean"),
-        ).reset_index()
-        team_net["team_abbreviation"] = team_net["TEAM_ID"].map(team_id_to_abbr)
-        team_net = team_net.rename(columns={"SEASON": "season", "avg_margin": "actual_net_rating"})
-        actual_team_data = team_net[["season", "team_abbreviation", "actual_net_rating", "games"]].dropna()
-        # Compute league std from actual net ratings
-        if len(actual_team_data) > 0:
-            league_std_net = float(actual_team_data["actual_net_rating"].std())
-            print(f"  League std net rating: {league_std_net:.2f} (from {len(actual_team_data)} team-seasons)")
+        # Build team_id → abbreviation mapping
+        team_id_to_abbr = {}
+        if teams_path.exists():
+            teams_meta = pd.read_parquet(teams_path)
+            for _, t in teams_meta.iterrows():
+                tid = str(int(float(t["team_id"])))
+                team_id_to_abbr[tid] = str(t["abbreviation"]).upper()
+
+        if game_logs_path.exists():
+            game_logs = pd.read_parquet(game_logs_path)
+            game_logs["TEAM_ID"] = game_logs["TEAM_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
+            game_logs["SEASON"] = game_logs["SEASON"].astype(str)
+            game_logs["PTS"] = pd.to_numeric(game_logs["PTS"], errors="coerce")
+            game_logs["OPP_PTS"] = pd.to_numeric(game_logs["OPP_PTS"], errors="coerce")
+            game_logs["margin"] = game_logs["PTS"] - game_logs["OPP_PTS"]
+            team_net = game_logs.groupby(["SEASON", "TEAM_ID"]).agg(
+                games=("margin", "count"),
+                avg_margin=("margin", "mean"),
+            ).reset_index()
+            team_net["team_abbreviation"] = team_net["TEAM_ID"].map(team_id_to_abbr)
+            team_net = team_net.rename(columns={"SEASON": "season", "avg_margin": "actual_net_rating"})
+            actual_team_data = team_net[["season", "team_abbreviation", "actual_net_rating", "games"]].dropna()
+            if len(actual_team_data) > 0:
+                league_std_net = float(actual_team_data["actual_net_rating"].std())
+                print(f"  League std net rating: {league_std_net:.2f} (from {len(actual_team_data)} team-seasons)")
 
     # ── Infer defense sign convention from data ──────────────────
-    defense_sign_info = _compute_defense_sign(profiles, actual_team_data)
-    defense_sign = float(defense_sign_info.get("defense_sign", 1.0))
-    print(
-        "  Defense sign inference: "
-        f"sign={defense_sign:+.0f}, "
-        f"corr(def_talent,actual)={defense_sign_info.get('corr_def_talent_vs_actual', np.nan):.3f}, "
-        f"corr(off+def,actual)={defense_sign_info.get('corr_plus', np.nan):.3f}, "
-        f"corr(off-def,actual)={defense_sign_info.get('corr_minus', np.nan):.3f}"
-    )
+    if not forecast_mode:
+        defense_sign_info = _compute_defense_sign(profiles, actual_team_data)
+        defense_sign = float(defense_sign_info.get("defense_sign", 1.0))
+        print(
+            "  Defense sign inference: "
+            f"sign={defense_sign:+.0f}, "
+            f"corr(def_talent,actual)={defense_sign_info.get('corr_def_talent_vs_actual', np.nan):.3f}, "
+            f"corr(off+def,actual)={defense_sign_info.get('corr_plus', np.nan):.3f}, "
+            f"corr(off-def,actual)={defense_sign_info.get('corr_minus', np.nan):.3f}"
+        )
+    else:
+        defense_sign = 1.0  # Use positive convention for forecast
+        print(f"  Forecast mode: defense_sign=+1, league_std_net={league_std_net:.2f}")
 
     TEAM_SCALE = DEFAULT_TEAM_SCALE
 
-    # ── Data-driven TEAM_SCALE ────────────────────────────────────
-    # Fit TEAM_SCALE from the regression of actual net rating against
-    # combined talent (off + sign * def).  This makes the talent backbone
-    # span a realistic range.  Fall back to DEFAULT_TEAM_SCALE if data
-    # is unavailable or the fit is unreliable.
-    if not actual_team_data.empty:
+    # ── Data-driven TEAM_SCALE (backtest only) ────────────────────
+    if not forecast_mode and not actual_team_data.empty:
         tmp_talent = profiles[["season", "team_abbreviation", "minute_share",
                                "impact_obke", "impact_dbke"]].copy()
         tmp_talent["w_off"] = tmp_talent["minute_share"] * tmp_talent["impact_obke"]
@@ -1075,88 +1091,93 @@ def main(
         if modifier_ratio > MODIFIER_MAX_FRACTION:
             print(f"    ⚠️  Modifiers exceed {MODIFIER_MAX_FRACTION:.0%} of talent — consider further reduction")
 
-    # ── Ablations + calibration ──────────────────────────────────
-    ablations, calibration_params, merged_diag = _ablation_report(
-        result_df=result_df,
-        actual_team_data=actual_team_data,
-        defense_sign=defense_sign,
-        team_scale=TEAM_SCALE,
-        holdout_season="2024-25",
-    )
+    # ── Ablations + calibration (backtest only) ────────────────────
+    ablations = {}
+    calibration_params = {}
 
-    if not merged_diag.empty:
-        # Check if calibration is reliable enough to apply
-        holdout_r = ablations.get("6_full_model_calibrated", {}).get("holdout", {}).get("r", 0)
-        train_r = ablations.get("6_full_model_calibrated", {}).get("train", {}).get("r", 0)
-        cal_slope = calibration_params.get("full_slope", 1.0)
-
-        # When holdout correlation is negative (inverted data) or train r < 0.2
-        # or slope would compress too aggressively, skip calibration and use raw.
-        # This preserves basketball-realistic spread from TEAM_SCALE.
-        if holdout_r < 0 or abs(train_r) < 0.20 or abs(cal_slope) < 0.10:
-            print(f"  ⚠️  Skipping calibration (holdout_r={holdout_r:.3f}, train_r={train_r:.3f}, "
-                  f"slope={cal_slope:.3f}) — using raw predictions with mean centering")
-            # Center raw predictions around actual mean for proper zero point
-            actual_mean = merged_diag["actual_net_rating"].mean() if "actual_net_rating" in merged_diag else 0.0
-            raw_mean = result_df["team_net_rating_raw"].mean()
-            result_df["team_net_rating_projected"] = result_df["team_net_rating_raw"] - raw_mean + actual_mean
-            calibration_params["calibration_applied"] = False
-            calibration_params["calibration_skip_reason"] = (
-                f"holdout_r={holdout_r:.3f}, train_r={train_r:.3f}, slope={cal_slope:.3f}"
-            )
-        else:
-            calibrated = merged_diag[
-                ["season", "team_abbreviation", "ab_full_calibrated"]
-            ].rename(columns={"ab_full_calibrated": "team_net_rating_projected_calibrated"})
-            result_df = result_df.merge(
-                calibrated,
-                on=["season", "team_abbreviation"],
-                how="left",
-            )
-            result_df["team_net_rating_projected"] = result_df["team_net_rating_projected_calibrated"].fillna(
-                result_df["team_net_rating_raw"]
-            )
-            result_df = result_df.drop(columns=["team_net_rating_projected_calibrated"], errors="ignore")
-            calibration_params["calibration_applied"] = True
-
-    print("  Ablation summary (r on holdout 2024-25):")
-    for key in [
-        "1_talent_only_scaled",
-        "2_talent_only_plus_calibration",
-        "3_talent_plus_defense",
-        "4_talent_plus_defense_plus_structure",
-        "5_full_model_raw",
-        "6_full_model_calibrated",
-    ]:
-        holdout = ablations.get(key, {}).get("holdout", {})
-        print(
-            f"    {key}: r={holdout.get('r', np.nan):.4f}, "
-            f"std_pred={holdout.get('std_pred', np.nan):.4f}, "
-            f"std_actual={holdout.get('std_actual', np.nan):.4f}"
+    if not forecast_mode:
+        ablations, calibration_params, merged_diag = _ablation_report(
+            result_df=result_df,
+            actual_team_data=actual_team_data,
+            defense_sign=defense_sign,
+            team_scale=TEAM_SCALE,
+            holdout_season="2024-25",
         )
 
-    # ── Validation against actual team data ──────────────────────
+        if not merged_diag.empty:
+            holdout_r = ablations.get("6_full_model_calibrated", {}).get("holdout", {}).get("r", 0)
+            train_r = ablations.get("6_full_model_calibrated", {}).get("train", {}).get("r", 0)
+            cal_slope = calibration_params.get("full_slope", 1.0)
+
+            if holdout_r < 0 or abs(train_r) < 0.20 or abs(cal_slope) < 0.10:
+                print(f"  ⚠️  Skipping calibration (holdout_r={holdout_r:.3f}, train_r={train_r:.3f}, "
+                      f"slope={cal_slope:.3f}) — using raw predictions with mean centering")
+                actual_mean = merged_diag["actual_net_rating"].mean() if "actual_net_rating" in merged_diag else 0.0
+                raw_mean = result_df["team_net_rating_raw"].mean()
+                result_df["team_net_rating_projected"] = result_df["team_net_rating_raw"] - raw_mean + actual_mean
+                calibration_params["calibration_applied"] = False
+                calibration_params["calibration_skip_reason"] = (
+                    f"holdout_r={holdout_r:.3f}, train_r={train_r:.3f}, slope={cal_slope:.3f}"
+                )
+            else:
+                calibrated = merged_diag[
+                    ["season", "team_abbreviation", "ab_full_calibrated"]
+                ].rename(columns={"ab_full_calibrated": "team_net_rating_projected_calibrated"})
+                result_df = result_df.merge(
+                    calibrated,
+                    on=["season", "team_abbreviation"],
+                    how="left",
+                )
+                result_df["team_net_rating_projected"] = result_df["team_net_rating_projected_calibrated"].fillna(
+                    result_df["team_net_rating_raw"]
+                )
+                result_df = result_df.drop(columns=["team_net_rating_projected_calibrated"], errors="ignore")
+                calibration_params["calibration_applied"] = True
+
+        print("  Ablation summary (r on holdout 2024-25):")
+        for key in [
+            "1_talent_only_scaled",
+            "2_talent_only_plus_calibration",
+            "3_talent_plus_defense",
+            "4_talent_plus_defense_plus_structure",
+            "5_full_model_raw",
+            "6_full_model_calibrated",
+        ]:
+            holdout = ablations.get(key, {}).get("holdout", {})
+            print(
+                f"    {key}: r={holdout.get('r', np.nan):.4f}, "
+                f"std_pred={holdout.get('std_pred', np.nan):.4f}, "
+                f"std_actual={holdout.get('std_actual', np.nan):.4f}"
+            )
+
+    # ── Validation ───────────────────────────────────────────────
     validation = _validate(result_df, actual_team_data)
-    validation["defense_sign_inference"] = {
-        "defense_sign": defense_sign,
-        "corr_def_talent_vs_actual": defense_sign_info.get("corr_def_talent_vs_actual", np.nan),
-        "corr_off_plus_def_vs_actual": defense_sign_info.get("corr_plus", np.nan),
-        "corr_off_minus_def_vs_actual": defense_sign_info.get("corr_minus", np.nan),
-    }
+    if not forecast_mode:
+        validation["defense_sign_inference"] = {
+            "defense_sign": defense_sign,
+            "corr_def_talent_vs_actual": defense_sign_info.get("corr_def_talent_vs_actual", np.nan),
+            "corr_off_plus_def_vs_actual": defense_sign_info.get("corr_plus", np.nan),
+            "corr_off_minus_def_vs_actual": defense_sign_info.get("corr_minus", np.nan),
+        }
+    else:
+        validation["mode"] = "forecast"
+        validation["defense_sign"] = defense_sign
     validation["calibration"] = calibration_params
     validation["ablation_stack"] = ablations
 
     # ── Save outputs ──────────────────────────────────────────────
-    TEAM_FEATURES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result_df.to_parquet(TEAM_FEATURES_PATH, index=False)
-    STEP3_VALIDATION_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    Path(STEP3_VALIDATION_REPORT).write_text(
+    dst_path = output_path or (PROJECTED_TEAM_FEATURES_PATH if forecast_mode else TEAM_FEATURES_PATH)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    result_df.to_parquet(dst_path, index=False)
+
+    report_path = STEP3_VALIDATION_REPORT
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    Path(report_path).write_text(
         json.dumps(validation, indent=2), encoding="utf-8"
     )
 
-    print(f"  Saved: {TEAM_FEATURES_PATH}")
-    print(f"  Saved: {STEP3_VALIDATION_REPORT}")
-    print(json.dumps(validation, indent=2))
+    print(f"  Saved: {dst_path}")
+    print(f"  Saved: {report_path}")
 
     return result_df
 

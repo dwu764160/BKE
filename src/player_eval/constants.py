@@ -154,3 +154,64 @@ MINUTE_SHARE_CAP = 0.22
 MINUTE_SHARE_FLOOR = 0.0
 HIGH_USAGE_QUANTILE = 0.75
 
+# ═══════════════════════════════════════════════════════════════════
+# Forecast Mode — Forward Projection Constants
+# ═══════════════════════════════════════════════════════════════════
+
+FORECAST_DIR = PROCESSED_DIR / "forecast"
+FORECAST_DIR.mkdir(parents=True, exist_ok=True)
+
+# Projected player profiles output (same schema as player_impact_profiles)
+PROJECTED_PROFILES_PATH = FORECAST_DIR / "projected_player_profiles.parquet"
+# Projected team features output (same schema as team_feature_aggregation)
+PROJECTED_TEAM_FEATURES_PATH = FORECAST_DIR / "projected_team_features.parquet"
+# Forecast validation output
+FORECAST_VALIDATION_REPORT = REPORTS_DIR / "forecast_validation.json"
+# Forecast season simulation output
+FORECAST_SEASON_RESULTS = REPORTS_DIR / "forecast_season_results.json"
+# Forecast lineup projection output
+FORECAST_LINEUP_REPORT = REPORTS_DIR / "forecast_lineup_profiles.json"
+
+# Rookies input (user-supplied CSV for true forecasting)
+ROOKIES_INPUT_PATH = DATA_DIR / "forecasting" / "rookies.csv"
+
+# ── Age Curve Constants ──────────────────────────────────────────
+# Piecewise linear age adjustment for impact metrics (BKE-scale per year).
+# Positive = improvement, negative = decline.
+# Calibrated from empirical year-to-year BKE deltas by age bucket.
+AGE_CURVE_BREAKPOINTS = [21, 24, 27, 30, 33, 36]
+AGE_CURVE_DELTAS = [
+    +0.08,   # <21: strong improvement (empirical ~+0.08)
+    +0.04,   # 21-24: moderate improvement (empirical ~+0.03-0.05)
+    +0.01,   # 24-27: approaching peak, slight improvement
+    -0.01,   # 27-30: slight decline
+    -0.02,   # 30-33: moderate decline (survivorship bias tempers this)
+    -0.02,   # 33-36: decline continues
+    -0.03,   # 36+: steeper decline
+]
+
+# ── Rookie Projection Constants ─────────────────────────────────
+# Expected impact by draft slot tier (BKE-scale, replacement = ~0)
+ROOKIE_IMPACT_BY_TIER = {
+    "lottery": 0.15,        # picks 1-14: above-replacement
+    "mid_first": 0.05,      # picks 15-25: near-replacement
+    "late_first": 0.00,     # picks 26-30: replacement level
+    "second_round": -0.05,  # picks 31-60: below-replacement
+    "undrafted": -0.10,     # undrafted: well below replacement
+}
+# Expected MPG by draft slot tier
+ROOKIE_MPG_BY_TIER = {
+    "lottery": 22.0,
+    "mid_first": 14.0,
+    "late_first": 10.0,
+    "second_round": 6.0,
+    "undrafted": 5.0,
+}
+# Rookie behavioral rate defaults (league average for position)
+ROOKIE_DEFAULT_USAGE = 0.18
+ROOKIE_DEFAULT_AST_RATE = 0.12
+ROOKIE_DEFAULT_TOV_RATE = 0.14
+ROOKIE_DEFAULT_3PT_RATE = 0.35
+ROOKIE_DEFAULT_EFG = 0.49
+ROOKIE_DEFAULT_FTR = 0.25
+

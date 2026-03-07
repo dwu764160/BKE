@@ -24,6 +24,16 @@ STEP2_LINEUP_PROFILES_PATH = SIMULATION_PROCESSED_DIR / "simulation_step2_lineup
 STEP2_LINEUP_REPORT_PATH = REPORTS_DIR / "simulation_step2_lineup_profiles.json"
 STEP2_VALIDATION_PATH = REPORTS_DIR / "simulation_step2_validation.json"
 
+# Forecast mode paths
+FORECAST_DIR = PROCESSED_DIR / "forecast"
+FORECAST_DIR.mkdir(parents=True, exist_ok=True)
+FORECAST_TEAM_FEATURES_PATH = FORECAST_DIR / "projected_team_features.parquet"
+FORECAST_PLAYER_PROFILES_PATH = FORECAST_DIR / "projected_player_profiles.parquet"
+FORECAST_SEASON_RESULTS_PATH = REPORTS_DIR / "forecast_season_results.json"
+FORECAST_LINEUP_REPORT_PATH = REPORTS_DIR / "forecast_lineup_profiles.json"
+FORECAST_LINEUP_PROFILES_PATH = SIMULATION_PROCESSED_DIR / "forecast_step2_lineup_profiles.parquet"
+FORECAST_VALIDATION_PATH = REPORTS_DIR / "forecast_step2_validation.json"
+
 # Ensure report output directory exists when simulation scripts run standalone.
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 

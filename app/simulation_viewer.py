@@ -34,6 +34,9 @@ import numpy as np
 SEASON_RESULTS = "reports/simulation_step1_season_results.json"
 VALIDATION_RESULTS = "reports/simulation_step1_validation.json"
 LINEUP_RESULTS = "reports/simulation_step2_lineup_profiles.json"
+FORECAST_RESULTS = "reports/forecast_season_results.json"
+FORECAST_VALIDATION = "reports/forecast_validation.json"
+FORECAST_LINEUP = "reports/forecast_lineup_profiles.json"
 OUTPUT_HTML = "app/simulation.html"
 
 
@@ -77,6 +80,26 @@ def generate_html(
         "seasons": season_data.get("seasons", {}),
         "validation": validation_data,
         "lineup_step2": lineup_data,
+    }
+
+    # Load forecast data if available
+    forecast_data = {}
+    if os.path.exists(FORECAST_RESULTS):
+        with open(FORECAST_RESULTS, "r", encoding="utf-8") as f:
+            forecast_data = json.load(f)
+    forecast_validation = {}
+    if os.path.exists(FORECAST_VALIDATION):
+        with open(FORECAST_VALIDATION, "r", encoding="utf-8") as f:
+            forecast_validation = json.load(f)
+    forecast_lineup = {}
+    if os.path.exists(FORECAST_LINEUP):
+        with open(FORECAST_LINEUP, "r", encoding="utf-8") as f:
+            forecast_lineup = json.load(f)
+    data_blob["forecast"] = {
+        "config": forecast_data.get("config", {}),
+        "seasons": forecast_data.get("seasons", {}),
+        "validation": forecast_validation,
+        "lineup": forecast_lineup,
     }
 
     data_json = json.dumps(data_blob, separators=(",", ":"))
@@ -401,11 +424,12 @@ tr:hover { background:rgba(88,166,255,0.06); }
 <body>
 <div class="container">
   <h1>BKE Simulation Core</h1>
-  <div class="subtitle">Step 1: Margin-Based Season Simulation + Step 2: Lineup Projection</div>
+  <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Forecast</div>
 
   <div class="view-tabs" id="viewTabs">
     <button class="view-tab active" data-view="step1View">Step 1: Season Simulation</button>
     <button class="view-tab" data-view="step2View">Step 2: Lineup Projection</button>
+    <button class="view-tab" data-view="forecastView">Forecast</button>
   </div>
 
   <div id="step1View" class="view-panel">
@@ -440,6 +464,16 @@ tr:hover { background:rgba(88,166,255,0.06); }
     <div class="lineup-grid" id="lineupCardGrid"></div>
   </div>
 
+  <div id="forecastView" class="view-panel hidden">
+    <div class="season-tabs" id="forecastSeasonTabs"></div>
+    <div class="stats-row" id="forecastStatsRow"></div>
+    <div class="charts-row">
+      <div class="chart-box" style="flex:2"><h3>Projected Wins (Forecast)</h3><div id="forecastWinsChart"></div></div>
+      <div class="chart-box" style="flex:1"><h3>Projection Validation</h3><div id="forecastValChart"></div></div>
+    </div>
+    <div class="table-wrap"><div class="table-scroll" id="forecastTableWrap"></div></div>
+  </div>
+
   <div class="lineup-modal-overlay" id="lineupModalOverlay">
     <div class="lineup-modal">
       <div class="modal-head">
@@ -451,7 +485,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
   </div>
 
   <div class="footer">
-    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation) and Step 2 (lineup projection).
+    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation), Step 2 (lineup projection), Forecast (forward projection).
     &sigma;<sub>league</sub> = <span id="footSigma"></span>,
     HCA = <span id="footHCA"></span>,
     N = <span id="footN"></span>
@@ -461,17 +495,25 @@ tr:hover { background:rgba(88,166,255,0.06); }
 <script>
 const DATA = __DATA_JSON__;
 const STEP2 = DATA.lineup_step2 || {};
+const FORECAST = DATA.forecast || {};
 
 let currentSeason = null;
 let lineupSeason = null;
+let forecastSeason = null;
 let sortCol = "projected_rank";
 let sortDir = "asc";
+let forecastSortCol = "projected_rank";
+let forecastSortDir = "asc";
 let currentSimulatedGame = null;
 let activeView = "step1View";
 const STEP2_SEASON_PLAYER_MAP = {};
 
 function getStep1Seasons() {
   return Object.keys(DATA.seasons || {}).sort();
+}
+
+function getForecastSeasons() {
+  return Object.keys((FORECAST && FORECAST.seasons) || {}).sort();
 }
 
 function getStep2Seasons() {
@@ -482,6 +524,9 @@ function getStep2Seasons() {
   const seasons = getStep1Seasons();
   currentSeason = seasons.length ? seasons[seasons.length - 1] : null;
 
+  const fSeasons = getForecastSeasons();
+  forecastSeason = fSeasons.length ? fSeasons[fSeasons.length - 1] : null;
+
   const cfg = DATA.config || {};
   document.getElementById("footSigma").textContent = cfg.sigma_league || "?";
   document.getElementById("footHCA").textContent = cfg.home_court_advantage || "?";
@@ -491,6 +536,7 @@ function getStep2Seasons() {
   initSingleGameSimulator(seasons);
   initViewTabs();
   initStep2View();
+  initForecastView();
   bindModalEvents();
   renderStep1();
 })();
@@ -505,8 +551,10 @@ function initViewTabs() {
       });
       if (activeView === "step1View") {
         renderStep1();
-      } else {
+      } else if (activeView === "step2View") {
         renderStep2();
+      } else if (activeView === "forecastView") {
+        renderForecast();
       }
     });
   });
@@ -1384,6 +1432,220 @@ function uniqueNamedList(values) {
     out.push(name);
   });
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Forecast View
+// ═══════════════════════════════════════════════════════════════
+
+function initForecastView() {
+  const seasons = getForecastSeasons();
+  const tabsEl = document.getElementById("forecastSeasonTabs");
+  if (!tabsEl) return;
+  tabsEl.innerHTML = "";
+  if (seasons.length === 0) {
+    tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available. Run: python3 src/simulation/run_forecast.py</div>';
+    return;
+  }
+  seasons.forEach(s => {
+    const tab = document.createElement("div");
+    tab.className = "season-tab" + (s === forecastSeason ? " active" : "");
+    tab.textContent = s + " (Forecast)";
+    tab.onclick = () => switchForecastSeason(s);
+    tabsEl.appendChild(tab);
+  });
+}
+
+function switchForecastSeason(s) {
+  forecastSeason = s;
+  document.querySelectorAll("#forecastSeasonTabs .season-tab").forEach(t => {
+    t.classList.toggle("active", t.textContent.startsWith(s));
+  });
+  renderForecast();
+}
+
+function renderForecast() {
+  if (!forecastSeason || !FORECAST.seasons) return;
+  const sdata = FORECAST.seasons[forecastSeason];
+  if (!sdata) return;
+  renderForecastStats(sdata);
+  renderForecastTable(sdata);
+  renderForecastWinsChart(sdata);
+  renderForecastValidation();
+}
+
+function renderForecastStats(sdata) {
+  const teams = sdata.team_results || [];
+  const wins = teams.map(t => t.projected_wins || 0);
+  const avgWins = wins.length ? (wins.reduce((a,b) => a+b, 0) / wins.length) : 0;
+  const maxW = Math.max(...wins);
+  const minW = Math.min(...wins);
+  const spread = maxW - minW;
+
+  // Get validation data
+  const valData = FORECAST.validation || {};
+  const projections = valData.projections || {};
+
+  // Find the transition that targets this season
+  let bkeCorr = null, bkeMae = null, mpgCorr = null;
+  for (const [key, val] of Object.entries(projections)) {
+    if (key.includes(forecastSeason)) {
+      bkeCorr = val.bke_correlation;
+      bkeMae = val.bke_mae;
+      mpgCorr = val.mpg_correlation;
+      break;
+    }
+  }
+
+  const fcfg = FORECAST.config || {};
+
+  const cards = [
+    { label: "Teams", value: teams.length, cls: "val-accent", detail: forecastSeason },
+    { label: "Avg Wins", value: avgWins.toFixed(1), cls: "val-accent", detail: "Mean projected" },
+    { label: "Win Spread", value: spread.toFixed(1), cls: "val-orange", detail: `${minW.toFixed(0)}-${maxW.toFixed(0)}` },
+    { label: "BKE r", value: bkeCorr != null ? bkeCorr.toFixed(3) : "-", cls: "val-green", detail: "Yr-to-yr carry" },
+    { label: "BKE MAE", value: bkeMae != null ? bkeMae.toFixed(3) : "-", cls: "val-accent", detail: "Impact predict err" },
+    { label: "MPG r", value: mpgCorr != null ? mpgCorr.toFixed(3) : "-", cls: "val-green", detail: "Minutes carry" },
+    { label: "Mode", value: (fcfg.mode || "FORECAST").toUpperCase(), cls: "val-purple", detail: "Pipeline mode" },
+    { label: "Sims", value: fcfg.n_simulations ? fcfg.n_simulations.toLocaleString() : "-", cls: "val-accent", detail: "Monte Carlo runs" },
+  ];
+
+  const el = document.getElementById("forecastStatsRow");
+  el.innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value || "-"}</div>
+      <div class="detail">${c.detail}</div>
+    </div>
+  `).join("");
+}
+
+function renderForecastTable(sdata) {
+  let teams = [...(sdata.team_results || [])];
+  teams.sort((a, b) => {
+    let va = a[forecastSortCol], vb = b[forecastSortCol];
+    if (va == null) va = 0;
+    if (vb == null) vb = 0;
+    return forecastSortDir === "asc" ? (va > vb ? 1 : va < vb ? -1 : 0) : (va < vb ? 1 : va > vb ? -1 : 0);
+  });
+
+  const cols = [
+    { key: "projected_rank", label: "Rank", cls: "rank" },
+    { key: "team", label: "Team", cls: "team" },
+    { key: "conference", label: "Conf", cls: "num" },
+    { key: "projected_conf_rank", label: "Conf Rk", cls: "num", fmt: v => v != null ? Number(v).toFixed(1) : "-" },
+    { key: "mu", label: "Net Rtg", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+    { key: "sigma", label: "Vol", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+    { key: "projected_wins", label: "Proj W", cls: "num val-accent", fmt: v => v != null ? Number(v).toFixed(1) : "-" },
+    { key: "win_p5", label: "90% CI", cls: "conf-band", fmt: (v, r) => `${r.win_p5}-${r.win_p95}` },
+    { key: "direct_playoff_probability", label: "Top 6 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
+    { key: "top_10_probability", label: "Top 10 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
+    { key: "playin_only_probability", label: "7-10 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
+    { key: "win_std", label: "Win SD", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+  ];
+
+  let html = "<table><thead><tr>";
+  cols.forEach(c => {
+    const cls = c.key === forecastSortCol ? (forecastSortDir === "asc" ? "sorted-asc" : "sorted-desc") : "";
+    html += `<th class="${cls}" data-col="${c.key}">${c.label}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+
+  teams.forEach(t => {
+    html += "<tr>";
+    cols.forEach(c => {
+      const raw = c.key === "win_p5" && c.label === "90% CI" ? t["win_p5"] : t[c.key];
+      const display = c.fmt ? c.fmt(raw, t) : (raw != null ? raw : "-");
+      html += `<td class="${c.cls || ""}">${display}</td>`;
+    });
+    html += "</tr>";
+  });
+
+  html += "</tbody></table>";
+  document.getElementById("forecastTableWrap").innerHTML = html;
+
+  document.querySelectorAll("#forecastTableWrap th").forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (forecastSortCol === col) {
+        forecastSortDir = forecastSortDir === "asc" ? "desc" : "asc";
+      } else {
+        forecastSortCol = col;
+        forecastSortDir = col === "team" ? "asc" : "desc";
+      }
+      renderForecastTable(sdata);
+    });
+  });
+}
+
+function renderForecastWinsChart(sdata) {
+  const teams = [...(sdata.team_results || [])].sort((a, b) => (b.projected_wins || 0) - (a.projected_wins || 0));
+  const n = teams.length;
+  const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
+  const h = n * (barH + gap) + 40;
+  const chartW = 700;
+  const maxWins = Math.max(82, ...teams.map(t => Math.max(t.projected_wins || 0, t.win_p95 || 0)));
+  const xScale = (chartW - leftMargin - rightMargin) / maxWins;
+
+  let svg = `<svg width="100%" viewBox="0 0 ${chartW} ${h}" style="max-height:${Math.min(h, 900)}px">`;
+
+  const x41 = leftMargin + 41 * xScale;
+  svg += `<line x1="${x41}" y1="0" x2="${x41}" y2="${h}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.4"/>`;
+  svg += `<text x="${x41}" y="12" text-anchor="middle" font-size="10" fill="var(--text-muted)">41 Wins</text>`;
+
+  teams.forEach((t, i) => {
+    const y = 20 + i * (barH + gap);
+    const projW = leftMargin + (t.projected_wins || 0) * xScale;
+    const p5x = leftMargin + (t.win_p5 || 0) * xScale;
+    const p95x = leftMargin + (t.win_p95 || 0) * xScale;
+
+    // 90% CI band
+    svg += `<rect x="${p5x}" y="${y+2}" width="${p95x - p5x}" height="${barH-4}" rx="2" fill="var(--purple)" opacity="0.15"/>`;
+    // Projected bar
+    svg += `<rect x="${leftMargin}" y="${y+4}" width="${projW - leftMargin}" height="${barH-8}" rx="2" fill="var(--purple)" opacity="0.7"/>`;
+
+    svg += `<text x="${leftMargin - 4}" y="${y + barH/2 + 4}" text-anchor="end" font-size="11" font-weight="600">${t.team}</text>`;
+    svg += `<text x="${Math.max(projW, p95x) + 6}" y="${y + barH/2 + 4}" font-size="10" fill="var(--text-muted)">${(t.projected_wins || 0).toFixed(0)} [${t.win_p5}-${t.win_p95}]</text>`;
+  });
+
+  svg += `<rect x="${chartW - 160}" y="${h - 18}" width="12" height="6" rx="1" fill="var(--purple)" opacity="0.7"/>`;
+  svg += `<text x="${chartW - 144}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Projected</text>`;
+  svg += `<rect x="${chartW - 80}" y="${h - 18}" width="20" height="6" rx="1" fill="var(--purple)" opacity="0.15"/>`;
+  svg += `<text x="${chartW - 56}" y="${h - 12}" font-size="10" fill="var(--text-muted)">90% CI</text>`;
+
+  svg += "</svg>";
+  document.getElementById("forecastWinsChart").innerHTML = svg;
+}
+
+function renderForecastValidation() {
+  const valData = FORECAST.validation || {};
+  const projections = valData.projections || {};
+  const el = document.getElementById("forecastValChart");
+
+  if (Object.keys(projections).length === 0) {
+    el.innerHTML = '<div style="color:var(--text-muted);padding:20px">No validation data (backtest mode only)</div>';
+    return;
+  }
+
+  let html = '<div style="padding:8px">';
+  html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Player Projection Accuracy (Backtest)</div>';
+
+  for (const [key, val] of Object.entries(projections)) {
+    html += `<div style="margin-bottom:12px;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px">`;
+    html += `<div style="font-weight:600;color:var(--accent);margin-bottom:4px">${key}</div>`;
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">`;
+    html += `<div>Returning: <span style="color:var(--green)">${val.n_returning}</span></div>`;
+    html += `<div>Rookies: <span style="color:var(--orange)">${val.n_rookies}</span></div>`;
+    html += `<div>BKE r: <span style="color:var(--green)">${val.bke_correlation?.toFixed(3) || "-"}</span></div>`;
+    html += `<div>BKE MAE: <span style="color:var(--accent)">${val.bke_mae?.toFixed(3) || "-"}</span></div>`;
+    html += `<div>MPG r: <span style="color:var(--green)">${val.mpg_correlation?.toFixed(3) || "-"}</span></div>`;
+    html += `<div>MPG MAE: <span style="color:var(--accent)">${val.mpg_mae?.toFixed(1) || "-"}</span></div>`;
+    html += `<div>Team Match: <span style="color:var(--green)">${val.team_match_rate ? (val.team_match_rate * 100).toFixed(0) + "%" : "-"}</span></div>`;
+    html += `</div></div>`;
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
 }
 </script>
 </body>
