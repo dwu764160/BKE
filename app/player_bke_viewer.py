@@ -156,9 +156,36 @@ svg text {{ fill:var(--text); font-family:inherit; }}
 <script>
 // === Embedded data ===
 const DATA = {data_json};
-const PLAYERS_RAW = DATA.players;
+const PLAYERS_SOURCE = Array.isArray(DATA.players) ? DATA.players : [];
 const CONFIG = DATA.config;
 const PROXY = DATA.production_proxy;
+
+function buildRowKey(p, idx) {{
+  const pid = String(p && p.player_id != null ? p.player_id : "").trim() || "UNK";
+  const season = String(p && p.season != null ? p.season : "").trim() || "UNK";
+  const team = String((p && (p.team_abbreviation || p.team)) || "UNK").trim() || "UNK";
+  const stintRaw = p && (p.stint_number != null ? p.stint_number : p.team_stint_number);
+  const stint = Number.isFinite(Number(stintRaw)) ? Math.max(1, Math.trunc(Number(stintRaw))) : 1;
+  return `${{pid}}::${{season}}::${{team}}::${{stint}}::${{idx}}`;
+}}
+
+function buildTeamDisplay(p) {{
+  const team = String((p && (p.team_abbreviation || p.team)) || "").trim();
+  const stintRaw = p && (p.stint_number != null ? p.stint_number : p.team_stint_number);
+  const stintCountRaw = p && (p.stint_count != null ? p.stint_count : p.stint_team_count);
+  const stint = Number.isFinite(Number(stintRaw)) ? Math.max(1, Math.trunc(Number(stintRaw))) : 1;
+  const stintCount = Number.isFinite(Number(stintCountRaw)) ? Math.max(1, Math.trunc(Number(stintCountRaw))) : 1;
+  if (stintCount > 1 || stint > 1) {{
+    return `${{team || 'UNK'}} (S${{stint}}/${{stintCount}})`;
+  }}
+  return team;
+}}
+
+const PLAYERS_RAW = PLAYERS_SOURCE.map((p, idx) => ({{
+  ...p,
+  __row_key: buildRowKey(p, idx),
+  team_display: buildTeamDisplay(p),
+}}));
 
 // State
 let currentSplit = "60_40";
@@ -184,7 +211,7 @@ function buildBaseRanks() {{
   PLAYERS_RAW.forEach(p => {{
     const s = p.season;
     if (!groups[s]) groups[s] = [];
-    groups[s].push({{ id: p.player_id + "::" + p.season, bke: computeBKE(p, 0) }});
+    groups[s].push({{ id: p.__row_key, bke: computeBKE(p, 0) }});
   }});
   for (const s in groups) {{
     groups[s].sort((a,b) => b.bke - a.bke);
@@ -212,7 +239,7 @@ function getFilteredPlayers() {{
     groups[s].sort((a,b) => b.bke_final - a.bke_final);
     groups[s].forEach((x, i) => {{
       x.rank = i + 1;
-      const key = x.player_id + "::" + x.season;
+      const key = x.__row_key;
       x.base_rank = baseRanksMap[key] || null;
       x.rank_shift = x.base_rank ? (x.base_rank - x.rank) : 0;
       result.push(x);
@@ -239,7 +266,7 @@ const COLUMNS = [
   {{ key:"player_name", label:"Player", cls:"name-col", fmt: v => v || "?" }},
   {{ key:"season", label:"Season", cls:"pos-col", fmt: v => v }},
   {{ key:"position", label:"Pos", cls:"pos-col", fmt: v => v || "" }},
-  {{ key:"team", label:"Team", cls:"pos-col", fmt: v => v || "" }},
+  {{ key:"team_display", label:"Team", cls:"pos-col", fmt: v => v || "" }},
   {{ key:"bke_final", label:"BKE", cls:"bke-col num", fmt: v => v != null ? v.toFixed(3) : "" }},
   {{ key:"obke", label:"OBKE", cls:"num", fmt: v => v != null ? v.toFixed(3) : "" }},
   {{ key:"dbke_l36", label:"DBKE", cls:"num", fmt: v => v != null ? v.toFixed(3) : "" }},

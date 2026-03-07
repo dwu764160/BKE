@@ -44,6 +44,16 @@ DARKO_DIR = HISTORICAL_DIR / "darko" / "raw"
 PLAYER_DRAFT_HISTORY_PATH = HISTORICAL_DIR / "player_draft_history.parquet"
 DRAFT_COMMONPLAYERINFO_CACHE_PATH = HISTORICAL_DIR / "player_draft_commonplayerinfo_cache.parquet"
 
+# Player-team stint outputs (derived from game logs)
+PLAYER_TEAM_STINTS_PATH = PROCESSED_DIR / "player_team_stints.parquet"
+PLAYER_TEAM_STINTS_REPORT = REPORTS_DIR / "player_team_stints_report.json"
+
+# Preseason roster snapshots (Option B forecast mapping)
+PRESEASON_ROSTERS_PATH = HISTORICAL_DIR / "preseason_rosters.parquet"
+PRESEASON_ROSTERS_REPORT = REPORTS_DIR / "preseason_rosters_report.json"
+PRESEASON_ROSTERS_DIR = HISTORICAL_DIR / "preseason_rosters"
+PRESEASON_ROSTERS_DIR.mkdir(parents=True, exist_ok=True)
+
 # Stability / diagnostics
 BKE_V29_PLAYER_DIAGNOSTIC_PATH = REPORTS_DIR / "bke_v29_player_diagnostic_report.json"
 DBKE_V30_SHRINKAGE_PATH = REPORTS_DIR / "dbke_v30_defense_shrinkage.json"

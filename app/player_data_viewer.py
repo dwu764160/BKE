@@ -369,6 +369,49 @@ def normalize_player_id(val):
             s = s[:-2]
         return s or None
 
+
+def _safe_int(val, default=1):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return default
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_bool(val, default=False):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return default
+    if isinstance(val, (bool, np.bool_)):
+        return bool(val)
+    if isinstance(val, str):
+        text = val.strip().lower()
+        if text in {"1", "true", "t", "yes", "y"}:
+            return True
+        if text in {"0", "false", "f", "no", "n"}:
+            return False
+    try:
+        return bool(int(float(val)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_team_abbreviation(val):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    text = str(val).strip().upper()
+    if not text:
+        return ""
+    if text in {"NAN", "NONE", "NULL"}:
+        return ""
+    return text
+
+
+def _build_player_stint_key(player_id, season, team_abbr, stint_number):
+    team = team_abbr or "UNK"
+    stint = max(1, _safe_int(stint_number, default=1))
+    return f"{player_id}::{season}::{team}::{stint}"
+
 def row_to_dict(row, exclude=None):
     exclude = set(exclude or [])
     return {k: clean_value(row.get(k)) for k in row.index if k not in exclude}
@@ -636,6 +679,40 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
     bke_v28_map = bke_v28_map or {}
     bke_v30_map = bke_v30_map or {}
 
+    off_work = off_df.copy()
+    def_work = def_df.copy()
+
+    # Carry canonical team/stint join fields when available so traded seasons
+    # do not cross-join offense and defense rows.
+    if "TEAM_ABBREVIATION" not in off_work.columns:
+        if "team_abbreviation" in off_work.columns:
+            off_work["TEAM_ABBREVIATION"] = off_work["team_abbreviation"]
+        elif "team" in off_work.columns:
+            off_work["TEAM_ABBREVIATION"] = off_work["team"]
+    if "TEAM_ABBREVIATION" in off_work.columns:
+        off_work["TEAM_ABBREVIATION"] = off_work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    if "TEAM_ABBREVIATION" not in def_work.columns:
+        if "team_abbreviation" in def_work.columns:
+            def_work["TEAM_ABBREVIATION"] = def_work["team_abbreviation"]
+        elif "team" in def_work.columns:
+            def_work["TEAM_ABBREVIATION"] = def_work["team"]
+    if "TEAM_ABBREVIATION" in def_work.columns:
+        def_work["TEAM_ABBREVIATION"] = def_work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    off_stint_col = "stint_number" if "stint_number" in off_work.columns else ("team_stint_number" if "team_stint_number" in off_work.columns else None)
+    def_stint_col = "stint_number" if "stint_number" in def_work.columns else ("team_stint_number" if "team_stint_number" in def_work.columns else None)
+    if off_stint_col:
+        off_work["_stint_number_join"] = pd.to_numeric(off_work[off_stint_col], errors="coerce").fillna(1).astype(int)
+    if def_stint_col:
+        def_work["_stint_number_join"] = pd.to_numeric(def_work[def_stint_col], errors="coerce").fillna(1).astype(int)
+
+    join_keys = ["player_id", "SEASON"]
+    if "TEAM_ABBREVIATION" in off_work.columns and "TEAM_ABBREVIATION" in def_work.columns:
+        join_keys.append("TEAM_ABBREVIATION")
+    if "_stint_number_join" in off_work.columns and "_stint_number_join" in def_work.columns:
+        join_keys.append("_stint_number_join")
+
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
                 'defensive_confidence', 'assignment_difficulty',
                 'switch_score', 'versatility_pctl', 'avg_opponent_ppg',
@@ -647,9 +724,13 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
                 'D_FG_DIFF', 'd_results_pctl',
                 'poa_score', 'wing_score', 'chaser_score',
                 'rim_score', 'drop_big_score', 'mobile_big_score']
-    def_cols = [c for c in def_cols if c in def_df.columns]
+    def_cols = [c for c in def_cols if c in def_work.columns]
+    for key_col in join_keys:
+        if key_col in def_work.columns and key_col not in def_cols:
+            def_cols.append(key_col)
 
-    merged = off_df.merge(def_df[def_cols], on=['player_id', 'SEASON'], how='left')
+    def_for_merge = def_work[def_cols].drop_duplicates(subset=join_keys, keep="first")
+    merged = off_work.merge(def_for_merge, on=join_keys, how='left')
 
     profiles_map = build_record_map(profiles_df, ["player_id", "SEASON"], ["player_name", "season"])
     rapm_map     = build_record_map(rapm_df,     ["player_id", "SEASON"], ["player_name", "season"])
@@ -699,15 +780,39 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
         if row.get('primary_archetype') == 'Insufficient Minutes':
             continue
         pid, season = str(row['player_id']), row['SEASON']
-        key = f"{pid}::{season}"
+        team_abbr = _clean_team_abbreviation(
+            row.get("TEAM_ABBREVIATION")
+            or row.get("team_abbreviation")
+            or row.get("team")
+        )
+        stint_number = max(
+            1,
+            _safe_int(
+                row.get("stint_number", row.get("team_stint_number", row.get("_stint_number_join", 1))),
+                default=1,
+            ),
+        )
+        stint_count = max(1, _safe_int(row.get("stint_count"), default=1))
+        stint_team_count = max(1, _safe_int(row.get("stint_team_count"), default=1))
+        is_primary_stint = _safe_bool(row.get("is_primary_stint"), default=(stint_number == 1))
+        is_final_stint = _safe_bool(row.get("is_final_stint"), default=(stint_number == stint_count))
+        team_assignment_source = str(row.get("team_assignment_source", "") or "").strip() or "season"
+        key = _build_player_stint_key(pid, season, team_abbr, stint_number)
         pos_est = pos_est_map.get((pid, season), {})
         bke_rec = bke_map.get((pid, season), {}) or {}
 
         card = {
             'key': key,
+            'id': pid,
             'name': row['PLAYER_NAME'],
             'season': season,
-            'team': row.get('TEAM_ABBREVIATION', ''),
+            'team': team_abbr,
+            'stint_number': stint_number,
+            'stint_count': stint_count,
+            'stint_team_count': stint_team_count,
+            'is_primary_stint': is_primary_stint,
+            'is_final_stint': is_final_stint,
+            'team_assignment_source': team_assignment_source,
             'off_archetype': row.get('primary_archetype', 'Unknown'),
             'off_secondary': row.get('secondary_archetype', ''),
             'off_confidence': round(row.get('role_confidence', row.get('archetype_confidence', 0)) * 100),
@@ -784,6 +889,15 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
         detail = {
             'profile': profile,
             'salary': salary_map.get((pid, season)),
+            'stint_context': {
+                'team': team_abbr,
+                'stint_number': stint_number,
+                'stint_count': stint_count,
+                'stint_team_count': stint_team_count,
+                'is_primary_stint': is_primary_stint,
+                'is_final_stint': is_final_stint,
+                'team_assignment_source': team_assignment_source,
+            },
             'off_reasons': get_offensive_reasons(row),
             'def_reasons': get_defensive_reasons(row),
             'playtypes': get_playtype_rankings(row),
@@ -1187,6 +1301,69 @@ var curBkeSplit='split_60_40';
 var curModalKey=null;
 var cmpSel={1:null,2:null};
 
+var cardByKey={};
+for(var _ci=0;_ci<cards.length;_ci++){
+    cardByKey[cards[_ci].key]=cards[_ci];
+}
+
+function stintSuffix(card){
+    if(!card)return '';
+    var n=Number(card.stint_number);
+    var c=Number(card.stint_count);
+    var t=Number(card.stint_team_count);
+    if(!isFinite(n)||n<1)n=1;
+    if(!isFinite(c)||c<1)c=1;
+    if(!isFinite(t)||t<1)t=c;
+    if(c<=1&&t<=1)return '';
+    var tags=['S'+n+'/'+c];
+    if(card.is_final_stint)tags.push('Final');
+    else if(card.is_primary_stint)tags.push('Primary');
+    return '('+tags.join(' · ')+')';
+}
+
+function stintMetaText(card){
+    if(!card)return '';
+    var bits=[];
+    var suffix=stintSuffix(card);
+    if(suffix)bits.push(suffix.replace(/^\(|\)$/g,''));
+    if(card.team_assignment_source==='stint')bits.push('stint-assigned');
+    return bits.join(' · ');
+}
+
+function _preferSeasonCard(candidate,current){
+    if(!current)return true;
+    if(!!candidate.is_final_stint!==!!current.is_final_stint)return !!candidate.is_final_stint;
+    if(!!candidate.is_primary_stint!==!!current.is_primary_stint)return !!candidate.is_primary_stint;
+    var cMpg=Number(candidate.mpg),pMpg=Number(current.mpg);
+    if(isFinite(cMpg)&&isFinite(pMpg)&&cMpg!==pMpg)return cMpg>pMpg;
+    var cStint=Number(candidate.stint_number),pStint=Number(current.stint_number);
+    if(isFinite(cStint)&&isFinite(pStint)&&cStint!==pStint)return cStint>pStint;
+    return false;
+}
+
+var playerSeasonPreferredKey={};
+for(var _si=0;_si<cards.length;_si++){
+    var c=cards[_si];
+    var pid=(c.id||((c.key||'').split('::')[0])||'');
+    var season=(c.season||'');
+    if(!pid||!season)continue;
+    var seasonKey=pid+'::'+season;
+    var existingKey=playerSeasonPreferredKey[seasonKey];
+    var existingCard=existingKey?cardByKey[existingKey]:null;
+    if(_preferSeasonCard(c,existingCard))playerSeasonPreferredKey[seasonKey]=c.key;
+}
+
+function seasonLookupKey(pid,season){
+    var seasonKey=pid+'::'+season;
+    if(playerSeasonPreferredKey[seasonKey])return playerSeasonPreferredKey[seasonKey];
+    for(var i=0;i<cards.length;i++){
+        var c=cards[i];
+        var cpid=(c.id||((c.key||'').split('::')[0])||'');
+        if(cpid===pid&&c.season===season)return c.key;
+    }
+    return seasonKey;
+}
+
 /* ---- BKE version helpers ---- */
 function splitDisplayLabel(){
     return curBkeSplit==='split_55_45'?'55/45':'60/40';
@@ -1322,8 +1499,13 @@ function hideLoad(){setTimeout(function(){document.getElementById('loadBar').cla
 function cardHTML(p){
   var op=getBkeField(p,'obke_pct'),dp=getBkeField(p,'dbke_pct');var lean='';
   if(op!=null&&dp!=null&&(op+dp)>0){var ow=op/(op+dp)*100;lean='<div class="lean-wrap" title="O/D Lean: Off '+op.toFixed(0)+'% | Def '+dp.toFixed(0)+'%"><div class="lean-bar"><div class="lean-o" style="width:'+ow.toFixed(1)+'%"></div><div class="lean-d" style="width:'+(100-ow).toFixed(1)+'%"></div></div></div>';}
+    var sfx=stintSuffix(p);
+    var teamLbl='';
+    if(p.team)teamLbl='<span class="pteam"> &middot; '+p.team+(sfx?' '+sfx:'')+'</span>';
+    else if(sfx)teamLbl='<span class="pteam"> &middot; '+sfx+'</span>';
+    var seasonLbl=p.season+(sfx?' '+sfx:'');
   return '<div class="card" onclick="openModal(\\''+p.key+'\\')">'
-        +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+(p.team?'<span class="pteam"> &middot; '+p.team+'</span>':'')+'</div><div class="pmeta">'+p.season+'<br>'+p.mpg+' MPG</div></div>'
+                +'<div class="card-hdr"><div><span class="pname">'+p.name+'</span>'+teamLbl+'</div><div class="pmeta">'+seasonLbl+'<br>'+p.mpg+' MPG</div></div>'
     +'<div class="srow">'
     +'<div class="st"><div class="sv">'+p.ppg+'</div><div class="sl">PPG</div></div>'
     +'<div class="st"><div class="sv">'+p.apg+'</div><div class="sl">APG</div></div>'
@@ -1503,6 +1685,8 @@ function openModal(key){
   var team=p.team||pr.team_abbrev||'';
   document.getElementById('mTitle').textContent=p.name+' ('+p.season+')';
   var sub=team;
+    var stintInfo=stintMetaText(p);
+    if(stintInfo)sub+=(sub?' \u00b7 ':'')+stintInfo;
   if(pr.position)sub+=' \u00b7 '+pr.position;
   if(pr.age)sub+=' \u00b7 Age '+pr.age;
   if(pr.height)sub+=' \u00b7 '+pr.height;
@@ -1681,7 +1865,17 @@ function getPlayerSeasonKeys(key){
     var pid=key.split('::')[0];
     var keys=[];
     for(var i=0;i<cards.length;i++){if(cards[i].key.split('::')[0]===pid)keys.push(cards[i].key);}
-    keys.sort();
+    keys.sort(function(a,b){
+        var sa=(a.split('::')[1]||'');
+        var sb=(b.split('::')[1]||'');
+        if(sa!==sb)return sa.localeCompare(sb);
+        var ca=cardByKey[a]||{};
+        var cb=cardByKey[b]||{};
+        var na=Number(ca.stint_number),nb=Number(cb.stint_number);
+        if(!isFinite(na)||na<1)na=1;
+        if(!isFinite(nb)||nb<1)nb=1;
+        return na-nb;
+    });
     return keys;
 }
 function updateNavArrows(){
@@ -1746,7 +1940,8 @@ function cmpAutocomplete(slot){
     if(!matches.length){dd.innerHTML='<div class="cmp-dd-item" style="color:#555">No results</div>';dd.classList.add('open');return;}
     var html='';
     for(var i=0;i<matches.length;i++){
-        html+='<div class="cmp-dd-item" onclick="cmpSelect('+slot+',\\''+matches[i].key+'\\')">'+matches[i].name+'<span class="cmp-dd-season">'+matches[i].season+(matches[i].team?' \u00b7 '+matches[i].team:'')+'</span></div>';
+        var msfx=stintSuffix(matches[i]);
+        html+='<div class="cmp-dd-item" onclick="cmpSelect('+slot+',\\''+matches[i].key+'\\')">'+matches[i].name+'<span class="cmp-dd-season">'+matches[i].season+(msfx?' '+msfx:'')+(matches[i].team?' \u00b7 '+matches[i].team:'')+'</span></div>';
     }
     dd.innerHTML=html;dd.classList.add('open');
 }
@@ -1754,7 +1949,8 @@ function cmpSelect(slot,key){
     var card=null;for(var i=0;i<cards.length;i++){if(cards[i].key===key){card=cards[i];break;}}
     if(!card)return;
     cmpSel[slot]=card;
-    document.getElementById('cmpSearch'+slot).value=card.name+' ('+card.season+')';
+    var sfx=stintSuffix(card);
+    document.getElementById('cmpSearch'+slot).value=card.name+' ('+card.season+(sfx?' '+sfx:'')+')';
     document.getElementById('cmpDd'+slot).classList.remove('open');
     if(cmpSel[1]&&cmpSel[2])runComparison();
 }
@@ -1778,7 +1974,8 @@ function runComparison(){
         {label:'Def Fit',v1:p1.def_confidence,v2:p2.def_confidence,higher:true}
     ];
 
-    var hdr='<div class="cmp-hdr-row"><div class="cmp-player-hdr" style="color:#ff6b6b">'+p1.name+'<br><span style="font-size:12px;color:#888">'+p1.season+(p1.team?' \u00b7 '+p1.team:'')+'</span></div><div class="cmp-label" style="font-size:10px;color:#555">STAT</div><div class="cmp-player-hdr" style="color:#4ecdc4">'+p2.name+'<br><span style="font-size:12px;color:#888">'+p2.season+(p2.team?' \u00b7 '+p2.team:'')+'</span></div></div>';
+    var p1sfx=stintSuffix(p1),p2sfx=stintSuffix(p2);
+    var hdr='<div class="cmp-hdr-row"><div class="cmp-player-hdr" style="color:#ff6b6b">'+p1.name+'<br><span style="font-size:12px;color:#888">'+p1.season+(p1sfx?' '+p1sfx:'')+(p1.team?' \u00b7 '+p1.team:'')+'</span></div><div class="cmp-label" style="font-size:10px;color:#555">STAT</div><div class="cmp-player-hdr" style="color:#4ecdc4">'+p2.name+'<br><span style="font-size:12px;color:#888">'+p2.season+(p2sfx?' '+p2sfx:'')+(p2.team?' \u00b7 '+p2.team:'')+'</span></div></div>';
 
     var rows='';
     for(var i=0;i<stats.length;i++){
@@ -1860,8 +2057,8 @@ function renderGraphsTab(){
     var p=null;for(var i=0;i<cards.length;i++){if(cards[i].key===curModalKey){p=cards[i];break;}}
     if(!p)return;
     var d=getDetail(curModalKey);
-    var pid=curModalKey.split('::')[0];
-    var curSeason=curModalKey.split('::')[1];
+    var pid=p.id||curModalKey.split('::')[0];
+    var curSeason=p.season||curModalKey.split('::')[1];
     var html='';
     /* 1. YoY progression */
     html+=renderYoYSection(pid,curSeason);
@@ -1904,7 +2101,7 @@ function renderYoYSection(pid,curSeason){
     for(var si=0;si<seriesDefs.length;si++){
         var sd=seriesDefs[si];var pts=[];
         for(var j=0;j<allSeasons.length;j++){
-            var k=pid+'::'+allSeasons[j];
+            var k=seasonLookupKey(pid,allSeasons[j]);
             var det=getDetail(k);
             if(!det||!Object.keys(det).length){pts.push(null);continue;}
             var val=sd.fn(det);

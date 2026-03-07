@@ -1014,7 +1014,13 @@ def attach_validation(
     }
 
 
-def main(forecast_mode: bool = False, profiles_path: Path = None) -> None:
+def main(
+    forecast_mode: bool = False,
+    profiles_path: Path = None,
+    profiles_output_path: Path = None,
+    report_output_path: Path = None,
+    validation_output_path: Path = None,
+) -> None:
     mode_label = "FORECAST" if forecast_mode else "BACKTEST"
     print(f"Simulation Core — Step 2: Lineup Projection [{mode_label}]")
     cfg = Step2Config()
@@ -1022,6 +1028,7 @@ def main(forecast_mode: bool = False, profiles_path: Path = None) -> None:
     from src.simulation.simulation_config import (
         FORECAST_LINEUP_PROFILES_PATH,
         FORECAST_LINEUP_REPORT_PATH,
+        FORECAST_VALIDATION_PATH,
     )
     from src.player_eval.constants import PROJECTED_PROFILES_PATH
 
@@ -1136,9 +1143,15 @@ def main(forecast_mode: bool = False, profiles_path: Path = None) -> None:
     flat_df = pd.DataFrame(flat_rows)
 
     # Choose output paths based on mode
-    profiles_dst = FORECAST_LINEUP_PROFILES_PATH if forecast_mode else STEP2_LINEUP_PROFILES_PATH
-    report_dst = FORECAST_LINEUP_REPORT_PATH if forecast_mode else STEP2_LINEUP_REPORT_PATH
-    validation_dst = STEP2_VALIDATION_PATH  # validation always goes to same place
+    profiles_dst = profiles_output_path or (
+        FORECAST_LINEUP_PROFILES_PATH if forecast_mode else STEP2_LINEUP_PROFILES_PATH
+    )
+    report_dst = report_output_path or (
+        FORECAST_LINEUP_REPORT_PATH if forecast_mode else STEP2_LINEUP_REPORT_PATH
+    )
+    validation_dst = validation_output_path or (
+        FORECAST_VALIDATION_PATH if forecast_mode else STEP2_VALIDATION_PATH
+    )
 
     profiles_dst.parent.mkdir(parents=True, exist_ok=True)
     flat_df.to_parquet(profiles_dst, index=False)

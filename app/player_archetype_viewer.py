@@ -279,8 +279,75 @@ def _format_pct(val, scale=100):
     return round(result, 1)
 
 
+def _safe_int(val, default=1):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return default
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_bool(val, default=False):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return default
+    if isinstance(val, bool):
+        return bool(val)
+    if isinstance(val, str):
+        text = val.strip().lower()
+        if text in {"1", "true", "t", "yes", "y"}:
+            return True
+        if text in {"0", "false", "f", "no", "n"}:
+            return False
+    try:
+        return bool(int(float(val)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_team_abbreviation(val):
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    text = str(val).strip().upper()
+    if not text or text in {"NAN", "NONE", "NULL"}:
+        return ""
+    return text
+
+
 def generate_html(off_df, def_df):
     """Generate interactive HTML viewer."""
+
+    off_work = off_df.copy()
+    def_work = def_df.copy()
+
+    if "TEAM_ABBREVIATION" not in off_work.columns:
+        if "team_abbreviation" in off_work.columns:
+            off_work["TEAM_ABBREVIATION"] = off_work["team_abbreviation"]
+        elif "team" in off_work.columns:
+            off_work["TEAM_ABBREVIATION"] = off_work["team"]
+    if "TEAM_ABBREVIATION" in off_work.columns:
+        off_work["TEAM_ABBREVIATION"] = off_work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    if "TEAM_ABBREVIATION" not in def_work.columns:
+        if "team_abbreviation" in def_work.columns:
+            def_work["TEAM_ABBREVIATION"] = def_work["team_abbreviation"]
+        elif "team" in def_work.columns:
+            def_work["TEAM_ABBREVIATION"] = def_work["team"]
+    if "TEAM_ABBREVIATION" in def_work.columns:
+        def_work["TEAM_ABBREVIATION"] = def_work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    off_stint_col = "stint_number" if "stint_number" in off_work.columns else ("team_stint_number" if "team_stint_number" in off_work.columns else None)
+    def_stint_col = "stint_number" if "stint_number" in def_work.columns else ("team_stint_number" if "team_stint_number" in def_work.columns else None)
+    if off_stint_col:
+        off_work["_stint_number_join"] = pd.to_numeric(off_work[off_stint_col], errors="coerce").fillna(1).astype(int)
+    if def_stint_col:
+        def_work["_stint_number_join"] = pd.to_numeric(def_work[def_stint_col], errors="coerce").fillna(1).astype(int)
+
+    join_keys = ["player_id", "SEASON"]
+    if "TEAM_ABBREVIATION" in off_work.columns and "TEAM_ABBREVIATION" in def_work.columns:
+        join_keys.append("TEAM_ABBREVIATION")
+    if "_stint_number_join" in off_work.columns and "_stint_number_join" in def_work.columns:
+        join_keys.append("_stint_number_join")
     
     # Merge offensive and defensive - use v2 columns
     def_cols = ['player_id', 'SEASON', 'defensive_archetype', 'defensive_secondary',
@@ -290,26 +357,51 @@ def generate_html(off_df, def_df):
                 'd_results_pctl']
     
     # Filter to columns that exist
-    def_cols = [c for c in def_cols if c in def_df.columns]
-    
-    merged = off_df.merge(
-        def_df[def_cols],
-        left_on=['player_id', 'SEASON'],
-        right_on=['player_id', 'SEASON'],
-        how='left'
-    )
+    def_cols = [c for c in def_cols if c in def_work.columns]
+    for key_col in join_keys:
+        if key_col in def_work.columns and key_col not in def_cols:
+            def_cols.append(key_col)
+
+    def_for_merge = def_work[def_cols].drop_duplicates(subset=join_keys, keep="first")
+    merged = off_work.merge(def_for_merge, on=join_keys, how='left')
     
     # Build player data for JSON
     players = []
     for _, row in merged.iterrows():
         if row.get('primary_archetype') == 'Insufficient Minutes':
             continue  # Skip insufficient minutes players
+
+        team_abbr = _clean_team_abbreviation(
+            row.get('TEAM_ABBREVIATION')
+            or row.get('team_abbreviation')
+            or row.get('team')
+        )
+        stint_number = max(
+            1,
+            _safe_int(
+                row.get('stint_number', row.get('team_stint_number', row.get('_stint_number_join', 1))),
+                default=1,
+            ),
+        )
+        stint_count = max(1, _safe_int(row.get('stint_count'), default=1))
+        stint_team_count = max(1, _safe_int(row.get('stint_team_count'), default=1))
+        is_primary_stint = _safe_bool(row.get('is_primary_stint'), default=(stint_number == 1))
+        is_final_stint = _safe_bool(row.get('is_final_stint'), default=(stint_number == stint_count))
+        team_assignment_source = str(row.get('team_assignment_source', '') or '').strip() or 'season'
+        player_key = f"{row['player_id']}::{row['SEASON']}::{team_abbr or 'UNK'}::{stint_number}"
             
         player = {
+            'key': player_key,
             'id': str(row['player_id']),
             'name': row['PLAYER_NAME'],
             'season': row['SEASON'],
-            'team': row.get('TEAM_ABBREVIATION', ''),
+            'team': team_abbr,
+            'stint_number': stint_number,
+            'stint_count': stint_count,
+            'stint_team_count': stint_team_count,
+            'is_primary_stint': is_primary_stint,
+            'is_final_stint': is_final_stint,
+            'team_assignment_source': team_assignment_source,
             
             # Offensive
             'off_archetype': row.get('primary_archetype', 'Unknown'),
@@ -498,6 +590,17 @@ def generate_html(off_df, def_df):
             if (v === null || v === undefined) return '<span class="na">—</span>';
             return v + (suffix || '');
         }}
+
+        function stintSuffix(p) {{
+            const n = Number(p.stint_number || 1);
+            const c = Number(p.stint_count || 1);
+            const t = Number(p.stint_team_count || c || 1);
+            if (!(c > 1 || t > 1)) return '';
+            const tags = [`S${{n}}/${{c}}`];
+            if (p.is_final_stint) tags.push('Final');
+            else if (p.is_primary_stint) tags.push('Primary');
+            return `(${{tags.join(' · ')}})`;
+        }}
         
         function renderPlayers(filtered) {{
             const grid = document.getElementById('playerGrid');
@@ -523,15 +626,19 @@ def generate_html(off_df, def_df):
                         </div></div>`;
                     }}).join('');
                 }}
+
+                const stint = stintSuffix(p);
+                const teamText = p.team ? `<span class="player-team"> · ${{p.team}}${{stint ? ' ' + stint : ''}}</span>` : (stint ? `<span class="player-team"> · ${{stint}}</span>` : '');
+                const seasonText = `${{p.season}}${{stint ? ' ' + stint : ''}}`;
                 
                 return `
                 <div class="player-card">
                     <div class="player-header">
                         <div>
                             <span class="player-name">${{p.name}}</span>
-                            ${{p.team ? '<span class="player-team"> · ' + p.team + '</span>' : ''}}
+                            ${{teamText}}
                         </div>
-                        <div class="player-meta">${{p.season}}<br>${{p.mpg}} MPG</div>
+                        <div class="player-meta">${{seasonText}}<br>${{p.mpg}} MPG</div>
                     </div>
                     
                     <div class="stats-row">

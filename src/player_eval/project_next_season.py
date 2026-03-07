@@ -70,6 +70,8 @@ from src.player_eval.constants import (
     PROFILE_AGGREGATE_PATH,
     PROJECTED_PROFILES_PATH,
     FORECAST_VALIDATION_REPORT,
+    PRESEASON_ROSTERS_PATH,
+    PRESEASON_ROSTERS_DIR,
     ROOKIE_IMPACT_SCALE_DEFAULT,
     ROOKIE_IMPACT_SCALE_GRID,
     ROOKIE_DEFAULT_3PT_RATE,
@@ -659,6 +661,156 @@ def project_minutes(
     return df
 
 
+def collapse_profiles_for_projection(profiles: pd.DataFrame) -> pd.DataFrame:
+    """Collapse potential stint-split rows to one row per player-season for projection.
+
+    Impact/behavioral fields are portable and shared across stints; volume fields are
+    summed across stints so the projection starts from full-season context.
+    """
+    if profiles.empty:
+        return profiles.copy()
+
+    df = profiles.copy()
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+
+    # Prefer final stint row for base metadata/team carry-forward tie-breaks.
+    sort_cols = ["player_id"]
+    asc = [True]
+    if "is_final_stint" in df.columns:
+        sort_cols.append("is_final_stint")
+        asc.append(False)
+    if "stint_number" in df.columns:
+        sort_cols.append("stint_number")
+        asc.append(False)
+    df = df.sort_values(sort_cols, ascending=asc)
+
+    base = df.drop_duplicates(subset=["player_id", "season"], keep="first").copy()
+
+    for col in ["minutes", "games", "possessions"]:
+        if col in df.columns:
+            sums = (
+                pd.to_numeric(df[col], errors="coerce")
+                .groupby([df["player_id"], df["season"]])
+                .sum(min_count=1)
+                .reset_index(name=f"{col}_sum")
+            )
+            base = base.merge(sums, on=["player_id", "season"], how="left")
+            base[col] = pd.to_numeric(base[f"{col}_sum"], errors="coerce").fillna(
+                pd.to_numeric(base.get(col), errors="coerce")
+            )
+            base = base.drop(columns=[f"{col}_sum"], errors="ignore")
+
+    base["games"] = pd.to_numeric(base.get("games"), errors="coerce").fillna(0.0)
+    base["minutes"] = pd.to_numeric(base.get("minutes"), errors="coerce").fillna(0.0)
+    base["mpg"] = np.where(base["games"] > 0, base["minutes"] / base["games"], base.get("mpg", 0.0))
+    return base.reset_index(drop=True)
+
+
+def _load_manual_roster_map(roster_path: Optional[Path]) -> Dict[str, str]:
+    if not roster_path or not roster_path.exists():
+        return {}
+    roster = pd.read_csv(roster_path)
+    if "player_id" not in roster.columns:
+        return {}
+    roster["player_id"] = _norm_id(roster["player_id"])
+    team_col = None
+    for c in ["new_team", "team", "team_abbreviation"]:
+        if c in roster.columns:
+            team_col = c
+            break
+    if not team_col:
+        return {}
+
+    out = {}
+    for pid, team in zip(roster["player_id"], roster[team_col]):
+        pid_s = str(pid).strip()
+        team_s = str(team).strip().upper()
+        if pid_s and team_s and team_s not in {"NAN", "NONE"}:
+            out[pid_s] = team_s
+    return out
+
+
+def _resolve_preseason_roster_path(target_season: str, preseason_rosters_path: Optional[Path]) -> Optional[Path]:
+    if preseason_rosters_path and preseason_rosters_path.exists():
+        if preseason_rosters_path.is_dir():
+            candidate = preseason_rosters_path / f"preseason_rosters_{target_season}.parquet"
+            if candidate.exists():
+                return candidate
+        return preseason_rosters_path
+
+    season_path = PRESEASON_ROSTERS_DIR / f"preseason_rosters_{target_season}.parquet"
+    if season_path.exists():
+        return season_path
+    if PRESEASON_ROSTERS_PATH.exists():
+        return PRESEASON_ROSTERS_PATH
+    return None
+
+
+def load_preseason_roster_maps(
+    target_season: str,
+    preseason_rosters_path: Optional[Path],
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Load player->team and player->team_id maps from preseason roster snapshot."""
+    src = _resolve_preseason_roster_path(target_season, preseason_rosters_path)
+    if not src:
+        return {}, {}
+
+    df = pd.read_parquet(src)
+    if df.empty or "player_id" not in df.columns:
+        return {}, {}
+
+    df = df.copy()
+    df["player_id"] = _norm_id(df["player_id"])
+    if "season" in df.columns:
+        df["season"] = df["season"].astype(str)
+        df = df[df["season"] == target_season].copy()
+    if df.empty:
+        return {}, {}
+
+    team_col = "team_abbreviation" if "team_abbreviation" in df.columns else None
+    team_id_col = "team_id" if "team_id" in df.columns else None
+    if not team_col:
+        return {}, {}
+
+    team_map = {}
+    team_id_map = {}
+    for _, row in df.iterrows():
+        pid = str(row.get("player_id", "")).strip()
+        team = str(row.get(team_col, "")).strip().upper()
+        if not pid or not team or team in {"NAN", "NONE"}:
+            continue
+        team_map[pid] = team
+        if team_id_col:
+            tid = str(row.get(team_id_col, "")).strip()
+            if tid and tid not in {"NAN", "NONE"}:
+                team_id_map[pid] = tid
+    return team_map, team_id_map
+
+
+def _select_end_of_season_target_rows(target_profiles: pd.DataFrame) -> pd.DataFrame:
+    """Select one target-season row per player using final stint preference."""
+    target = target_profiles.copy()
+    target["player_id"] = _norm_id(target["player_id"])
+
+    sort_cols = ["player_id"]
+    asc = [True]
+    if "is_final_stint" in target.columns:
+        sort_cols.append("is_final_stint")
+        asc.append(False)
+    if "stint_last_game_date" in target.columns:
+        target["_stint_last_game_date"] = pd.to_datetime(target["stint_last_game_date"], errors="coerce")
+        sort_cols.append("_stint_last_game_date")
+        asc.append(False)
+    if "stint_number" in target.columns:
+        sort_cols.append("stint_number")
+        asc.append(False)
+
+    target = target.sort_values(sort_cols, ascending=asc)
+    target = target.drop_duplicates(subset=["player_id"], keep="first")
+    return target
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Team Mapping
 # ═════════════════════════════════════════════════════════════════════
@@ -666,56 +818,74 @@ def project_minutes(
 def map_players_to_teams_backtest(
     prior_profiles: pd.DataFrame,
     target_profiles: pd.DataFrame,
+    team_mapping_mode: str = "end_of_season",
+    preseason_team_map: Optional[Dict[str, str]] = None,
+    preseason_team_id_map: Optional[Dict[str, str]] = None,
+    roster_override_map: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
-    """Map players to their actual next-season teams (for backtesting).
+    """Map backtest players to target-season teams under selected scenario."""
+    preseason_team_map = preseason_team_map or {}
+    preseason_team_id_map = preseason_team_id_map or {}
+    roster_override_map = roster_override_map or {}
 
-    For players in both seasons: use target season team.
-    For players only in prior season: drop (they left the league).
-    """
     prior = prior_profiles.copy()
-    target_teams = target_profiles[["player_id", "team_abbreviation", "team_id"]].drop_duplicates(
-        subset=["player_id"], keep="first"
-    ).rename(columns={"team_abbreviation": "target_team", "team_id": "target_team_id"})
-    target_teams["player_id"] = _norm_id(target_teams["player_id"])
     prior["player_id"] = _norm_id(prior["player_id"])
 
-    merged = prior.merge(target_teams, on="player_id", how="inner")
-    merged["team_abbreviation"] = merged["target_team"]
-    merged["team_id"] = merged["target_team_id"]
-    merged = merged.drop(columns=["target_team", "target_team_id"])
+    if team_mapping_mode == "preseason_snapshot":
+        # If preseason snapshot exists, only mapped players keep teams.
+        if preseason_team_map:
+            prior["team_abbreviation"] = prior["player_id"].map(preseason_team_map)
+            if "team_id" in prior.columns:
+                prior["team_id"] = prior["player_id"].map(preseason_team_id_map)
+        merged = prior
+    else:
+        # End-of-season (peek) scenario uses final target-season stint/team.
+        target_teams = _select_end_of_season_target_rows(target_profiles)
+        target_teams = target_teams[["player_id", "team_abbreviation", "team_id"]].rename(
+            columns={"team_abbreviation": "target_team", "team_id": "target_team_id"}
+        )
+        target_teams["player_id"] = _norm_id(target_teams["player_id"])
+
+        merged = prior.merge(target_teams, on="player_id", how="inner")
+        merged["team_abbreviation"] = merged["target_team"]
+        merged["team_id"] = merged["target_team_id"]
+        merged = merged.drop(columns=["target_team", "target_team_id"], errors="ignore")
+
+    if roster_override_map:
+        manual = merged["player_id"].map(roster_override_map)
+        merged["team_abbreviation"] = manual.fillna(merged["team_abbreviation"])
+
+    merged["team_assignment_scenario"] = team_mapping_mode
     return merged
 
 
 def map_players_to_teams_forecast(
     prior_profiles: pd.DataFrame,
-    roster_path: Optional[Path] = None,
+    team_mapping_mode: str = "end_of_season",
+    preseason_team_map: Optional[Dict[str, str]] = None,
+    preseason_team_id_map: Optional[Dict[str, str]] = None,
+    roster_override_map: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
-    """Map players to next-season teams for true forecasting.
+    """Map forecast players to next-season teams under selected scenario."""
+    preseason_team_map = preseason_team_map or {}
+    preseason_team_id_map = preseason_team_id_map or {}
+    roster_override_map = roster_override_map or {}
 
-    If a roster file is provided, use it. Otherwise, assume players stay.
-    """
     df = prior_profiles.copy()
+    df["player_id"] = _norm_id(df["player_id"])
 
-    if roster_path and roster_path.exists():
-        roster = pd.read_csv(roster_path)
-        if "player_id" in roster.columns:
-            roster["player_id"] = _norm_id(roster["player_id"])
-            team_col = None
-            for c in ["new_team", "team", "team_abbreviation"]:
-                if c in roster.columns:
-                    team_col = c
-                    break
-            if team_col:
-                roster_map = {
-                    str(pid): str(team).upper()
-                    for pid, team in zip(roster["player_id"], roster[team_col])
-                    if str(pid) != ""
-                }
-                df["team_abbreviation"] = _norm_id(df["player_id"]).map(
-                    lambda pid: roster_map.get(str(pid), None)
-                ).fillna(df["team_abbreviation"])
+    # End-of-season scenario = carry-forward prior team. Preseason scenario overrides.
+    if team_mapping_mode == "preseason_snapshot":
+        if preseason_team_map:
+            df["team_abbreviation"] = df["player_id"].map(preseason_team_map)
+            if "team_id" in df.columns:
+                df["team_id"] = df["player_id"].map(preseason_team_id_map)
 
-    # Otherwise: carry forward current teams
+    if roster_override_map:
+        manual = df["player_id"].map(roster_override_map)
+        df["team_abbreviation"] = manual.fillna(df["team_abbreviation"])
+
+    df["team_assignment_scenario"] = team_mapping_mode
     return df
 
 
@@ -1051,6 +1221,8 @@ def project_season(
     rookie_impact_scale: float,
     mode: str = "backtest",
     roster_path: Optional[Path] = None,
+    preseason_rosters_path: Optional[Path] = None,
+    team_mapping_mode: str = "end_of_season",
     rookies_path: Optional[Path] = None,
     target_salary_map: Optional[Dict[str, float]] = None,
     target_salary_team_map: Optional[Dict[str, str]] = None,
@@ -1062,17 +1234,23 @@ def project_season(
         target_season: Target season to project into (e.g., '2024-25')
         all_profiles: Full impact profiles DataFrame (all seasons)
         mode: 'backtest' or 'forecast'
-        roster_path: Optional CSV with team mappings for forecast mode
+        roster_path: Optional CSV with manual team overrides
+        preseason_rosters_path: Optional preseason roster parquet path
+        team_mapping_mode: 'end_of_season' or 'preseason_snapshot'
         rookies_path: Optional CSV with rookie data for forecast mode
 
     Returns:
         DataFrame with projected player profiles for target_season
     """
-    print(f"\n  Projecting {base_season} → {target_season} (mode={mode})")
+    print(
+        f"\n  Projecting {base_season} → {target_season} "
+        f"(mode={mode}, team_mapping={team_mapping_mode})"
+    )
 
     # 1. Get base season profiles
-    base = all_profiles[all_profiles["season"] == base_season].copy()
-    base["player_id"] = base["player_id"].astype(str)
+    base_raw = all_profiles[all_profiles["season"] == base_season].copy()
+    base_raw["player_id"] = base_raw["player_id"].astype(str)
+    base = collapse_profiles_for_projection(base_raw)
     if base.empty:
         print(f"    WARNING: No profiles for base season {base_season}")
         return pd.DataFrame(columns=all_profiles.columns)
@@ -1080,22 +1258,48 @@ def project_season(
     print(f"    Base season players: {len(base)}")
 
     # 2. Map players to new teams
+    roster_override_map = _load_manual_roster_map(roster_path)
+    preseason_team_map: Dict[str, str] = {}
+    preseason_team_id_map: Dict[str, str] = {}
+    if team_mapping_mode == "preseason_snapshot":
+        preseason_team_map, preseason_team_id_map = load_preseason_roster_maps(
+            target_season=target_season,
+            preseason_rosters_path=preseason_rosters_path,
+        )
+        if preseason_team_map:
+            print(f"    Preseason snapshot rows mapped: {len(preseason_team_map)} players")
+        else:
+            print("    WARNING: preseason snapshot unavailable; falling back to carry-forward teams")
+
     if mode == "backtest":
         target = all_profiles[all_profiles["season"] == target_season].copy()
         target["player_id"] = target["player_id"].astype(str)
         if target.empty:
             print(f"    WARNING: No target season data for {target_season}")
             return pd.DataFrame(columns=all_profiles.columns)
-        projected = map_players_to_teams_backtest(base, target)
+        projected = map_players_to_teams_backtest(
+            prior_profiles=base,
+            target_profiles=target,
+            team_mapping_mode=team_mapping_mode,
+            preseason_team_map=preseason_team_map,
+            preseason_team_id_map=preseason_team_id_map,
+            roster_override_map=roster_override_map,
+        )
         print(f"    Returning players mapped: {len(projected)}")
     else:
-        projected = map_players_to_teams_forecast(base, roster_path)
+        projected = map_players_to_teams_forecast(
+            prior_profiles=base,
+            team_mapping_mode=team_mapping_mode,
+            preseason_team_map=preseason_team_map,
+            preseason_team_id_map=preseason_team_id_map,
+            roster_override_map=roster_override_map,
+        )
         print(f"    Players carried forward: {len(projected)}")
 
     # Drop players with no valid team (suspended, waived, etc.)
     before = len(projected)
-    projected = projected[projected["team_abbreviation"].notna() &
-                          (projected["team_abbreviation"].astype(str) != "nan")].copy()
+    team_text = projected["team_abbreviation"].astype(str).str.upper().str.strip()
+    projected = projected[projected["team_abbreviation"].notna() & ~team_text.isin({"", "NAN", "NONE", "FA"})].copy()
     dropped = before - len(projected)
     if dropped > 0:
         print(f"    Dropped {dropped} players with no valid team assignment")
@@ -1169,6 +1373,25 @@ def project_season(
                 )
 
     if not rookie_df.empty:
+        rookie_df["player_id"] = _norm_id(rookie_df["player_id"])
+
+        if team_mapping_mode == "preseason_snapshot" and preseason_team_map:
+            rookie_df["team_abbreviation"] = rookie_df["player_id"].map(preseason_team_map).fillna(
+                rookie_df["team_abbreviation"]
+            )
+            if "team_id" in rookie_df.columns:
+                rookie_df["team_id"] = rookie_df["player_id"].map(preseason_team_id_map).fillna(
+                    rookie_df["team_id"]
+                )
+
+        if roster_override_map:
+            rookie_df["team_abbreviation"] = rookie_df["player_id"].map(roster_override_map).fillna(
+                rookie_df["team_abbreviation"]
+            )
+
+        rookie_team_text = rookie_df["team_abbreviation"].astype(str).str.upper().str.strip()
+        rookie_df = rookie_df[~rookie_team_text.isin({"", "NAN", "NONE", "FA"})].copy()
+
         # Ensure rookie_df has same columns
         for col in projected.columns:
             if col not in rookie_df.columns:
@@ -1198,19 +1421,49 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Project player profiles to next season")
     parser.add_argument("--forecast", type=str, default=None,
                         help="Target season for true forecast (e.g., 2025-26)")
+    parser.add_argument(
+        "--team-mapping-mode",
+        type=str,
+        default="end_of_season",
+        choices=["end_of_season", "preseason_snapshot"],
+        help="Team assignment scenario for projected players",
+    )
+    parser.add_argument(
+        "--preseason-rosters-path",
+        type=str,
+        default=None,
+        help="Optional preseason roster parquet (combined or season-specific)",
+    )
     parser.add_argument("--roster", type=str, default=None,
-                        help="Path to roster CSV for forecast mode")
+                        help="Path to roster CSV manual overrides")
     parser.add_argument("--rookies", type=str, default=None,
                         help="Path to manual rookies CSV fallback")
     parser.add_argument("--rookie-impact-scale", type=float, default=None,
                         help="Override rookie impact scale multiplier")
     parser.add_argument("--no-rookie-scale-tune", action="store_true",
                         help="Disable historical tuning for rookie impact scale")
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default=None,
+        help="Optional output parquet path override",
+    )
+    parser.add_argument(
+        "--validation-output-path",
+        type=str,
+        default=None,
+        help="Optional validation report path override",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
     print("Forward Projection Pipeline")
     print("=" * 60)
+
+    output_path = Path(args.output_path) if args.output_path else PROJECTED_PROFILES_PATH
+    validation_output_path = Path(args.validation_output_path) if args.validation_output_path else FORECAST_VALIDATION_REPORT
+    preseason_rosters_path = Path(args.preseason_rosters_path) if args.preseason_rosters_path else None
+    print(f"Team mapping mode: {args.team_mapping_mode}")
 
     if not PLAYER_PROFILES_PARQUET.exists():
         raise FileNotFoundError(f"Missing: {PLAYER_PROFILES_PARQUET}")
@@ -1264,6 +1517,8 @@ def main() -> None:
             rookie_impact_scale=rookie_impact_scale,
             mode="forecast",
             roster_path=roster_path,
+            preseason_rosters_path=preseason_rosters_path,
+            team_mapping_mode=args.team_mapping_mode,
             rookies_path=rookies_path,
             target_salary_map=salary_map,
             target_salary_team_map=salary_team_map,
@@ -1284,14 +1539,30 @@ def main() -> None:
                 draft_map=draft_map,
                 rookie_impact_scale=rookie_impact_scale,
                 mode="backtest",
+                roster_path=Path(args.roster) if args.roster else None,
+                preseason_rosters_path=preseason_rosters_path,
+                team_mapping_mode=args.team_mapping_mode,
                 target_salary_map=salary_map,
                 target_salary_team_map=salary_team_map,
             )
             all_projected.append(projected)
 
             # Validate against actuals
-            actual = all_profiles[all_profiles["season"] == target].copy()
+            actual_raw = all_profiles[all_profiles["season"] == target].copy()
+            actual = collapse_profiles_for_projection(actual_raw)
             actual["player_id"] = _norm_id(actual["player_id"])
+
+            # Team-match baseline depends on scenario.
+            if args.team_mapping_mode == "preseason_snapshot":
+                preseason_team_map_target, _ = load_preseason_roster_maps(
+                    target_season=target,
+                    preseason_rosters_path=preseason_rosters_path,
+                )
+                if preseason_team_map_target:
+                    actual["team_abbreviation"] = actual["player_id"].map(preseason_team_map_target).fillna(
+                        actual["team_abbreviation"]
+                    )
+
             if not actual.empty:
                 merged = projected.merge(
                     actual[[
@@ -1363,9 +1634,9 @@ def main() -> None:
     result = pd.concat(all_projected, ignore_index=True)
 
     # Save
-    PROJECTED_PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result.to_parquet(PROJECTED_PROFILES_PATH, index=False)
-    print(f"\nSaved projected profiles: {PROJECTED_PROFILES_PATH}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    result.to_parquet(output_path, index=False)
+    print(f"\nSaved projected profiles: {output_path}")
     print(f"  Shape: {result.shape}")
     print(f"  Seasons: {sorted(result['season'].unique())}")
 
@@ -1374,26 +1645,30 @@ def main() -> None:
         report = {
             "pipeline": "Forward Projection",
             "mode": "backtest",
+            "team_mapping_mode": args.team_mapping_mode,
             "rookie_model": {
                 "rookie_impact_scale": rookie_impact_scale,
                 "tuning": rookie_scale_report,
             },
             "projections": validation_results,
         }
-        FORECAST_VALIDATION_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(f"Saved validation: {FORECAST_VALIDATION_REPORT}")
+        validation_output_path.parent.mkdir(parents=True, exist_ok=True)
+        validation_output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Saved validation: {validation_output_path}")
     else:
         report = {
             "pipeline": "Forward Projection",
             "mode": "forecast",
+            "team_mapping_mode": args.team_mapping_mode,
             "rookie_model": {
                 "rookie_impact_scale": rookie_impact_scale,
                 "tuning": rookie_scale_report,
             },
             "projections": {},
         }
-        FORECAST_VALIDATION_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(f"Saved forecast metadata: {FORECAST_VALIDATION_REPORT}")
+        validation_output_path.parent.mkdir(parents=True, exist_ok=True)
+        validation_output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Saved forecast metadata: {validation_output_path}")
 
 
 if __name__ == "__main__":

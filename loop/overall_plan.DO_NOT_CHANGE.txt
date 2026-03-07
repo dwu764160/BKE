@@ -47,6 +47,9 @@ End of file — DO NOT CHANGE
 [x] Phase 3c: Salary Data Integration
     - Fetch, normalize, and join per-season salary data; display in player data viewer modal subtitle.
 
+[x] Phase 3d: Multi-Team Stint + Scenario Forecast Architecture
+    - Added player-team stint derivation, preseason roster snapshot ingestion, dual-scenario forecast orchestration (end_of_season + preseason_snapshot), and stint-aware viewer payload handling.
+
 [ ] Phase 4: Model Development
     - Build Game Outcome (Logistic/XGBoost) and Player Performance (Regression/RF) models.
 

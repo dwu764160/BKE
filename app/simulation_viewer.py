@@ -95,12 +95,54 @@ def generate_html(
     if os.path.exists(FORECAST_LINEUP):
         with open(FORECAST_LINEUP, "r", encoding="utf-8") as f:
             forecast_lineup = json.load(f)
-    data_blob["forecast"] = {
-        "config": forecast_data.get("config", {}),
-        "seasons": forecast_data.get("seasons", {}),
-        "validation": forecast_validation,
-        "lineup": forecast_lineup,
+    # Forecast payload supports both legacy single-scenario and new multi-scenario formats.
+    forecast_blob = {
+      "config": forecast_data.get("config", {}),
+      "seasons": forecast_data.get("seasons", {}),
+      "validation": forecast_validation,
+      "lineup": forecast_lineup,
+      "default_scenario": "default",
+      "scenario_labels": {},
+      "scenarios": {},
     }
+
+    if isinstance(forecast_data.get("scenarios"), dict) and forecast_data.get("scenarios"):
+      scenario_labels = forecast_data.get("scenario_labels", {}) or {}
+      default_scenario = forecast_data.get("default_scenario") or next(iter(forecast_data["scenarios"].keys()))
+      scenarios_blob = {}
+      for scenario_key, scenario_payload in forecast_data["scenarios"].items():
+        label = scenario_payload.get("label") or scenario_labels.get(scenario_key) or scenario_key
+        scenario_validation = (
+          forecast_validation.get("scenarios", {}).get(scenario_key, {})
+          if isinstance(forecast_validation, dict)
+          else {}
+        )
+        scenario_lineup = (
+          forecast_lineup.get("scenarios", {}).get(scenario_key, {})
+          if isinstance(forecast_lineup, dict)
+          else {}
+        )
+        scenarios_blob[scenario_key] = {
+          "label": label,
+          "config": scenario_payload.get("config", {}),
+          "seasons": scenario_payload.get("seasons", {}),
+          "validation": scenario_validation,
+          "lineup": scenario_lineup,
+        }
+
+      fallback_key = default_scenario if default_scenario in scenarios_blob else next(iter(scenarios_blob.keys()))
+      fallback_payload = scenarios_blob[fallback_key]
+      forecast_blob = {
+        "config": fallback_payload.get("config", {}),
+        "seasons": fallback_payload.get("seasons", {}),
+        "validation": fallback_payload.get("validation", {}),
+        "lineup": fallback_payload.get("lineup", {}),
+        "default_scenario": fallback_key,
+        "scenario_labels": {k: v.get("label", k) for k, v in scenarios_blob.items()},
+        "scenarios": scenarios_blob,
+      }
+
+    data_blob["forecast"] = forecast_blob
 
     data_json = json.dumps(data_blob, separators=(",", ":"))
     html = _build_html(data_json)
@@ -475,6 +517,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
   </div>
 
   <div id="forecastView" class="view-panel hidden">
+    <div class="model-tabs" id="forecastScenarioTabs"></div>
     <div class="season-tabs" id="forecastSeasonTabs"></div>
     <div class="model-tabs" id="forecastModelTabs"></div>
     <div class="stats-row" id="forecastStatsRow"></div>
@@ -511,6 +554,7 @@ const FORECAST = DATA.forecast || {};
 let currentSeason = null;
 let lineupSeason = null;
 let forecastSeason = null;
+let forecastScenario = null;
 let step1Model = "margin";
 let forecastModel = "margin";
 let sortCol = "projected_rank";
@@ -525,8 +569,36 @@ function getStep1Seasons() {
   return Object.keys(DATA.seasons || {}).sort();
 }
 
+function getForecastScenarioKeys() {
+  const scenarioMap = (FORECAST && FORECAST.scenarios) || {};
+  const keys = Object.keys(scenarioMap || {});
+  if (keys.length) return keys;
+  return ["default"];
+}
+
+function getForecastScenarioLabel(key) {
+  const labels = (FORECAST && FORECAST.scenario_labels) || {};
+  if (labels[key]) return labels[key];
+  if (key === "end_of_season") return "End-of-Season Roster (Peek)";
+  if (key === "preseason_snapshot") return "Preseason Roster Snapshot";
+  if (key === "default") return "Forecast";
+  return String(key || "").replaceAll("_", " ");
+}
+
+function getForecastScenarioPayload(scenarioKey) {
+  const map = (FORECAST && FORECAST.scenarios) || {};
+  if (map[scenarioKey]) return map[scenarioKey];
+  return {
+    config: (FORECAST && FORECAST.config) || {},
+    seasons: (FORECAST && FORECAST.seasons) || {},
+    validation: (FORECAST && FORECAST.validation) || {},
+    lineup: (FORECAST && FORECAST.lineup) || {},
+  };
+}
+
 function getForecastSeasons() {
-  return Object.keys((FORECAST && FORECAST.seasons) || {}).sort();
+  const payload = getForecastScenarioPayload(forecastScenario);
+  return Object.keys((payload && payload.seasons) || {}).sort();
 }
 
 function getStep2Seasons() {
@@ -580,7 +652,8 @@ function getStep1RowsForSeason(season, modelKey) {
 }
 
 function getForecastRowsForSeason(season, modelKey) {
-  const sdata = ((FORECAST && FORECAST.seasons) || {})[season] || {};
+  const payload = getForecastScenarioPayload(forecastScenario);
+  const sdata = ((payload && payload.seasons) || {})[season] || {};
   const modelMap = getSeasonModelMap(sdata, "margin");
   if (modelMap[modelKey]) return modelMap[modelKey];
   const fallback = sdata.default_model && modelMap[sdata.default_model] ? sdata.default_model : Object.keys(modelMap)[0];
@@ -588,7 +661,8 @@ function getForecastRowsForSeason(season, modelKey) {
 }
 
 function getForecastStatsForSeason(season, modelKey) {
-  const sdata = ((FORECAST && FORECAST.seasons) || {})[season] || {};
+  const payload = getForecastScenarioPayload(forecastScenario);
+  const sdata = ((payload && payload.seasons) || {})[season] || {};
   const statsMap = getSeasonStatsMap(sdata, "margin");
   if (statsMap[modelKey]) return statsMap[modelKey];
   const fallback = sdata.default_model && statsMap[sdata.default_model] ? sdata.default_model : Object.keys(statsMap)[0];
@@ -609,9 +683,10 @@ function syncStep1Model() {
 }
 
 function syncForecastModel() {
-  const sdata = ((FORECAST && FORECAST.seasons) || {})[forecastSeason] || {};
+  const payload = getForecastScenarioPayload(forecastScenario);
+  const sdata = ((payload && payload.seasons) || {})[forecastSeason] || {};
   const modelMap = getSeasonModelMap(sdata, "margin");
-  const models = orderedModels(modelMap, (FORECAST.config || {}).models || []);
+  const models = orderedModels(modelMap, ((payload && payload.config) || {}).models || []);
   if (!models.length) {
     forecastModel = "margin";
     return;
@@ -649,9 +724,10 @@ function initStep1ModelTabs() {
 function initForecastModelTabs() {
   const el = document.getElementById("forecastModelTabs");
   if (!el) return;
-  const sdata = ((FORECAST && FORECAST.seasons) || {})[forecastSeason] || {};
+  const payload = getForecastScenarioPayload(forecastScenario);
+  const sdata = ((payload && payload.seasons) || {})[forecastSeason] || {};
   const modelMap = getSeasonModelMap(sdata, "margin");
-  const models = orderedModels(modelMap, (FORECAST.config || {}).models || []);
+  const models = orderedModels(modelMap, ((payload && payload.config) || {}).models || []);
   if (!models.length) {
     el.innerHTML = "";
     return;
@@ -671,10 +747,45 @@ function initForecastModelTabs() {
   });
 }
 
+function initForecastScenarioTabs() {
+  const el = document.getElementById("forecastScenarioTabs");
+  if (!el) return;
+  const keys = getForecastScenarioKeys();
+  if (!keys.length) {
+    el.innerHTML = "";
+    return;
+  }
+  if (!keys.includes(forecastScenario)) {
+    forecastScenario = keys[0];
+  }
+  if (keys.length === 1 && keys[0] === "default") {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = keys.map(k => `
+    <button class="model-tab${k === forecastScenario ? " active" : ""}" data-scenario="${k}">${getForecastScenarioLabel(k)}</button>
+  `).join("");
+  el.querySelectorAll(".model-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      forecastScenario = btn.dataset.scenario;
+      const seasons = getForecastSeasons();
+      forecastSeason = seasons.length ? seasons[seasons.length - 1] : null;
+      forecastModel = "margin";
+      forecastSortCol = "projected_rank";
+      forecastSortDir = "asc";
+      initForecastView();
+      renderForecast();
+    });
+  });
+}
+
 (function init() {
   const seasons = getStep1Seasons();
   currentSeason = seasons.length ? seasons[seasons.length - 1] : null;
 
+  const scenarioKeys = getForecastScenarioKeys();
+  const preferredScenario = (FORECAST && FORECAST.default_scenario) || null;
+  forecastScenario = scenarioKeys.includes(preferredScenario) ? preferredScenario : scenarioKeys[0];
   const fSeasons = getForecastSeasons();
   forecastSeason = fSeasons.length ? fSeasons[fSeasons.length - 1] : null;
   syncStep1Model();
@@ -1603,6 +1714,7 @@ function uniqueNamedList(values) {
 // ═══════════════════════════════════════════════════════════════
 
 function initForecastView() {
+  initForecastScenarioTabs();
   const seasons = getForecastSeasons();
   const tabsEl = document.getElementById("forecastSeasonTabs");
   const modelTabsEl = document.getElementById("forecastModelTabs");
@@ -1610,8 +1722,11 @@ function initForecastView() {
   tabsEl.innerHTML = "";
   if (modelTabsEl) modelTabsEl.innerHTML = "";
   if (seasons.length === 0) {
-    tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available. Run: python3 src/simulation/run_forecast.py</div>';
+    tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available for this scenario. Run: python3 src/simulation/run_forecast.py</div>';
     return;
+  }
+  if (!seasons.includes(forecastSeason)) {
+    forecastSeason = seasons[seasons.length - 1];
   }
   seasons.forEach(s => {
     const tab = document.createElement("div");
@@ -1635,8 +1750,9 @@ function switchForecastSeason(s) {
 }
 
 function renderForecast() {
-  if (!forecastSeason || !FORECAST.seasons) return;
-  const sdata = FORECAST.seasons[forecastSeason];
+  const payload = getForecastScenarioPayload(forecastScenario);
+  if (!forecastSeason || !payload.seasons) return;
+  const sdata = payload.seasons[forecastSeason];
   if (!sdata) return;
   syncForecastModel();
   renderForecastStats(sdata, forecastModel);
@@ -1646,6 +1762,7 @@ function renderForecast() {
 }
 
 function renderForecastStats(sdata, modelKey) {
+  const payload = getForecastScenarioPayload(forecastScenario);
   const teams = getForecastRowsForSeason(forecastSeason, modelKey);
   const seasonStats = getForecastStatsForSeason(forecastSeason, modelKey) || {};
   const wins = teams.map(t => t.projected_wins || 0);
@@ -1655,7 +1772,7 @@ function renderForecastStats(sdata, modelKey) {
   const spread = maxW - minW;
 
   // Get validation data
-  const valData = FORECAST.validation || {};
+  const valData = payload.validation || {};
   const projections = valData.projections || {};
 
   // Find the transition that targets this season
@@ -1669,9 +1786,11 @@ function renderForecastStats(sdata, modelKey) {
     }
   }
 
-  const fcfg = FORECAST.config || {};
+  const fcfg = payload.config || {};
+  const scenarioLabel = getForecastScenarioLabel(forecastScenario);
 
   const cards = [
+    { label: "Scenario", value: scenarioLabel, cls: "val-purple", detail: forecastScenario || "default" },
     { label: "Model", value: modelLabel(modelKey), cls: "val-purple", detail: "Projection view" },
     { label: "Win Corr", value: fmt(seasonStats.correlation, 3), cls: "val-green", detail: "Proj vs Actual wins" },
     { label: "Win MAE", value: fmt(seasonStats.mae, 2), cls: "val-accent", detail: "Average win error" },
@@ -1813,12 +1932,13 @@ function renderForecastWinsChart(sdata, modelKey) {
 }
 
 function renderForecastValidation() {
-  const valData = FORECAST.validation || {};
+  const payload = getForecastScenarioPayload(forecastScenario);
+  const valData = payload.validation || {};
   const projections = valData.projections || {};
   const el = document.getElementById("forecastValChart");
 
   if (Object.keys(projections).length === 0) {
-    el.innerHTML = '<div style="color:var(--text-muted);padding:20px">No validation data (backtest mode only)</div>';
+    el.innerHTML = '<div style="color:var(--text-muted);padding:20px">No validation data for this scenario (backtest mode only)</div>';
     return;
   }
 

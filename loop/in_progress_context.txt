@@ -1,3 +1,63 @@
+2026-03-07 — Multi-Team Stint + Dual-Scenario Forecast Rollout (Implementation Pass)
+====================================================================================
+
+Completed in this pass:
+  - Added new pipeline stage `src/features/derive_player_team_stints.py`
+    → Input: `data/historical/final_player_game_logs.parquet`
+    → Outputs: `data/processed/player_team_stints.parquet`, `reports/player_team_stints_report.json`
+  - Added preseason snapshot fetcher `src/data_fetch/fetch_preseason_rosters.py`
+    → Outputs: `data/historical/preseason_rosters.parquet`, `data/historical/preseason_rosters/preseason_rosters_<season>.parquet`, `reports/preseason_rosters_report.json`
+  - Made Step 1 profile builder stint-aware in `src/player_eval/build_player_impact_profiles.py`
+    → Team assignment now splits by stint when stint parquet exists; includes stint metadata columns and source flag.
+  - Made projection scenario-aware in `src/player_eval/project_next_season.py`
+    → Supports `--team-mapping-mode` (`end_of_season` / `preseason_snapshot`) and output/validation path overrides.
+  - Updated forecast stack for scenario isolation:
+    - `src/simulation/season_sim.py` now accepts `player_profiles_path`
+    - `src/simulation/lineup_projection.py` now accepts output overrides
+    - `src/simulation/run_forecast.py` replaced with multi-scenario orchestrator and combined frontend payload writer.
+  - Forecast frontend updated (`app/simulation_viewer.py`) to support scenario tabs and per-scenario season/model/validation rendering.
+  - App-wide stint context updates completed:
+    - `app/player_eval_viewer.py`: key-based modal routing + stint labels
+    - `app/player_data_viewer.py`: stint-safe keys, stint-aware card/modal/comparison labels, YoY season-key lookup fix
+    - `app/player_archetype_viewer.py`: stint-safe offense/defense merge + stint display tags
+    - `app/player_bke_viewer.py`: stint-safe row keys for rank-shift baseline + team stint labels
+
+Validation completed:
+  - Syntax/error checks (`get_errors`) across all modified Python files: no errors.
+  - Regenerated HTML viewers successfully:
+    - `app/player_archetypes.html`
+    - `app/player_data.html`
+    - `app/player_eval.html`
+    - `app/player_bke_viewer.html`
+    - `app/simulation.html`
+
+Team-rating regression degree experiment (season-holdout, 90 team-seasons):
+  - Target: `actual_net_rating` (avg margin from team game logs)
+  - Predictor tested: `team_net_rating_raw` and `team_net_rating_projected`
+  - Polynomial degree results (MAE):
+    - deg1: 1.9514
+    - deg2: 1.9509
+    - deg3: 1.9554
+    - deg4: 1.9309 (best MAE)
+    - deg5: 2.0867 (overfit)
+  - Practical read: degree-4 gives small MAE gain over linear (~0.0205), but with slightly worse RMSE.
+
+Outstanding from user request:
+  - Commit + push with message `multi-team stint change` (not executed yet in this pass).
+
+  Validation follow-up (same sprint, post-implementation):
+    - Installed `nba_api==1.10.2` (already pinned in requirements) to unblock preseason fetch import path.
+    - Re-validated `src/features/derive_player_team_stints.py`:
+      - Success; outputs refreshed.
+      - Summary: rows=1580, player_seasons=1380, multi_team_player_seasons=187.
+    - Re-validated forecast orchestrator scenario paths with lineup disabled:
+      - `--scenarios end_of_season --skip-lineup --skip-preseason-fetch`: success.
+      - `--scenarios preseason_snapshot --skip-lineup --skip-preseason-fetch`: success (expected fallback warning when preseason snapshot is unavailable).
+      - `--scenarios end_of_season,preseason_snapshot --skip-lineup --skip-preseason-fetch`: success (combined outputs + per-scenario artifacts generated).
+    - Preseason fetch smoke status:
+      - `fetch_preseason_rosters.py --season 2025-26` now imports/starts correctly.
+      - In current environment, outbound calls to `stats.nba.com` intermittently read-timeout; script logs warn-and-continue but full-season completion can be long when many team calls timeout.
+
 2026-03-07 — Forecast Improvement Sprint COMPLETE
 ==================================================
 

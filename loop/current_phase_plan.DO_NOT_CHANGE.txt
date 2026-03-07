@@ -104,3 +104,19 @@ End of file — DO NOT CHANGE
 [x] Stream F: Simulation Step 1 Dual-Model Rollout (Margin + PPP)
     Command: python3 src/simulation/season_sim.py && python3 src/simulation/validate_sim.py && python3 src/simulation/run_forecast.py && python3 app/simulation_viewer.py
     Notes: Completed parallel margin/PPP outputs for backtest + forecast, added forecast actual W-L merge, updated validation to report per-model season stats, and added Step 1/Forecast model toggles in simulation viewer.
+
+[x] Stream G: Player-Team Stint Derivation Stage
+    Command: python3 src/features/derive_player_team_stints.py
+    Notes: Added traded-player stint segmentation from final game logs; outputs player_team_stints parquet + report for downstream stint-aware profile expansion.
+
+[x] Stream G: Preseason Snapshot Roster Fetch (Option B)
+    Command: python3 src/data_fetch/fetch_preseason_rosters.py --seasons 2023-24,2024-25,2025-26
+    Notes: Added CommonTeamRoster season snapshots with combined + per-season parquet outputs for preseason scenario mapping.
+
+[x] Stream G: Multi-Scenario Forecast Orchestration
+    Command: python3 src/simulation/run_forecast.py --scenarios end_of_season,preseason_snapshot
+    Notes: Refactored orchestrator to produce scenario-specific artifacts and combined frontend payloads with default_scenario + scenarios map.
+
+[x] Stream G: App-Wide Stint-Aware Viewer Updates
+    Command: python3 app/player_data_viewer.py && python3 app/player_eval_viewer.py && python3 app/player_archetype_viewer.py && python3 app/player_bke_viewer.py && python3 app/simulation_viewer.py
+    Notes: All app viewers now use stint-safe keys/labels and preserve multi-team season context in cards/tables/modals.

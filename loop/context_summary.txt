@@ -1,3 +1,29 @@
+2026-03-07 — Multi-Team Stint Architecture + Option B Scenario Forecasting
+----------------------------------------------------------------------------
+- Implemented stint derivation stage:
+	- `src/features/derive_player_team_stints.py`
+	- Outputs: `data/processed/player_team_stints.parquet`, `reports/player_team_stints_report.json`
+- Implemented preseason roster snapshot fetcher (Option B source):
+	- `src/data_fetch/fetch_preseason_rosters.py`
+	- Outputs: `data/historical/preseason_rosters.parquet`, `data/historical/preseason_rosters/preseason_rosters_<season>.parquet`, `reports/preseason_rosters_report.json`
+- Step 1 player-impact profiles are now stint-aware in `src/player_eval/build_player_impact_profiles.py`.
+- Projection is now scenario-aware in `src/player_eval/project_next_season.py` via `--team-mapping-mode` (`end_of_season`, `preseason_snapshot`) with per-scenario output paths.
+- Forecast pipeline now runs scenario-isolated steps and emits combined frontend payloads:
+	- `src/simulation/run_forecast.py` orchestrates per scenario
+	- scenario-specific artifacts: `projected_player_profiles_<scenario>.parquet`, `projected_team_features_<scenario>.parquet`, `forecast_*_<scenario>.json`
+	- combined artifacts remain canonical for frontend (`forecast_season_results.json`, `forecast_validation.json`, `forecast_lineup_profiles.json`) with `default_scenario` + `scenarios` map.
+- Frontend updated:
+	- `app/simulation_viewer.py` supports scenario toggle/tabs.
+	- `app/player_eval_viewer.py`, `app/player_data_viewer.py`, `app/player_archetype_viewer.py`, and `app/player_bke_viewer.py` now preserve stint context and avoid key collisions from multi-team seasons.
+- Validation:
+	- Modified scripts compile cleanly and viewers regenerate successfully.
+	- `derive_player_team_stints.py` rerun successful (`rows=1580`, `multi_team_player_seasons=187`).
+	- `run_forecast.py` scenario smoke runs successful for `end_of_season`, `preseason_snapshot`, and combined `end_of_season,preseason_snapshot` (with `--skip-lineup --skip-preseason-fetch`).
+	- `fetch_preseason_rosters.py` import/dependency path is now unblocked with `nba_api==1.10.2`; in this environment, network calls to `stats.nba.com` can still be slow/intermittent and may require longer runtime due to request timeouts.
+- Team-rating regression degree experiment (season-holdout, 90 team-seasons):
+	- MAE by polynomial degree: d1=1.9514, d2=1.9509, d3=1.9554, d4=1.9309 (best), d5=2.0867.
+	- Degree-4 marginally improves MAE vs linear but with slightly worse RMSE.
+
 - 2026-03-07 — Forecast Improvement Sprint + File Header Standardization
 	- Critical bug fix: Mikal Bridges 8x duplication in defensive_archetypes_v2.parquet
 		- Root cause: 8 identical rows for player_id 1628969 in 2022-23 defensive_archetypes_v2.parquet

@@ -216,9 +216,12 @@ def _build_predicted_pace_map(all_params: Dict[str, Dict]) -> Dict[str, Dict[str
     return out
 
 
-def _load_team_ppp_components(forecast_mode: bool) -> Dict[str, Dict[str, Dict[str, float]]]:
+def _load_team_ppp_components(
+    forecast_mode: bool,
+    player_profiles_path: Path = None,
+) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Build team offense/defense components from the full impact profile dataset."""
-    profile_path = FORECAST_PLAYER_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PATH
+    profile_path = player_profiles_path or (FORECAST_PLAYER_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PATH)
     if not profile_path.exists():
         return {}
 
@@ -559,6 +562,7 @@ def _model_alignment_diagnostics(
 def main(
     forecast_mode: bool = False,
     features_path: Path = None,
+    player_profiles_path: Path = None,
     output_path: Path = None,
 ) -> None:
     mode_label = "FORECAST" if forecast_mode else "BACKTEST"
@@ -568,7 +572,10 @@ def main(
     src_path = features_path or (FORECAST_TEAM_FEATURES_PATH if forecast_mode else None)
     all_params = load_team_params(features_path=src_path)
 
-    ppp_components_all = _load_team_ppp_components(forecast_mode=forecast_mode)
+    ppp_components_all = _load_team_ppp_components(
+        forecast_mode=forecast_mode,
+        player_profiles_path=player_profiles_path,
+    )
     pace_pred_all = _build_predicted_pace_map(all_params)
     impact_to_net_scale = _estimate_impact_to_net_scale(all_params, ppp_components_all)
     print(f"  PPP impact->net scale: {impact_to_net_scale:.4f}")

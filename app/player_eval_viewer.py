@@ -61,6 +61,17 @@ def _safe_json_val(v):
     return str(v) if v is not None else None
 
 
+def _safe_int(v, default: int = 0) -> int:
+    try:
+        if v is None:
+            return default
+        if isinstance(v, (float, np.floating)) and np.isnan(v):
+            return default
+        return int(float(v))
+    except Exception:
+        return default
+
+
 def _clean_team_abbreviation(v):
     if v is None:
         return ""
@@ -124,15 +135,30 @@ def build_payload():
         for c in playtype_cols:
             playtypes.append(_safe_json_val(row[c]))
 
+        team_abbr = (
+          _clean_team_abbreviation(row.get("team_abbreviation"))
+          or _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+          or _clean_team_abbreviation(row.get("pred_team_abbreviation"))
+          or _clean_team_abbreviation(row.get("team"))
+        )
+        stint_number = max(1, _safe_int(row.get("stint_number"), default=1))
+        stint_count = max(1, _safe_int(row.get("stint_count"), default=1))
+        stint_team_count = max(1, _safe_int(row.get("stint_team_count"), default=1))
+        player_key = f"{row.get('player_id', '')}::{row.get('season', '')}::{team_abbr}::{stint_number}"
+
         player = {
+          "key": player_key,
             "id": str(row.get("player_id", "")),
             "name": str(row.get("player_name", "Unknown")),
             "season": str(row.get("season", "")),
-            "team": (
-                _clean_team_abbreviation(row.get("team_abbreviation"))
-                or _clean_team_abbreviation(row.get("pred_team_abbreviation"))
-                or _clean_team_abbreviation(row.get("team"))
-            ),
+          "team": team_abbr,
+          "stint_number": stint_number,
+          "stint_count": stint_count,
+          "stint_team_count": stint_team_count,
+          "is_primary_stint": bool(row.get("is_primary_stint", False)),
+          "is_final_stint": bool(row.get("is_final_stint", False)),
+          "stint_first_game_date": str(row.get("stint_first_game_date", "") or ""),
+          "stint_last_game_date": str(row.get("stint_last_game_date", "") or ""),
             # Impact
             "bke": _safe_json_val(row.get("impact_bke")),
             "obke": _safe_json_val(row.get("impact_obke")),
@@ -504,6 +530,12 @@ function makeProbStrip(probs, colors, labels) {{
   return html;
 }}
 
+function stintSuffix(p) {{
+  if (!p || !p.stint_count || p.stint_count <= 1) return '';
+  const role = p.is_final_stint ? ' Final' : (p.is_primary_stint ? ' Primary' : '');
+  return ` · Stint ${{p.stint_number}}/${{p.stint_count}}${{role}}`;
+}}
+
 function renderCards(list) {{
   const grid = document.getElementById('cardGrid');
   const maxMpg = 40;
@@ -512,10 +544,10 @@ function renderCards(list) {{
     const mpgPct = Math.min((p.mpg||0)/maxMpg*100,100);
     const predPct = p.pred_mpg!=null?Math.min(p.pred_mpg/maxMpg*100,100):0;
     const resid = (p.mpg!=null&&p.pred_mpg!=null)?(p.mpg-p.pred_mpg):null;
-    return `<div class="card" onclick="openModal('${{p.id}}','${{p.season}}')">
+    return `<div class="card" onclick="openModal('${{p.key}}')">
       <div class="card-header">
         <div><div class="card-name">${{p.name}}</div>
-          <div class="card-team">${{p.team}} · ${{p.season}} · ${{p.position||'—'}} · Age ${{p.age||'—'}}</div>
+          <div class="card-team">${{p.team}} · ${{p.season}}${{stintSuffix(p)}} · ${{p.position||'—'}} · Age ${{p.age||'—'}}</div>
         </div>
         <span class="card-badge" style="background:${{bkeColor(p.bke)}}33;${{bkeStyle}}">${{fmt(p.bke,2)}} BKE</span>
       </div>
@@ -564,9 +596,9 @@ function renderTeamView(list) {{
       </tr></thead><tbody>`;
     players.forEach((p,i) => {{
       const resid = (p.mpg!=null&&p.pred_mpg!=null)?(p.mpg-p.pred_mpg):null;
-      html += `<tr onclick="openModal('${{p.id}}','${{p.season}}')" style="cursor:pointer">
+      html += `<tr onclick="openModal('${{p.key}}')" style="cursor:pointer">
         <td>${{i+1}}</td>
-        <td style="font-weight:600">${{p.name}} (${{p.season}})</td>
+        <td style="font-weight:600">${{p.name}} (${{p.season}}${{p.stint_count>1 ? ` · S${{p.stint_number}}/${{p.stint_count}}` : ''}})</td>
         <td>${{p.position||'—'}}</td>
         <td>${{p.age||'—'}}</td>
         <td style="color:${{bkeColor(p.bke)}}">${{fmt(p.bke,2)}}</td>
@@ -582,8 +614,8 @@ function renderTeamView(list) {{
   tv.innerHTML = html;
 }}
 
-function openModal(pid, season) {{
-  const p = DATA.find(d => d.id===pid && d.season===season);
+function openModal(playerKey) {{
+  const p = DATA.find(d => d.key===playerKey);
   if(!p) return;
   const m = document.getElementById('modalContent');
   const resid = (p.mpg!=null&&p.pred_mpg!=null)?(p.mpg-p.pred_mpg):null;
@@ -619,10 +651,14 @@ function openModal(pid, season) {{
     }}).join('');
   }}
 
+  const stintMeta = p.stint_count>1
+    ? ` · Stint ${{p.stint_number}}/${{p.stint_count}}${{p.is_primary_stint?' (Primary)':''}}${{p.is_final_stint?' (Final)':''}}`
+    : '';
+
   m.innerHTML = `
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <h2>${{p.name}}</h2>
-    <div class="meta">${{p.team}} · ${{p.season}} · ${{p.position||'—'}} · Age ${{p.age||'—'}} · ${{p.height?Math.floor(p.height/12)+"'"+Math.round(p.height%12)+'"':'—'}} · ${{p.weight?p.weight+' lbs':'—'}} · Exp ${{p.experience||'—'}}y · ${{fmtSalary(p.salary)}}</div>
+    <div class="meta">${{p.team}} · ${{p.season}}${{stintMeta}} · ${{p.position||'—'}} · Age ${{p.age||'—'}} · ${{p.height?Math.floor(p.height/12)+"'"+Math.round(p.height%12)+'"':'—'}} · ${{p.weight?p.weight+' lbs':'—'}} · Exp ${{p.experience||'—'}}y · ${{fmtSalary(p.salary)}}</div>
 
     <div class="section">
       <h3>Impact Metrics</h3>

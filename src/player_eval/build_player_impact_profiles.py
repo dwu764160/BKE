@@ -26,7 +26,7 @@ import pickle
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -44,6 +44,7 @@ from src.player_eval.constants import (
     PLAYER_ARCHETYPES_PATH,
     PLAYER_PROFILES_PARQUET,
     PLAYER_PROFILES_PKL,
+    PLAYER_TEAM_STINTS_PATH,
     PLAYERS_META_PATH,
     POSITION_ESTIMATES_PATH,
     STEP1_VALIDATION_REPORT,
@@ -177,6 +178,227 @@ def _coalesce_columns(df: pd.DataFrame, target_col: str, candidates: List[str]) 
         if col in df.columns:
             out = out.fillna(df[col])
     df[target_col] = out
+
+
+def _clean_team_abbreviation(value) -> str:
+    text = _safe_str(value, default="").upper()
+    if text in {"", "NAN", "NONE", "TOT"}:
+        return ""
+    return text
+
+
+def _load_team_id_map() -> Dict[str, str]:
+    teams_path = HISTORICAL_DIR / "teams.parquet"
+    if not teams_path.exists():
+        return {}
+    try:
+        teams = pd.read_parquet(teams_path)
+    except Exception:
+        return {}
+
+    cols = {c.lower(): c for c in teams.columns}
+    tid_col = cols.get("team_id") or cols.get("id")
+    abbr_col = cols.get("abbreviation")
+    if not tid_col or not abbr_col:
+        return {}
+
+    mapping = {}
+    for _, row in teams[[tid_col, abbr_col]].dropna().iterrows():
+        try:
+            tid = str(int(float(row[tid_col])))
+        except Exception:
+            tid = _safe_str(row[tid_col])
+        abbr = _clean_team_abbreviation(row[abbr_col])
+        if tid and abbr:
+            mapping[abbr] = tid
+    return mapping
+
+
+def _apply_team_stint_split(flat_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Expand player-season rows into team stints when stint data is available."""
+    summary = {
+        "enabled": False,
+        "rows_pre_split": int(len(flat_df)),
+        "rows_post_split": int(len(flat_df)),
+        "multi_team_player_seasons": 0,
+        "player_seasons_with_stints": 0,
+    }
+
+    if flat_df.empty or not PLAYER_TEAM_STINTS_PATH.exists():
+        flat_df = flat_df.copy()
+        flat_df["stint_number"] = 1
+        flat_df["stint_count"] = 1
+        flat_df["stint_team_count"] = 1
+        flat_df["is_primary_stint"] = True
+        flat_df["is_final_stint"] = True
+        flat_df["stint_first_game_date"] = ""
+        flat_df["stint_last_game_date"] = ""
+        flat_df["team_assignment_source"] = "season"
+        return flat_df, summary
+
+    stints = pd.read_parquet(PLAYER_TEAM_STINTS_PATH)
+    if stints.empty:
+        flat_df = flat_df.copy()
+        flat_df["stint_number"] = 1
+        flat_df["stint_count"] = 1
+        flat_df["stint_team_count"] = 1
+        flat_df["is_primary_stint"] = True
+        flat_df["is_final_stint"] = True
+        flat_df["stint_first_game_date"] = ""
+        flat_df["stint_last_game_date"] = ""
+        flat_df["team_assignment_source"] = "season"
+        return flat_df, summary
+
+    stints = stints.copy()
+    stints["player_id"] = _norm_player_id(stints["player_id"])
+    stints["season"] = stints["season"].astype(str)
+    stints["team_abbreviation_stint"] = stints["team_abbreviation"].map(_clean_team_abbreviation)
+    games_played = stints["games_played"] if "games_played" in stints.columns else pd.Series(0.0, index=stints.index)
+    total_minutes = stints["total_minutes"] if "total_minutes" in stints.columns else pd.Series(0.0, index=stints.index)
+    mpg_series = stints["mpg"] if "mpg" in stints.columns else pd.Series(0.0, index=stints.index)
+    stint_num = stints["stint_number"] if "stint_number" in stints.columns else pd.Series(1, index=stints.index)
+    stint_cnt = stints["stint_count"] if "stint_count" in stints.columns else pd.Series(1, index=stints.index)
+    team_cnt = stints["stint_team_count"] if "stint_team_count" in stints.columns else pd.Series(1, index=stints.index)
+
+    stints["games_played_stint"] = pd.to_numeric(games_played, errors="coerce").fillna(0.0)
+    stints["total_minutes_stint"] = pd.to_numeric(total_minutes, errors="coerce").fillna(0.0)
+    stints["mpg_stint"] = pd.to_numeric(mpg_series, errors="coerce").fillna(0.0)
+    stints["stint_number"] = pd.to_numeric(stint_num, errors="coerce").fillna(1).astype(int)
+    stints["stint_count"] = pd.to_numeric(stint_cnt, errors="coerce").fillna(1).astype(int)
+    stints["stint_team_count"] = pd.to_numeric(team_cnt, errors="coerce").fillna(1).astype(int)
+    is_primary = stints["is_primary_stint"] if "is_primary_stint" in stints.columns else pd.Series(False, index=stints.index)
+    is_final = stints["is_final_stint"] if "is_final_stint" in stints.columns else pd.Series(False, index=stints.index)
+    first_date = stints["first_game_date"] if "first_game_date" in stints.columns else pd.Series("", index=stints.index)
+    last_date = stints["last_game_date"] if "last_game_date" in stints.columns else pd.Series("", index=stints.index)
+    stints["is_primary_stint"] = is_primary.fillna(False).astype(bool)
+    stints["is_final_stint"] = is_final.fillna(False).astype(bool)
+    stints["stint_first_game_date"] = first_date.fillna("").astype(str)
+    stints["stint_last_game_date"] = last_date.fillna("").astype(str)
+
+    stints = stints[
+        [
+            "player_id",
+            "season",
+            "team_abbreviation_stint",
+            "stint_number",
+            "games_played_stint",
+            "total_minutes_stint",
+            "mpg_stint",
+            "is_primary_stint",
+            "is_final_stint",
+            "stint_count",
+            "stint_team_count",
+            "stint_first_game_date",
+            "stint_last_game_date",
+        ]
+    ].drop_duplicates(subset=["player_id", "season", "stint_number"], keep="first")
+
+    base = flat_df.copy()
+    base["player_id"] = _norm_player_id(base["player_id"])
+    base["season"] = base["season"].astype(str)
+    base["_base_minutes"] = pd.to_numeric(base.get("minutes"), errors="coerce").fillna(0.0)
+    base["_base_games"] = pd.to_numeric(base.get("games"), errors="coerce").fillna(0.0)
+    base["_base_possessions"] = pd.to_numeric(base.get("possessions"), errors="coerce")
+
+    merged = base.merge(stints, on=["player_id", "season"], how="left")
+    has_stint = merged["team_abbreviation_stint"].astype(str).str.len() > 0
+
+    team_map = _load_team_id_map()
+
+    # Team assignment
+    merged["team_abbreviation"] = np.where(
+        has_stint,
+        merged["team_abbreviation_stint"],
+        merged["team_abbreviation"].map(_clean_team_abbreviation),
+    )
+    mapped_team_id = merged["team_abbreviation"].map(team_map)
+    base_team_id = pd.Series("", index=merged.index)
+    if "team_id" in merged.columns:
+        base_team_id = merged["team_id"].astype(str)
+    merged["team_id"] = np.where(
+        has_stint & mapped_team_id.notna(),
+        mapped_team_id,
+        base_team_id,
+    )
+
+    # Stint metadata
+    merged["stint_number"] = np.where(has_stint, merged["stint_number"], 1).astype(int)
+    merged["stint_count"] = np.where(has_stint, merged["stint_count"], 1).astype(int)
+    merged["stint_team_count"] = np.where(has_stint, merged["stint_team_count"], 1).astype(int)
+    merged["is_primary_stint"] = np.where(has_stint, merged["is_primary_stint"], True).astype(bool)
+    merged["is_final_stint"] = np.where(has_stint, merged["is_final_stint"], True).astype(bool)
+    merged["stint_first_game_date"] = np.where(has_stint, merged["stint_first_game_date"], "")
+    merged["stint_last_game_date"] = np.where(has_stint, merged["stint_last_game_date"], "")
+    merged["team_assignment_source"] = np.where(has_stint, "stint", "season")
+
+    # Volume reassignment: portable impact + stint-specific minutes/games.
+    merged["minutes"] = np.where(has_stint, merged["total_minutes_stint"], merged["_base_minutes"])
+    merged["games"] = np.where(has_stint, merged["games_played_stint"], merged["_base_games"])
+    merged["mpg"] = np.where(
+        has_stint,
+        merged["mpg_stint"],
+        np.where(merged["_base_games"] > 0, merged["_base_minutes"] / merged["_base_games"], 0.0),
+    )
+
+    poss_per_min = merged["_base_possessions"] / merged["_base_minutes"].replace(0.0, np.nan)
+    poss_per_min = poss_per_min.fillna(2.0)
+    merged["possessions"] = np.where(
+        has_stint,
+        merged["total_minutes_stint"] * poss_per_min,
+        merged["_base_possessions"].fillna(merged["_base_minutes"] * 2.0),
+    )
+
+    # Recompute availability with stint-specific volume.
+    merged["availability_score"] = merged.apply(
+        lambda r: _compute_availability_score(
+            games=_safe_float(r.get("games"), default=0.0),
+            age=_safe_float(r.get("age"), default=25.0),
+            mpg=_safe_float(r.get("mpg"), default=0.0),
+            salary=_safe_float(r.get("salary"), default=np.nan),
+        ),
+        axis=1,
+    )
+
+    # Team-minute share should be recomputed from final team assignments.
+    merged["minutes"] = pd.to_numeric(merged["minutes"], errors="coerce").fillna(0.0)
+    team_minutes = (
+        merged.groupby(["season", "team_abbreviation"], dropna=False)["minutes"]
+        .transform("sum")
+        .replace(0.0, np.nan)
+    )
+    merged["minute_share_potential"] = (merged["minutes"] / team_minutes).fillna(0.0)
+
+    merged = merged.drop(
+        columns=[
+            "team_abbreviation_stint",
+            "games_played_stint",
+            "total_minutes_stint",
+            "mpg_stint",
+            "_base_minutes",
+            "_base_games",
+            "_base_possessions",
+        ],
+        errors="ignore",
+    )
+
+    summary.update(
+        {
+            "enabled": True,
+            "rows_post_split": int(len(merged)),
+            "player_seasons_with_stints": int(
+                merged.loc[merged["team_assignment_source"] == "stint", ["player_id", "season"]]
+                .drop_duplicates()
+                .shape[0]
+            ),
+            "multi_team_player_seasons": int(
+                merged.loc[merged["stint_team_count"] > 1, ["player_id", "season"]]
+                .drop_duplicates()
+                .shape[0]
+            ),
+        }
+    )
+
+    return merged, summary
 
 
 @dataclass
@@ -813,6 +1035,9 @@ def main() -> None:
 
     flat_df = pd.DataFrame(flat_rows)
 
+    # Split player-season rows into team stints when stint data is available.
+    flat_df, stint_split_report = _apply_team_stint_split(flat_df)
+
     # ═══════════════════ VALIDATION ══════════════════════════════════
     rate_cols = [
         "behavioral_usage", "behavioral_assist_rate", "behavioral_turnover_rate",
@@ -831,6 +1056,7 @@ def main() -> None:
 
     validation_report = {
         "rows": int(len(flat_df)),
+        "stint_split": stint_split_report,
         "seasons": sorted(flat_df["season"].astype(str).unique().tolist(), key=lambda s: int(s[:4])),
         "offensive_archetype_count": int(len([c for c in flat_df.columns if c.startswith("off_prob_")])),
         "defensive_archetype_count": int(len([c for c in flat_df.columns if c.startswith("def_prob_")])),
@@ -883,6 +1109,7 @@ def main() -> None:
             "bounds_violations": int(((flat_df["availability_score"] < 0) | (flat_df["availability_score"] > 1)).sum()),
         },
         "notes": [
+            "Team assignment is stint-aware when player_team_stints.parquet is available: one row per player-team-stint-season.",
             "Offensive archetypes: all 11 embedding dimensions L1-normalized to preserve source role mix proportions.",
             "Defensive archetypes: 7 role scores softmax-normalized (poa through mobile_big).",
             "three_point_rate = FG3A/FGA (share of shots from three); free_throw_rate = FTA/FGA (standard FT rate, can exceed 1.0).",
