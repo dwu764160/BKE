@@ -34,6 +34,7 @@ python3 src/data_fetch/fetch_players.py                          # Fetch player 
 python3 src/data_fetch/fetch_teams.py                            # Fetch team metadata
 python3 src/data_fetch/fetch_profiles.py                         # Fetch player profiles
 python3 src/data_fetch/fetch_player_salaries.py                  # Fetch player salary data (per season, ESPN)
+python3 src/data_fetch/fetch_player_draft_history.py             # Fetch player draft history (draft class year, round, overall pick)
 python3 src/data_fetch/fetch_pbp/CDN_pbp_fetch.py                # Fetch play-by-play (CDN)
 python3 src/data_fetch/fetch_pbp/fetch_play_by_play.py           # Fetch play-by-play (DOM fallback)
 python3 src/data_fetch/fetch_official_stats.py                   # Fetch official NBA stats
@@ -90,7 +91,7 @@ python3 src/modeling/experiment2_production_tilt.py         # Run v3.1 Experimen
 ## Player Evaluation (PEC v1)
 ```bash
 python3 src/player_eval/build_player_impact_profiles.py     # PEC Step 1 + Step 4: build PlayerImpactProfile (47+ fields from 9 sources, canonical offensive/defensive archetype labels + embeddings, behavioral fingerprint, availability score)
-python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 18 pipeline sources into aggregate/player_profile_aggregate.parquet (single source of truth for downstream products; includes clutch + simulation step1 fields)
+python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 19 pipeline sources into aggregate/player_profile_aggregate.parquet (single source of truth for downstream products; includes clutch + simulation step1 fields + draft metadata)
 python3 src/player_eval/train_minute_model.py               # PEC Step 2: train MPG prediction model (GBDT, 70 features, GroupKFold CV, temporal holdout; excludes volume stats)
 python3 src/player_eval/team_feature_aggregation.py         # PEC Step 3: team aggregation — TEAM_SCALE=20 (BKE→NBA per-100-poss), talent-dominant architecture (modifiers <10% of talent), expanded rim detection, smart calibration skip, 6-stage ablation stack
 ```
@@ -108,15 +109,15 @@ python3 src/simulation/validate_sim.py                      # Simulation Layer 6
 python3 src/simulation/run_forecast.py                      # Forecast: full pipeline (project profiles → team features → season simulation → lineup projection) — backtest mode by default
 python3 src/simulation/run_forecast.py --forecast 2025-26   # True forecast: project from latest season into target season
 python3 src/simulation/run_forecast.py --skip-lineup        # Skip lineup projection step
-python3 src/player_eval/project_next_season.py              # Standalone: project player profiles to next season (age curve + team mapping + rookie estimation)
+python3 src/player_eval/project_next_season.py              # Standalone: project player profiles to next season (regression + age curve + team mapping + draft-aware rookies)
 ```
 Pipeline stages:
-1. **project_next_season.py** — Age-adjusted carry-forward of player impact profiles (BKE, RAPM, etc.), team mapping (backtest: actual teams; forecast: carry-forward or roster CSV), rookie tier-based defaults, minute normalization to 240/team
+1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), team mapping (backtest: actual teams; forecast: carry-forward or roster CSV), draft-aware rookie generation (no CSV dependency by default), and minutes projection via `age + impact + salary + depth competition` then 240/team normalization
 2. **team_feature_aggregation.py** (forecast_mode=True) — Team net ratings from projected profiles, no calibration against actual data
 3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule (no actual games needed)
 4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups
 
-Backtest validation: BKE carry r≈0.41-0.46, MPG carry r≈0.60-0.66, team-level MAE≈9 wins, r≈0.65
+Backtest validation: BKE carry r≈0.42-0.49, MPG carry r≈0.79-0.82, team-level win MAE≈8.2-9.0, win-corr≈0.64-0.67, margin-proxy corr≈0.60-0.68
 
 ### Position-Band Policy (Canonical)
 - Canonical player position bands are: `Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`.
@@ -150,7 +151,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 ```
 
 # Data layout (locations used by scripts)
-- `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary); clutch files: `player_clutch_stats_2022-23.parquet`, `player_clutch_stats_2023-24.parquet`, `player_clutch_stats_2024-25.parquet`, `player_clutch_stats_all.parquet`
+- `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary); draft files: `player_draft_history.parquet/.csv` (+ optional `player_draft_commonplayerinfo_cache.parquet`); clutch files: `player_clutch_stats_2022-23.parquet`, `player_clutch_stats_2023-24.parquet`, `player_clutch_stats_2024-25.parquet`, `player_clutch_stats_all.parquet`
 - `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`, simulation artifacts under `data/processed/simulation/` including `simulation_step2_lineup_profiles.parquet`; forecast outputs under `data/processed/forecast/` including `projected_player_profiles.parquet`, `projected_team_features.parquet`
 - `data/processed/player_position_estimates*.parquet` — position share outputs where canonical `primary_position_estimate` should remain in the five-band label set (`Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`).
 - `data/processed/player_eval/` — PEC Step outputs: `player_impact_profiles.parquet`, `player_profiles_season.pkl`, `minute_model_v2.pkl`, `minute_model_predictions_v2.parquet`, `team_feature_aggregation.parquet`

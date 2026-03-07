@@ -16,7 +16,7 @@ Modes:
 Usage:
   python3 src/simulation/run_forecast.py                     # Backtest
   python3 src/simulation/run_forecast.py --forecast 2025-26  # True forecast
-  python3 src/simulation/run_forecast.py --roster roster.csv --rookies rookies.csv
+    python3 src/simulation/run_forecast.py --roster roster.csv  # Optional roster overrides
 =============================================================================
 """
 
@@ -36,7 +36,11 @@ def main():
     parser.add_argument("--roster", type=str, default=None,
                         help="Path to roster CSV for team mappings")
     parser.add_argument("--rookies", type=str, default=None,
-                        help="Path to rookies CSV")
+                        help="Optional rookies CSV fallback override")
+    parser.add_argument("--rookie-impact-scale", type=float, default=None,
+                        help="Override rookie impact scale multiplier")
+    parser.add_argument("--no-rookie-scale-tune", action="store_true",
+                        help="Disable historical rookie-scale tuning")
     parser.add_argument("--skip-lineup", action="store_true",
                         help="Skip lineup projection step")
     args = parser.parse_args()
@@ -59,6 +63,10 @@ def main():
         sys.argv += ["--roster", args.roster]
     if args.rookies:
         sys.argv += ["--rookies", args.rookies]
+    if args.rookie_impact_scale is not None:
+        sys.argv += ["--rookie-impact-scale", str(args.rookie_impact_scale)]
+    if args.no_rookie_scale_tune:
+        sys.argv += ["--no-rookie-scale-tune"]
     project_main()
 
     # ━━━━ Step 2: Team feature aggregation (forecast mode) ━━━━━━━

@@ -27,6 +27,7 @@ Sources merged:
     16. Player clutch stats           (clutch minutes/production by season)
     17. Step 1 impact profiles        (curated impact/behavioral features)
     18. BKE diagnostic reports        (stability, shrinkage)
+    19. Player draft history          (draft class year, round, pick, tier)
 
 Output:
   aggregate/player_profile_aggregate.parquet
@@ -63,6 +64,7 @@ from src.player_eval.constants import (
     HISTORICAL_DIR,
     METRICS_LINEAR_PATH,
     PLAYER_ARCHETYPES_PATH,
+    PLAYER_DRAFT_HISTORY_PATH,
     PLAYER_PROFILES_PARQUET,
     PLAYERS_META_PATH,
     POSITION_ESTIMATES_PATH,
@@ -221,6 +223,31 @@ def _load_players_meta() -> pd.DataFrame:
     keep = ["player_id", "height_inches", "weight_lbs", "wingspan_inches",
             "experience_years", "primary_position"]
     keep = [c for c in keep if c in df.columns]
+    return df[keep].drop_duplicates(subset=["player_id"], keep="first")
+
+
+def _load_player_draft_history() -> pd.DataFrame:
+    """Load player draft history (player-level metadata)."""
+    df = _safe_load(PLAYER_DRAFT_HISTORY_PATH)
+    if df.empty or "player_id" not in df.columns:
+        return pd.DataFrame()
+
+    df["player_id"] = _norm_id(df["player_id"])
+    keep = [
+        "player_id",
+        "draft_class_year",
+        "draft_round",
+        "draft_pick_in_round",
+        "draft_pick_overall",
+        "draft_tier",
+        "is_drafted",
+        "is_undrafted",
+        "draft_team_abbreviation",
+        "draft_source",
+    ]
+    keep = [c for c in keep if c in df.columns]
+    if not keep:
+        return pd.DataFrame()
     return df[keep].drop_duplicates(subset=["player_id"], keep="first")
 
 
@@ -569,17 +596,26 @@ def main() -> None:
         spine = spine.merge(bio, on="player_id", how="left")
     print(f"  [14] + Bio metadata: {len(spine.columns)} cols")
 
-    # 15. Clutch stats
+    # 15. Player draft metadata (merge on player_id only)
+    draft = _load_player_draft_history()
+    if not draft.empty:
+        draft_overlap = set(spine.columns) & set(draft.columns) - {"player_id"}
+        if draft_overlap:
+            draft = draft.rename(columns={c: f"draft_{c}" for c in draft_overlap})
+        spine = spine.merge(draft, on="player_id", how="left")
+    print(f"  [15] + Draft history: {len(spine.columns)} cols")
+
+    # 16. Clutch stats
     clutch = _load_clutch_stats()
     spine = _smart_merge(spine, clutch, merge_key, "clutch", how="left")
-    print(f"  [15] + Clutch stats: {len(spine.columns)} cols")
+    print(f"  [16] + Clutch stats: {len(spine.columns)} cols")
 
-    # 16. Step 1 curated profiles
+    # 17. Step 1 curated profiles
     step1 = _load_step1_profiles()
     spine = _smart_merge(spine, step1, merge_key, "s1", how="left")
-    print(f"  [16] + Step 1 profiles: {len(spine.columns)} cols")
+    print(f"  [17] + Step 1 profiles: {len(spine.columns)} cols")
 
-    # 17. Name normalization (ID-first and alias-aware)
+    # 18. Name normalization (ID-first and alias-aware)
     name_sources = [
         (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
         (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
@@ -640,6 +676,10 @@ def main() -> None:
             "bke_json": int(len([c for c in spine.columns if c.startswith("bke_")])),
             "game_logs": int(len([c for c in spine.columns if c.startswith("gl_")])),
             "clutch": int(len([c for c in spine.columns if c.startswith("clutch_")])),
+            "draft": int(len([c for c in spine.columns if c.startswith("draft_") or c in {
+                "draft_class_year", "draft_round", "draft_pick_in_round", "draft_pick_overall",
+                "draft_tier", "is_drafted", "is_undrafted"
+            }])),
             "step1_pec": int(len([c for c in spine.columns if c.startswith("pec_")])),
         },
         "coverage": {
@@ -647,6 +687,7 @@ def main() -> None:
             "game_logs": float(spine.get("gl_games_total", pd.Series(dtype=float)).notna().mean()),
             "clutch_minutes": float(spine.get("clutch_minutes", pd.Series(dtype=float)).notna().mean()),
             "bio_height": float(spine.get("height_inches", pd.Series(dtype=float)).notna().mean()),
+            "draft_class_year": float(spine.get("draft_class_year", pd.Series(dtype=float)).notna().mean()),
             "mpg": float(spine.get("agg_mpg", pd.Series(dtype=float)).notna().mean()),
         },
         "sample_columns": sorted(spine.columns.tolist())[:50],

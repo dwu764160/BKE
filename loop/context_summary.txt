@@ -1,3 +1,17 @@
+- 2026-03-07 — Forecast v1.1 draft-aware rookie pass completed (fetch -> aggregate -> projection -> simulation)
+	- Added new pipeline fetch stage: `src/data_fetch/fetch_player_draft_history.py`.
+	- New canonical draft outputs: `data/historical/player_draft_history.parquet` and `data/historical/player_draft_history.csv`.
+	- Added draft constants in `src/player_eval/constants.py` and merged draft fields into profile aggregate in `src/profile_aggregate/build_profile_aggregate.py`.
+	- Replaced rookie CSV dependency as default path in `src/player_eval/project_next_season.py` with draft-aware rookie generation (CSV remains manual fallback).
+	- Rookie priors shifted conservative and rookie scale tuning grid added (`[0.85, 1.00, 1.15]`), selected scale `0.85` by rookie BKE MAE.
+	- Added conditional regression-to-mean for impact projection (stability/minutes-aware) and upgraded minutes projection using impact + salary + depth competition before 240-minute normalization.
+	- Updated forecast orchestrator passthrough args in `src/simulation/run_forecast.py`: `--rookie-impact-scale`, `--no-rookie-scale-tune`.
+	- Backtest-style forecast validation snapshot:
+		- Wins: 2023-24 MAE `8.203`, r `0.6711`; 2024-25 MAE `9.017`, r `0.6375`
+		- Margin proxy: 2023-24 MAE `4.404`, r `0.6760`; 2024-25 MAE `4.645`, r `0.5977`
+		- Player carry: 2022-23->2023-24 BKE r `0.4194`, MPG r `0.7927`, rookie BKE MAE `0.2068`; 2023-24->2024-25 BKE r `0.4901`, MPG r `0.8189`, rookie BKE MAE `0.2153`
+	- Documentation updated for this pass: `readme.md` and `reference/simulation/Simulation_Core_Summary.md` (append-only entry).
+
 - 2026-03-06 — Forecast Pipeline Complete (Forward Projection from Backtesting)
 	- Built full forecast pipeline: project_next_season.py → team_feature_aggregation(forecast) → season_sim(forecast) → lineup_projection(forecast)
 	- Orchestrator: src/simulation/run_forecast.py with CLI (--forecast SEASON, --roster, --rookies, --skip-lineup)

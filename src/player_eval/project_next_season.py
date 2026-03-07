@@ -5,20 +5,22 @@ Forward Projection Pipeline — Project Player Impact Profiles to Next Season
 
 Takes prior season player impact profiles and produces projected profiles
 for the upcoming season. Handles:
-  1. Age-based regression/progression (piecewise linear curve)
-  2. Team mapping (carry forward or from roster file)
-  3. Rookie/newcomer projection (from rookies CSV or backtest actual data)
-  4. Minute projection (age-adjusted carry-forward + team normalization)
+    1. Age-based impact projection with conditional regression-to-mean
+    2. Team mapping (carry forward or from roster file)
+    3. Draft-aware rookie/newcomer projection (no CSV dependency by default)
+    4. Minute projection (age + impact + salary + depth, then team normalization)
 
 Modes:
   - Backtest: Project season N from season N-1 using actual N data for
-    team mappings and rookie identification. Enables validation.
+        team mappings and rookie identification. Enables validation.
   - Forecast: Project next season from latest available season using
-    a roster/rookies input file. No actuals available.
+        draft history plus optional roster overrides. No target-season actuals.
 
 Inputs:
   data/processed/player_eval/player_impact_profiles.parquet
-  data/forecasting/rookies.csv  (optional, for true forecast)
+    data/historical/player_draft_history.parquet
+    data/historical/player_salaries_{season}.parquet
+    aggregate/player_profile_aggregate.parquet (fallback draft source)
 
 Output:
   data/processed/forecast/projected_player_profiles.parquet
@@ -33,7 +35,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -43,11 +45,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.player_eval.constants import (
     AGE_CURVE_BREAKPOINTS,
     AGE_CURVE_DELTAS,
+    ENABLE_IMPACT_REGRESSION_TO_MEAN,
+    ENABLE_MINUTES_IMPACT_ADJUSTMENT,
+    ENABLE_MINUTES_SALARY_ADJUSTMENT,
+    ENABLE_MINUTES_TEAM_COMPETITION_ADJUSTMENT,
+    IMPACT_REGRESSION_BASE_WEIGHT,
+    IMPACT_REGRESSION_LOW_MPG_THRESHOLD,
+    IMPACT_REGRESSION_MAX_WEIGHT,
+    IMPACT_REGRESSION_MINUTES_WEIGHT,
+    IMPACT_REGRESSION_MIN_WEIGHT,
+    IMPACT_REGRESSION_STABILITY_WEIGHT,
     HISTORICAL_DIR,
+    MINUTES_COMPETITION_MAX_PENALTY,
+    MINUTES_COMPETITION_PENALTY,
+    MINUTES_IMPACT_ADJUST_CLIP,
+    MINUTES_IMPACT_ADJUST_SLOPE,
+    MINUTES_SALARY_ADJUST_CLIP,
+    MINUTES_SALARY_CHANGE_SCALE_M,
+    MINUTES_SALARY_CHANGE_WEIGHT,
+    MINUTES_SALARY_LEVEL_SCALE_M,
+    MINUTES_SALARY_LEVEL_WEIGHT,
     PLAYER_PROFILES_PARQUET,
+    PLAYER_DRAFT_HISTORY_PATH,
+    PROFILE_AGGREGATE_PATH,
     PROJECTED_PROFILES_PATH,
     FORECAST_VALIDATION_REPORT,
-    REPORTS_DIR,
+    ROOKIE_IMPACT_SCALE_DEFAULT,
+    ROOKIE_IMPACT_SCALE_GRID,
     ROOKIE_DEFAULT_3PT_RATE,
     ROOKIE_DEFAULT_AST_RATE,
     ROOKIE_DEFAULT_EFG,
@@ -57,13 +81,20 @@ from src.player_eval.constants import (
     ROOKIE_IMPACT_BY_TIER,
     ROOKIE_MPG_BY_TIER,
     ROOKIES_INPUT_PATH,
-    DATA_DIR,
 )
 
 
 # ═════════════════════════════════════════════════════════════════════
 # Age Curve
 # ═════════════════════════════════════════════════════════════════════
+
+
+def _norm_id(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+
+
+def season_start_year(season: str) -> int:
+    return int(str(season)[:4])
 
 def age_delta(age: float) -> float:
     """Return per-year impact delta for a player at given age.
@@ -87,30 +118,50 @@ def age_delta(age: float) -> float:
     return AGE_CURVE_DELTAS[-1]
 
 
-def apply_age_curve(row: pd.Series) -> pd.Series:
-    """Apply one year of aging to a player's impact metrics."""
+def _regression_weight(row: pd.Series) -> float:
+    """Compute conditional regression weight for impact projection."""
+    if not ENABLE_IMPACT_REGRESSION_TO_MEAN:
+        return 0.0
+
+    stability = float(pd.to_numeric(pd.Series([row.get("impact_stability")]), errors="coerce").iloc[0])
+    mpg = float(pd.to_numeric(pd.Series([row.get("mpg")]), errors="coerce").iloc[0])
+
+    w = IMPACT_REGRESSION_BASE_WEIGHT
+    if np.isfinite(stability):
+        w += IMPACT_REGRESSION_STABILITY_WEIGHT * max(0.0, 1.0 - float(np.clip(stability, 0.0, 1.0)))
+    if np.isfinite(mpg) and mpg < IMPACT_REGRESSION_LOW_MPG_THRESHOLD:
+        shortfall = (IMPACT_REGRESSION_LOW_MPG_THRESHOLD - mpg) / max(IMPACT_REGRESSION_LOW_MPG_THRESHOLD, 1e-6)
+        w += IMPACT_REGRESSION_MINUTES_WEIGHT * max(0.0, shortfall)
+
+    return float(np.clip(w, IMPACT_REGRESSION_MIN_WEIGHT, IMPACT_REGRESSION_MAX_WEIGHT))
+
+
+def apply_impact_projection(row: pd.Series, base_means: Dict[str, float]) -> pd.Series:
+    """Apply impact projection with regression-to-mean + age adjustment."""
     row = row.copy()
     age = float(row.get("age", 25))
     delta = age_delta(age)
+    reg_w = _regression_weight(row)
 
-    # Scale delta for different impact metrics:
-    # Delta is already on BKE-scale (empirically calibrated ~0.01-0.08 per year).
-    # ORAPM/DRAPM are on per-100 scale (~3.0 std vs BKE ~0.25 std), so scale up ~12x.
-    bke_scale = delta
-    rapm_scale = delta * 12.0  # BKE→RAPM expansion factor
+    def _project(metric: str, default: float, age_scale: float) -> float:
+        mean_val = float(base_means.get(metric, default))
+        current_val = float(pd.to_numeric(pd.Series([row.get(metric, mean_val)]), errors="coerce").iloc[0])
+        if not np.isfinite(current_val):
+            current_val = mean_val
+        return (1.0 - reg_w) * current_val + reg_w * mean_val + delta * age_scale
 
-    # Apply to impact metrics
-    row["impact_bke"] = float(row.get("impact_bke", 0)) + bke_scale
-    row["impact_obke"] = float(row.get("impact_obke", 0)) + bke_scale * 0.5
-    row["impact_dbke"] = float(row.get("impact_dbke", 0)) + bke_scale * 0.5
-    row["impact_orapm"] = float(row.get("impact_orapm", 0)) + rapm_scale * 0.5
-    row["impact_drapm"] = float(row.get("impact_drapm", 0)) + rapm_scale * 0.5
-    row["impact_total_impact"] = float(row.get("impact_total_impact", 50)) + delta * 15.0
+    row["impact_bke"] = _project("impact_bke", 0.0, 1.0)
+    row["impact_obke"] = _project("impact_obke", 0.0, 0.5)
+    row["impact_dbke"] = _project("impact_dbke", 0.0, 0.5)
+    row["impact_orapm"] = _project("impact_orapm", 0.0, 6.0)
+    row["impact_drapm"] = _project("impact_drapm", 0.0, 6.0)
+    row["impact_total_impact"] = _project("impact_total_impact", 50.0, 15.0)
+    row["impact_bpm"] = _project("impact_bpm", 0.0, 3.6)
 
-    # BPM/WS/VORP: scale proportionally
-    row["impact_bpm"] = float(row.get("impact_bpm", 0)) + rapm_scale * 0.3
-    row["impact_ws"] = max(0.0, float(row.get("impact_ws", 0)) * (1.0 + delta * 0.5))
-    row["impact_vorp"] = max(0.0, float(row.get("impact_vorp", 0)) * (1.0 + delta * 0.5))
+    ws_val = _project("impact_ws", 0.0, 0.0)
+    vorp_val = _project("impact_vorp", 0.0, 0.0)
+    row["impact_ws"] = max(0.0, ws_val * (1.0 + delta * 0.50))
+    row["impact_vorp"] = max(0.0, vorp_val * (1.0 + delta * 0.50))
 
     # Age the player
     row["age"] = age + 1.0
@@ -120,55 +171,295 @@ def apply_age_curve(row: pd.Series) -> pd.Series:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Draft + Salary + Team metadata helpers
+# ═════════════════════════════════════════════════════════════════════
+
+
+def load_target_salary_data(target_season: str) -> Tuple[Dict[str, float], Dict[str, str]]:
+    """Load known target-season salary and team maps for minute projection."""
+    salary_path = HISTORICAL_DIR / f"player_salaries_{target_season}.parquet"
+    if not salary_path.exists():
+        return {}, {}
+
+    df = pd.read_parquet(salary_path)
+    if df.empty or "player_id" not in df.columns:
+        return {}, {}
+
+    df["player_id"] = _norm_id(df["player_id"])
+    df["salary"] = pd.to_numeric(df.get("salary"), errors="coerce")
+    salary_map = (
+        df.dropna(subset=["salary"])      # keep only known salary rows
+        .drop_duplicates(subset=["player_id"], keep="first")
+        .set_index("player_id")["salary"]
+        .to_dict()
+    )
+
+    # Team field can be full team name in salary files.
+    team_name_to_abbr = {}
+    teams_path = HISTORICAL_DIR / "teams.parquet"
+    if teams_path.exists():
+        teams = pd.read_parquet(teams_path)
+        for _, r in teams.iterrows():
+            abbr = str(r.get("abbreviation", "")).upper()
+            full_name = str(r.get("full_name", "")).lower().strip()
+            team_name_to_abbr[full_name] = abbr
+
+    team_map = {}
+    if "team" in df.columns:
+        for _, r in df.drop_duplicates(subset=["player_id"], keep="first").iterrows():
+            pid = str(r.get("player_id", ""))
+            team_raw = str(r.get("team", "")).strip()
+            team_abbr = ""
+            if len(team_raw) <= 4 and team_raw.isupper():
+                team_abbr = team_raw
+            else:
+                team_abbr = team_name_to_abbr.get(team_raw.lower().strip(), "")
+            if pid:
+                team_map[pid] = team_abbr
+
+    return salary_map, team_map
+
+
+def load_draft_data() -> pd.DataFrame:
+    """Load draft metadata using aggregate + fetched history union."""
+    parts = []
+
+    if PROFILE_AGGREGATE_PATH.exists():
+        agg = pd.read_parquet(PROFILE_AGGREGATE_PATH)
+        wanted = [
+            "player_id",
+            "player_name",
+            "draft_class_year",
+            "draft_round",
+            "draft_pick_in_round",
+            "draft_pick_overall",
+            "draft_tier",
+            "draft_team_abbreviation",
+            "draft_source",
+        ]
+        keep = [c for c in wanted if c in agg.columns]
+        if keep and "player_id" in keep:
+            draft = agg[keep].copy()
+            draft["player_id"] = _norm_id(draft["player_id"])
+            parts.append(draft.drop_duplicates(subset=["player_id"], keep="first"))
+
+    if PLAYER_DRAFT_HISTORY_PATH.exists():
+        draft = pd.read_parquet(PLAYER_DRAFT_HISTORY_PATH)
+        if not draft.empty and "player_id" in draft.columns:
+            draft = draft.copy()
+            draft["player_id"] = _norm_id(draft["player_id"])
+            parts.append(draft.drop_duplicates(subset=["player_id"], keep="first"))
+
+    if parts:
+        combined = pd.concat(parts, ignore_index=True, sort=False)
+        # Aggregate-first precedence for overlapping IDs/columns.
+        combined = combined.drop_duplicates(subset=["player_id"], keep="first")
+        return combined
+
+    return pd.DataFrame()
+
+
+def _draft_lookup(draft_df: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+    if draft_df.empty or "player_id" not in draft_df.columns:
+        return {}
+    out: Dict[str, Dict[str, float]] = {}
+    for _, r in draft_df.iterrows():
+        pid = str(r.get("player_id", "")).strip()
+        if not pid:
+            continue
+        pick = pd.to_numeric(pd.Series([r.get("draft_pick_overall")]), errors="coerce").iloc[0]
+        cls_year = pd.to_numeric(pd.Series([r.get("draft_class_year")]), errors="coerce").iloc[0]
+        tier = r.get("draft_tier")
+        if pd.isna(tier) or str(tier).strip() == "":
+            tier = _draft_tier(int(pick) if pd.notna(pick) else 999)
+        out[pid] = {
+            "draft_pick_overall": float(pick) if pd.notna(pick) else np.nan,
+            "draft_class_year": float(cls_year) if pd.notna(cls_year) else np.nan,
+            "draft_tier": str(tier),
+            "draft_team_abbreviation": str(r.get("draft_team_abbreviation", "")).upper(),
+        }
+    return out
+
+
+def _rookie_tier_for_player(player_id: str, exp: float, draft_map: Dict[str, Dict[str, float]]) -> str:
+    info = draft_map.get(str(player_id), {})
+    pick = info.get("draft_pick_overall", np.nan)
+    if pd.notna(pick):
+        return _draft_tier(int(pick))
+    if exp <= 0:
+        return "late_first"
+    if exp <= 1:
+        return "second_round"
+    return "undrafted"
+
+
+def tune_rookie_impact_scale(all_profiles: pd.DataFrame, draft_map: Dict[str, Dict[str, float]]) -> Tuple[float, Dict]:
+    """Tune rookie impact multiplier using historical backtest rookie MAE."""
+    seasons = sorted(all_profiles["season"].astype(str).unique())
+    if len(seasons) < 2:
+        return ROOKIE_IMPACT_SCALE_DEFAULT, {"tuned": False, "reason": "insufficient seasons"}
+
+    evaluations = []
+    for scale in ROOKIE_IMPACT_SCALE_GRID:
+        errors = []
+        n_rookies = 0
+
+        for i in range(len(seasons) - 1):
+            base_season = seasons[i]
+            target_season = seasons[i + 1]
+
+            base_ids = set(_norm_id(all_profiles[all_profiles["season"] == base_season]["player_id"]))
+            target = all_profiles[all_profiles["season"] == target_season].copy()
+            target["player_id"] = _norm_id(target["player_id"])
+            rookies = target[~target["player_id"].isin(base_ids)].copy()
+            if rookies.empty:
+                continue
+
+            for _, r in rookies.iterrows():
+                pid = str(r.get("player_id", ""))
+                exp = float(pd.to_numeric(pd.Series([r.get("experience_years")]), errors="coerce").fillna(0.0).iloc[0])
+                tier = _rookie_tier_for_player(pid, exp, draft_map)
+                pred = ROOKIE_IMPACT_BY_TIER.get(tier, ROOKIE_IMPACT_BY_TIER["undrafted"]) * scale
+                actual = float(pd.to_numeric(pd.Series([r.get("impact_bke")]), errors="coerce").fillna(0.0).iloc[0])
+                errors.append(abs(pred - actual))
+                n_rookies += 1
+
+        if errors:
+            mae = float(np.mean(errors))
+            evaluations.append({"scale": float(scale), "rookie_bke_mae": round(mae, 4), "n_rookies": int(n_rookies)})
+
+    if not evaluations:
+        return ROOKIE_IMPACT_SCALE_DEFAULT, {"tuned": False, "reason": "no rookie rows in backtest"}
+
+    best = min(evaluations, key=lambda x: x["rookie_bke_mae"])
+    return float(best["scale"]), {
+        "tuned": True,
+        "selected_scale": float(best["scale"]),
+        "evaluations": evaluations,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Minute Projection (forecast-safe, no leakage)
 # ═════════════════════════════════════════════════════════════════════
 
+
+def _coarse_role(value: str) -> str:
+    text = str(value or "").lower()
+    if any(k in text for k in ["center", "forward-center", "pf", "c"]):
+        return "big"
+    if any(k in text for k in ["guard", "pg", "sg"]):
+        return "guard"
+    return "wing"
+
+
+def _mpg_age_delta(age: float) -> float:
+    if np.isnan(age):
+        return 0.0
+    if age < 22:
+        return +2.0
+    if age < 24:
+        return +1.0
+    if age < 27:
+        return +0.5
+    if age < 30:
+        return 0.0
+    if age < 34:
+        return -1.0
+    return -2.0
+
 def project_minutes(
     players: pd.DataFrame,
+    target_salary_map: Optional[Dict[str, float]] = None,
     team_mpg_target: float = 240.0,
     mpg_cap: float = 40.0,
 ) -> pd.DataFrame:
-    """Project next-season MPG from prior-season MPG + age adjustment.
+    """Project MPG using age + impact + salary + team-depth competition.
 
-    Age adjustment:
-      Young players (<24): +1.5 MPG per year
-      Developing (24-27): +0.5 MPG per year
-      Peak (27-30): stable
-      Declining (30-34): -1.0 MPG per year
-      Late (34+): -2.0 MPG per year
-
-    After individual adjustments, normalize per-team to sum to ~240.
+    Formula (raw, pre-normalization):
+      MPG_proj = last_MPG + age_adj + impact_adj + salary_adj + competition_adj
     """
     df = players.copy()
+    df["player_id"] = _norm_id(df["player_id"])
 
-    def _mpg_age_delta(age):
-        if np.isnan(age):
-            return 0.0
-        if age < 22:
-            return +2.0
-        if age < 24:
-            return +1.0
-        if age < 27:
-            return +0.5
-        if age < 30:
-            return 0.0
-        if age < 34:
-            return -1.0
-        return -2.0
+    df["mpg"] = pd.to_numeric(df.get("mpg"), errors="coerce").fillna(0.0)
+    df["age"] = pd.to_numeric(df.get("age"), errors="coerce").fillna(25.0)
+    df["impact_bke"] = pd.to_numeric(df.get("impact_bke"), errors="coerce").fillna(0.0)
+    df["salary"] = pd.to_numeric(df.get("salary"), errors="coerce")
 
-    df["projected_mpg"] = df.apply(
-        lambda r: max(0.0, min(mpg_cap, float(r.get("mpg", 0)) + _mpg_age_delta(float(r.get("age", 25))))),
-        axis=1,
-    )
+    df["age_adjustment"] = df["age"].map(_mpg_age_delta)
 
-    # Team normalization: scale to 240 per team
+    # Impact-driven minutes: stronger players tend to earn/keep minutes.
+    if ENABLE_MINUTES_IMPACT_ADJUSTMENT:
+        league_bke = float(df["impact_bke"].mean()) if len(df) else 0.0
+        df["impact_adjustment"] = (
+            (df["impact_bke"] - league_bke) * MINUTES_IMPACT_ADJUST_SLOPE
+        ).clip(lower=-MINUTES_IMPACT_ADJUST_CLIP, upper=MINUTES_IMPACT_ADJUST_CLIP)
+    else:
+        df["impact_adjustment"] = 0.0
+
+    # Salary adjustment (target-season salary when available).
+    if ENABLE_MINUTES_SALARY_ADJUSTMENT:
+        if target_salary_map:
+            df["salary_target"] = df["player_id"].map(target_salary_map)
+        else:
+            df["salary_target"] = np.nan
+
+        salary_for_adj = df["salary_target"].fillna(df["salary"])
+        salary_m = salary_for_adj / 1_000_000.0
+        salary_base_m = df["salary"] / 1_000_000.0
+
+        level_term = np.tanh((salary_m - 8.0) / max(MINUTES_SALARY_LEVEL_SCALE_M, 1e-6))
+        delta_term = np.tanh(
+            ((salary_m - salary_base_m).fillna(0.0)) / max(MINUTES_SALARY_CHANGE_SCALE_M, 1e-6)
+        )
+        df["salary_adjustment"] = (
+            MINUTES_SALARY_LEVEL_WEIGHT * level_term +
+            MINUTES_SALARY_CHANGE_WEIGHT * delta_term
+        ).clip(lower=-MINUTES_SALARY_ADJUST_CLIP, upper=MINUTES_SALARY_ADJUST_CLIP)
+    else:
+        df["salary_adjustment"] = 0.0
+
+    # Team-depth / position-competition adjustment.
+    df["competition_adjustment"] = 0.0
+    if ENABLE_MINUTES_TEAM_COMPETITION_ADJUSTMENT:
+        role_source = None
+        for col in ["position_proxy", "primary_position_estimate", "primary_position"]:
+            if col in df.columns:
+                role_source = col
+                break
+        if role_source is None:
+            df["role_group"] = "wing"
+        else:
+            df["role_group"] = df[role_source].map(_coarse_role)
+
+        for (_, _, _), idx in df.groupby(["season", "team_abbreviation", "role_group"]).groups.items():
+            g = df.loc[idx, ["impact_bke", "mpg"]].copy()
+            impacts = g["impact_bke"].fillna(g["impact_bke"].median())
+            base_mpg = g["mpg"].fillna(0.0)
+
+            for i in g.index:
+                peer_count = int(((impacts >= impacts.loc[i] - 0.05) & (base_mpg >= 8.0)).sum() - 1)
+                peer_count = max(0, peer_count)
+                penalty = min(MINUTES_COMPETITION_MAX_PENALTY, MINUTES_COMPETITION_PENALTY * peer_count)
+                df.at[i, "competition_adjustment"] = -penalty
+
+    df["projected_mpg"] = (
+        df["mpg"] +
+        df["age_adjustment"] +
+        df["impact_adjustment"] +
+        df["salary_adjustment"] +
+        df["competition_adjustment"]
+    ).clip(lower=0.0, upper=mpg_cap)
+
+    # Team normalization: scale to 240 MPG per team.
     for (season, team), idx in df.groupby(["season", "team_abbreviation"]).groups.items():
         vals = df.loc[idx, "projected_mpg"].copy()
         total = vals.sum()
         if total > 0:
             scale = team_mpg_target / total
             vals = (vals * scale).clip(upper=mpg_cap)
-            # Iterative redistribution after capping
+            # Iterative redistribution after capping.
             for _ in range(3):
                 capped = vals.clip(upper=mpg_cap)
                 excess = vals.sum() - capped.sum()
@@ -180,7 +471,11 @@ def project_minutes(
                     vals = capped
                     break
                 free_vals = capped[free_mask]
-                capped.loc[free_mask] = free_vals + excess * (free_vals / free_vals.sum())
+                denom = free_vals.sum()
+                if denom <= 0:
+                    vals = capped
+                    break
+                capped.loc[free_mask] = free_vals + excess * (free_vals / denom)
                 vals = capped
             df.loc[idx, "projected_mpg"] = vals
 
@@ -205,8 +500,8 @@ def map_players_to_teams_backtest(
     target_teams = target_profiles[["player_id", "team_abbreviation", "team_id"]].drop_duplicates(
         subset=["player_id"], keep="first"
     ).rename(columns={"team_abbreviation": "target_team", "team_id": "target_team_id"})
-    target_teams["player_id"] = target_teams["player_id"].astype(str)
-    prior["player_id"] = prior["player_id"].astype(str)
+    target_teams["player_id"] = _norm_id(target_teams["player_id"])
+    prior["player_id"] = _norm_id(prior["player_id"])
 
     merged = prior.merge(target_teams, on="player_id", how="inner")
     merged["team_abbreviation"] = merged["target_team"]
@@ -227,13 +522,23 @@ def map_players_to_teams_forecast(
 
     if roster_path and roster_path.exists():
         roster = pd.read_csv(roster_path)
-        roster["player_id"] = roster["player_id"].astype(str)
-        if "new_team" in roster.columns:
-            roster_map = dict(zip(roster["player_id"], roster["new_team"]))
-            df["team_abbreviation"] = df["player_id"].map(
-                lambda pid: roster_map.get(str(pid), df.loc[df["player_id"] == pid, "team_abbreviation"].iloc[0]
-                                            if pid in df["player_id"].values else "FA")
-            )
+        if "player_id" in roster.columns:
+            roster["player_id"] = _norm_id(roster["player_id"])
+            team_col = None
+            for c in ["new_team", "team", "team_abbreviation"]:
+                if c in roster.columns:
+                    team_col = c
+                    break
+            if team_col:
+                roster_map = {
+                    str(pid): str(team).upper()
+                    for pid, team in zip(roster["player_id"], roster[team_col])
+                    if str(pid) != ""
+                }
+                df["team_abbreviation"] = _norm_id(df["player_id"]).map(
+                    lambda pid: roster_map.get(str(pid), None)
+                ).fillna(df["team_abbreviation"])
+
     # Otherwise: carry forward current teams
     return df
 
@@ -273,6 +578,8 @@ def build_rookie_profiles_backtest(
     target_profiles: pd.DataFrame,
     prior_player_ids: set,
     target_season: str,
+    draft_map: Dict[str, Dict[str, float]],
+    rookie_impact_scale: float,
 ) -> pd.DataFrame:
     """Build rookie profiles from actual target-season data (backtest).
 
@@ -291,77 +598,119 @@ def build_rookie_profiles_backtest(
     if rookies.empty:
         return pd.DataFrame(columns=target.columns)
 
-    # Determine tier from experience_years
-    def _tier_from_exp(exp):
-        if exp <= 0:
-            return "lottery"  # True rookies — optimistic default
-        if exp <= 2:
-            return "mid_first"
-        return "undrafted"
-
     for idx, row in rookies.iterrows():
+        pid = str(row.get("player_id", ""))
         exp = float(row.get("experience_years", 0))
-        tier = _tier_from_exp(exp)
+        tier = _rookie_tier_for_player(pid, exp, draft_map)
+        impact = ROOKIE_IMPACT_BY_TIER.get(tier, ROOKIE_IMPACT_BY_TIER["undrafted"]) * rookie_impact_scale
 
-        # Override impact with tier-based replacement estimates
-        rookies.at[idx, "impact_bke"] = ROOKIE_IMPACT_BY_TIER[tier]
-        rookies.at[idx, "impact_obke"] = ROOKIE_IMPACT_BY_TIER[tier] * 0.5
-        rookies.at[idx, "impact_dbke"] = ROOKIE_IMPACT_BY_TIER[tier] * 0.5
-        rookies.at[idx, "impact_orapm"] = ROOKIE_IMPACT_BY_TIER[tier] * 8.8 * 0.5
-        rookies.at[idx, "impact_drapm"] = ROOKIE_IMPACT_BY_TIER[tier] * 8.8 * 0.5
-        rookies.at[idx, "impact_total_impact"] = 50.0 + ROOKIE_IMPACT_BY_TIER[tier] * 20.0
-        rookies.at[idx, "impact_bpm"] = ROOKIE_IMPACT_BY_TIER[tier] * 3.0
+        rookies.at[idx, "impact_bke"] = impact
+        rookies.at[idx, "impact_obke"] = impact * 0.5
+        rookies.at[idx, "impact_dbke"] = impact * 0.5
+        rookies.at[idx, "impact_orapm"] = impact * 6.0
+        rookies.at[idx, "impact_drapm"] = impact * 6.0
+        rookies.at[idx, "impact_total_impact"] = 50.0 + impact * 20.0
+        rookies.at[idx, "impact_bpm"] = impact * 3.0
         rookies.at[idx, "impact_stability"] = 0.35  # Low stability for projections
+        rookies.at[idx, "draft_tier"] = tier
 
-        # Use actual minutes but cap at tier maximum
+        # Use actual minutes as upper guide, still cap to tier-driven rookie envelope.
         actual_mpg = float(row.get("mpg", 0))
         tier_mpg = ROOKIE_MPG_BY_TIER[tier]
-        rookies.at[idx, "mpg"] = min(actual_mpg, tier_mpg * 1.3)  # Allow slight overshoot
+        rookies.at[idx, "mpg"] = min(actual_mpg, tier_mpg * 1.25)
 
     rookies["season"] = target_season
     return rookies
 
 
-def build_rookie_profiles_forecast(
-    rookies_path: Path,
+def build_rookie_profiles_from_draft(
     target_season: str,
+    prior_player_ids: set,
     profile_columns: list,
+    draft_df: pd.DataFrame,
+    draft_map: Dict[str, Dict[str, float]],
+    roster_path: Optional[Path],
+    salary_map: Dict[str, float],
+    salary_team_map: Dict[str, str],
+    rookie_impact_scale: float,
 ) -> pd.DataFrame:
-    """Build rookie profiles from a user-supplied CSV (true forecast).
-
-    Expected CSV columns: player_name, team, draft_position, height_inches,
-    weight_lbs, position (optional)
-    """
-    if not rookies_path.exists():
-        print(f"  No rookies file found at {rookies_path}")
+    """Build rookie profiles from fetched draft history (forecast mode)."""
+    if draft_df.empty:
         return pd.DataFrame(columns=profile_columns)
 
-    rookies_csv = pd.read_csv(rookies_path)
+    target_year = season_start_year(target_season)
+    draft = draft_df.copy()
+    draft["player_id"] = _norm_id(draft["player_id"])
+    draft["draft_class_year"] = pd.to_numeric(draft.get("draft_class_year"), errors="coerce")
+
+    rookies = draft[draft["draft_class_year"] == target_year].copy()
+    rookies = rookies[~rookies["player_id"].isin({str(x) for x in prior_player_ids})].copy()
+    if rookies.empty:
+        return pd.DataFrame(columns=profile_columns)
+
+    roster_map = {}
+    if roster_path and roster_path.exists():
+        roster = pd.read_csv(roster_path)
+        if "player_id" in roster.columns:
+            roster["player_id"] = _norm_id(roster["player_id"])
+            team_col = None
+            for c in ["new_team", "team", "team_abbreviation"]:
+                if c in roster.columns:
+                    team_col = c
+                    break
+            if team_col:
+                roster_map = {
+                    str(pid): str(team).upper()
+                    for pid, team in zip(roster["player_id"], roster[team_col])
+                }
+
+    meta_map = {}
+    if (HISTORICAL_DIR / "players.parquet").exists():
+        meta = pd.read_parquet(HISTORICAL_DIR / "players.parquet")
+        if "player_id" in meta.columns:
+            meta["player_id"] = _norm_id(meta["player_id"])
+            meta = meta.drop_duplicates(subset=["player_id"], keep="first")
+            meta_map = meta.set_index("player_id").to_dict(orient="index")
+
     rows = []
 
-    for _, r in rookies_csv.iterrows():
-        pick = int(r.get("draft_position", 60))
-        tier = _draft_tier(pick)
-        height = float(r.get("height_inches", 78))
-        weight = float(r.get("weight_lbs", 210))
-        position = str(r.get("position", _position_from_height(height)))
-        team = str(r.get("team", "FA")).upper()
+    for _, r in rookies.iterrows():
+        pid = str(r.get("player_id", ""))
+        name = str(r.get("player_name", f"Rookie {pid}"))
+        info = draft_map.get(pid, {})
 
-        impact = ROOKIE_IMPACT_BY_TIER.get(tier, -0.05)
-        mpg = ROOKIE_MPG_BY_TIER.get(tier, 5.0)
+        pick = pd.to_numeric(pd.Series([info.get("draft_pick_overall", r.get("draft_pick_overall"))]), errors="coerce").iloc[0]
+        tier = str(info.get("draft_tier", _draft_tier(int(pick) if pd.notna(pick) else 999)))
+
+        team = (
+            roster_map.get(pid)
+            or salary_team_map.get(pid)
+            or str(info.get("draft_team_abbreviation", "")).upper()
+            or "FA"
+        )
+        if not team or team == "NAN":
+            team = "FA"
+
+        meta = meta_map.get(pid, {})
+        height = float(pd.to_numeric(pd.Series([meta.get("height_inches", 78)]), errors="coerce").fillna(78).iloc[0])
+        weight = float(pd.to_numeric(pd.Series([meta.get("weight_lbs", 210)]), errors="coerce").fillna(210).iloc[0])
+        position = str(meta.get("primary_position", _position_from_height(height)))
+
+        impact = ROOKIE_IMPACT_BY_TIER.get(tier, ROOKIE_IMPACT_BY_TIER["undrafted"]) * rookie_impact_scale
+        mpg = ROOKIE_MPG_BY_TIER.get(tier, ROOKIE_MPG_BY_TIER["undrafted"])
 
         profile = {col: 0.0 for col in profile_columns}
         profile.update({
-            "player_id": str(r.get("player_id", f"rookie_{pick}_{team}")),
-            "player_name": str(r.get("player_name", f"Rookie #{pick}")),
+            "player_id": pid,
+            "player_name": name,
             "season": target_season,
             "team_abbreviation": team,
             "team_id": "",
             "impact_bke": impact,
             "impact_obke": impact * 0.5,
             "impact_dbke": impact * 0.5,
-            "impact_orapm": impact * 8.8 * 0.5,
-            "impact_drapm": impact * 8.8 * 0.5,
+            "impact_orapm": impact * 6.0,
+            "impact_drapm": impact * 6.0,
             "impact_total_impact": 50.0 + impact * 20.0,
             "impact_bpm": impact * 3.0,
             "impact_stability": 0.35,
@@ -380,7 +729,7 @@ def build_rookie_profiles_forecast(
             "behavioral_hustle_pctl": 0.5,
             "behavioral_foul_rate": 3.0,
             "position_proxy": position,
-            "age": float(r.get("age", 20)),
+            "age": float(pd.to_numeric(pd.Series([meta.get("age", 20)]), errors="coerce").fillna(20).iloc[0]),
             "height_inches": height,
             "weight_lbs": weight,
             "experience_years": 0.0,
@@ -393,15 +742,18 @@ def build_rookie_profiles_forecast(
             "scheme_stability_index": 0.0,
             "compression_flag": 0.0,
             "defensive_shrinkage_lambda": 0.5,
-            "salary": float(r.get("salary", 3_000_000)),
+            "salary": float(salary_map.get(pid, 3_000_000)),
             "availability_score": 0.85,
-            "off_primary_archetype": str(r.get("off_archetype", "Connector")),
+            "off_primary_archetype": "Connector",
             "off_secondary_archetype": "",
             "off_role_confidence": 0.3,
             "off_role_effectiveness": 0.4,
-            "def_primary_archetype": str(r.get("def_archetype", "Wing Defender")),
+            "def_primary_archetype": "Wing Defender",
             "def_secondary_archetype": "",
             "def_role_confidence": 0.3,
+            "draft_pick_overall": pick if pd.notna(pick) else np.nan,
+            "draft_class_year": float(target_year),
+            "draft_tier": tier,
         })
 
         # Set default archetype probabilities
@@ -436,6 +788,64 @@ def build_rookie_profiles_forecast(
     return result
 
 
+def build_rookie_profiles_from_csv(
+    rookies_path: Path,
+    target_season: str,
+    profile_columns: list,
+    rookie_impact_scale: float,
+) -> pd.DataFrame:
+    """Manual fallback for ad-hoc runs when draft history is unavailable."""
+    if not rookies_path.exists():
+        return pd.DataFrame(columns=profile_columns)
+
+    rookies_csv = pd.read_csv(rookies_path)
+    rows = []
+    for _, r in rookies_csv.iterrows():
+        pick = int(r.get("draft_position", 60))
+        tier = _draft_tier(pick)
+        impact = ROOKIE_IMPACT_BY_TIER.get(tier, ROOKIE_IMPACT_BY_TIER["undrafted"]) * rookie_impact_scale
+        mpg = ROOKIE_MPG_BY_TIER.get(tier, ROOKIE_MPG_BY_TIER["undrafted"])
+
+        profile = {col: np.nan for col in profile_columns}
+        profile.update({
+            "player_id": str(r.get("player_id", f"rookie_{pick}")),
+            "player_name": str(r.get("player_name", f"Rookie #{pick}")),
+            "season": target_season,
+            "team_abbreviation": str(r.get("team", "FA")).upper(),
+            "impact_bke": impact,
+            "impact_obke": impact * 0.5,
+            "impact_dbke": impact * 0.5,
+            "impact_orapm": impact * 6.0,
+            "impact_drapm": impact * 6.0,
+            "impact_total_impact": 50.0 + impact * 20.0,
+            "impact_bpm": impact * 3.0,
+            "impact_stability": 0.35,
+            "mpg": mpg,
+            "minutes": mpg * 72,
+            "games": 72.0,
+            "age": float(r.get("age", 20)),
+            "experience_years": 0.0,
+            "position_proxy": str(r.get("position", "Forward")),
+            "salary": float(r.get("salary", 3_000_000)),
+            "draft_pick_overall": float(pick),
+            "draft_class_year": float(season_start_year(target_season)),
+            "draft_tier": tier,
+            "behavioral_usage": ROOKIE_DEFAULT_USAGE,
+            "behavioral_assist_rate": ROOKIE_DEFAULT_AST_RATE,
+            "behavioral_turnover_rate": ROOKIE_DEFAULT_TOV_RATE,
+            "behavioral_three_point_rate": ROOKIE_DEFAULT_3PT_RATE,
+            "behavioral_efg": ROOKIE_DEFAULT_EFG,
+            "behavioral_free_throw_rate": ROOKIE_DEFAULT_FTR,
+            "off_primary_archetype": "Connector",
+            "def_primary_archetype": "Wing Defender",
+        })
+        rows.append(profile)
+
+    if not rows:
+        return pd.DataFrame(columns=profile_columns)
+    return pd.DataFrame(rows)
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Season Helpers
 # ═════════════════════════════════════════════════════════════════════
@@ -460,9 +870,14 @@ def project_season(
     base_season: str,
     target_season: str,
     all_profiles: pd.DataFrame,
+    draft_df: pd.DataFrame,
+    draft_map: Dict[str, Dict[str, float]],
+    rookie_impact_scale: float,
     mode: str = "backtest",
     roster_path: Optional[Path] = None,
     rookies_path: Optional[Path] = None,
+    target_salary_map: Optional[Dict[str, float]] = None,
+    target_salary_team_map: Optional[Dict[str, str]] = None,
 ) -> pd.DataFrame:
     """Project players from base_season to target_season.
 
@@ -509,14 +924,30 @@ def project_season(
     if dropped > 0:
         print(f"    Dropped {dropped} players with no valid team assignment")
 
-    # 3. Apply age curve to impact metrics
-    projected = projected.apply(apply_age_curve, axis=1)
+    # 3. Apply impact projection (regression-to-mean + age curve)
+    impact_cols = [
+        "impact_bke", "impact_obke", "impact_dbke", "impact_orapm", "impact_drapm",
+        "impact_total_impact", "impact_bpm", "impact_ws", "impact_vorp",
+    ]
+    base_means = {}
+    for col in impact_cols:
+        if col in base.columns:
+            base_means[col] = float(pd.to_numeric(base[col], errors="coerce").mean())
+    projected = projected.apply(lambda r: apply_impact_projection(r, base_means), axis=1)
 
     # 4. Update season identifier
     projected["season"] = target_season
 
-    # 5. Project minutes (age-adjusted carry-forward + team normalization)
-    projected = project_minutes(projected)
+    # Update salary if known for target season.
+    if target_salary_map:
+        projected["salary_target"] = _norm_id(projected["player_id"]).map(target_salary_map)
+        if "salary" in projected.columns:
+            projected["salary"] = pd.to_numeric(projected["salary_target"], errors="coerce").fillna(
+                pd.to_numeric(projected["salary"], errors="coerce")
+            )
+
+    # 5. Project minutes with conditional adjustments
+    projected = project_minutes(projected, target_salary_map=target_salary_map)
 
     # Recompute derived minute fields
     projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=60)
@@ -526,10 +957,37 @@ def project_season(
     prior_ids = set(projected["player_id"].astype(str))
     if mode == "backtest":
         target = all_profiles[all_profiles["season"] == target_season].copy()
-        rookie_df = build_rookie_profiles_backtest(target, prior_ids, target_season)
+        rookie_df = build_rookie_profiles_backtest(
+            target,
+            prior_ids,
+            target_season,
+            draft_map=draft_map,
+            rookie_impact_scale=rookie_impact_scale,
+        )
     else:
-        rp = rookies_path if rookies_path else ROOKIES_INPUT_PATH
-        rookie_df = build_rookie_profiles_forecast(rp, target_season, list(all_profiles.columns))
+        rookie_df = build_rookie_profiles_from_draft(
+            target_season=target_season,
+            prior_player_ids=prior_ids,
+            profile_columns=list(all_profiles.columns),
+            draft_df=draft_df,
+            draft_map=draft_map,
+            roster_path=roster_path,
+            salary_map=target_salary_map or {},
+            salary_team_map=target_salary_team_map or {},
+            rookie_impact_scale=rookie_impact_scale,
+        )
+
+        # Manual CSV fallback only if draft pipeline is unavailable.
+        if rookie_df.empty:
+            rp = rookies_path if rookies_path else ROOKIES_INPUT_PATH
+            if rp and rp.exists():
+                print("    Draft-driven rookies unavailable; falling back to rookies CSV override")
+                rookie_df = build_rookie_profiles_from_csv(
+                    rp,
+                    target_season,
+                    list(all_profiles.columns),
+                    rookie_impact_scale=rookie_impact_scale,
+                )
 
     if not rookie_df.empty:
         # Ensure rookie_df has same columns
@@ -543,7 +1001,9 @@ def project_season(
     print(f"    Total projected roster: {len(projected)}")
 
     # 7. Re-normalize team minutes after adding rookies
-    projected = project_minutes(projected)
+    projected = project_minutes(projected, target_salary_map=target_salary_map)
+    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=60)
+    projected["possessions"] = projected["minutes"] * 2.0
 
     return projected
 
@@ -555,7 +1015,11 @@ def main() -> None:
     parser.add_argument("--roster", type=str, default=None,
                         help="Path to roster CSV for forecast mode")
     parser.add_argument("--rookies", type=str, default=None,
-                        help="Path to rookies CSV")
+                        help="Path to manual rookies CSV fallback")
+    parser.add_argument("--rookie-impact-scale", type=float, default=None,
+                        help="Override rookie impact scale multiplier")
+    parser.add_argument("--no-rookie-scale-tune", action="store_true",
+                        help="Disable historical tuning for rookie impact scale")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -566,10 +1030,33 @@ def main() -> None:
         raise FileNotFoundError(f"Missing: {PLAYER_PROFILES_PARQUET}")
 
     all_profiles = pd.read_parquet(PLAYER_PROFILES_PARQUET)
-    all_profiles["player_id"] = all_profiles["player_id"].astype(str)
+    all_profiles["player_id"] = _norm_id(all_profiles["player_id"])
     all_profiles["season"] = all_profiles["season"].astype(str)
     seasons = sorted(all_profiles["season"].unique())
     print(f"Available seasons: {seasons}")
+
+    draft_df = load_draft_data()
+    draft_map = _draft_lookup(draft_df)
+    print(f"Draft rows loaded: {len(draft_df)}")
+
+    if args.rookie_impact_scale is not None:
+        rookie_impact_scale = float(args.rookie_impact_scale)
+        rookie_scale_report = {
+            "tuned": False,
+            "selected_scale": rookie_impact_scale,
+            "reason": "manual override",
+        }
+    elif args.no_rookie_scale_tune:
+        rookie_impact_scale = ROOKIE_IMPACT_SCALE_DEFAULT
+        rookie_scale_report = {
+            "tuned": False,
+            "selected_scale": rookie_impact_scale,
+            "reason": "tuning disabled",
+        }
+    else:
+        rookie_impact_scale, rookie_scale_report = tune_rookie_impact_scale(all_profiles, draft_map)
+
+    print(f"Rookie impact scale: {rookie_impact_scale:.3f}")
 
     all_projected = []
     validation_results = {}
@@ -580,14 +1067,20 @@ def main() -> None:
         target_season = args.forecast
         roster_path = Path(args.roster) if args.roster else None
         rookies_path = Path(args.rookies) if args.rookies else ROOKIES_INPUT_PATH
+        salary_map, salary_team_map = load_target_salary_data(target_season)
 
         projected = project_season(
             base_season=base_season,
             target_season=target_season,
             all_profiles=all_profiles,
+            draft_df=draft_df,
+            draft_map=draft_map,
+            rookie_impact_scale=rookie_impact_scale,
             mode="forecast",
             roster_path=roster_path,
             rookies_path=rookies_path,
+            target_salary_map=salary_map,
+            target_salary_team_map=salary_team_map,
         )
         all_projected.append(projected)
     else:
@@ -595,45 +1088,85 @@ def main() -> None:
         for i in range(len(seasons) - 1):
             base = seasons[i]
             target = seasons[i + 1]
+            salary_map, salary_team_map = load_target_salary_data(target)
 
             projected = project_season(
                 base_season=base,
                 target_season=target,
                 all_profiles=all_profiles,
+                draft_df=draft_df,
+                draft_map=draft_map,
+                rookie_impact_scale=rookie_impact_scale,
                 mode="backtest",
+                target_salary_map=salary_map,
+                target_salary_team_map=salary_team_map,
             )
             all_projected.append(projected)
 
             # Validate against actuals
             actual = all_profiles[all_profiles["season"] == target].copy()
-            actual["player_id"] = actual["player_id"].astype(str)
+            actual["player_id"] = _norm_id(actual["player_id"])
             if not actual.empty:
                 merged = projected.merge(
-                    actual[["player_id", "impact_bke", "mpg", "team_abbreviation"]].rename(
+                    actual[[
+                        "player_id",
+                        "impact_bke",
+                        "impact_orapm",
+                        "impact_drapm",
+                        "impact_total_impact",
+                        "mpg",
+                        "team_abbreviation",
+                    ]].rename(
                         columns={"impact_bke": "actual_bke", "mpg": "actual_mpg",
-                                 "team_abbreviation": "actual_team"}
+                                 "team_abbreviation": "actual_team",
+                                 "impact_orapm": "actual_orapm",
+                                 "impact_drapm": "actual_drapm",
+                                 "impact_total_impact": "actual_total_impact"}
                     ),
                     on="player_id", how="inner",
                 )
                 if len(merged) > 5:
+                    base_ids = set(_norm_id(all_profiles[all_profiles["season"] == base]["player_id"]))
+                    n_rookies = int((~_norm_id(projected["player_id"]).isin(base_ids)).sum())
+
                     bke_corr = float(merged["impact_bke"].corr(merged["actual_bke"]))
                     bke_mae = float((merged["impact_bke"] - merged["actual_bke"]).abs().mean())
                     mpg_corr = float(merged["mpg"].corr(merged["actual_mpg"]))
                     mpg_mae = float((merged["mpg"] - merged["actual_mpg"]).abs().mean())
+                    orapm_corr = float(merged["impact_orapm"].corr(merged["actual_orapm"]))
+                    orapm_mae = float((merged["impact_orapm"] - merged["actual_orapm"]).abs().mean())
+                    drapm_corr = float(merged["impact_drapm"].corr(merged["actual_drapm"]))
+                    drapm_mae = float((merged["impact_drapm"] - merged["actual_drapm"]).abs().mean())
+                    total_corr = float(merged["impact_total_impact"].corr(merged["actual_total_impact"]))
+                    total_mae = float((merged["impact_total_impact"] - merged["actual_total_impact"]).abs().mean())
                     team_match = float((merged["team_abbreviation"] == merged["actual_team"]).mean())
-                    n_rookies = len(projected) - len(merged)
+
+                    rookie_rows = merged[~_norm_id(merged["player_id"]).isin(base_ids)].copy()
+                    rookie_bke_mae = float((rookie_rows["impact_bke"] - rookie_rows["actual_bke"]).abs().mean()) if len(rookie_rows) else np.nan
+                    rookie_mpg_mae = float((rookie_rows["mpg"] - rookie_rows["actual_mpg"]).abs().mean()) if len(rookie_rows) else np.nan
 
                     validation_results[f"{base}→{target}"] = {
                         "n_returning": len(merged),
                         "n_rookies": n_rookies,
                         "bke_correlation": round(bke_corr, 4),
                         "bke_mae": round(bke_mae, 4),
+                        "orapm_correlation": round(orapm_corr, 4),
+                        "orapm_mae": round(orapm_mae, 4),
+                        "drapm_correlation": round(drapm_corr, 4),
+                        "drapm_mae": round(drapm_mae, 4),
+                        "impact_total_correlation": round(total_corr, 4),
+                        "impact_total_mae": round(total_mae, 4),
                         "mpg_correlation": round(mpg_corr, 4),
                         "mpg_mae": round(mpg_mae, 2),
+                        "rookie_bke_mae": round(rookie_bke_mae, 4) if np.isfinite(rookie_bke_mae) else None,
+                        "rookie_mpg_mae": round(rookie_mpg_mae, 2) if np.isfinite(rookie_mpg_mae) else None,
                         "team_match_rate": round(team_match, 4),
                     }
                     print(f"\n    Validation {base}→{target}:")
                     print(f"      BKE: r={bke_corr:.4f}, MAE={bke_mae:.4f}")
+                    print(f"      ORAPM: r={orapm_corr:.4f}, MAE={orapm_mae:.4f}")
+                    print(f"      DRAPM: r={drapm_corr:.4f}, MAE={drapm_mae:.4f}")
+                    print(f"      Impact Total: r={total_corr:.4f}, MAE={total_mae:.4f}")
                     print(f"      MPG: r={mpg_corr:.4f}, MAE={mpg_mae:.2f}")
                     print(f"      Team match: {team_match:.1%}")
 
@@ -655,10 +1188,26 @@ def main() -> None:
         report = {
             "pipeline": "Forward Projection",
             "mode": "backtest",
+            "rookie_model": {
+                "rookie_impact_scale": rookie_impact_scale,
+                "tuning": rookie_scale_report,
+            },
             "projections": validation_results,
         }
         FORECAST_VALIDATION_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Saved validation: {FORECAST_VALIDATION_REPORT}")
+    else:
+        report = {
+            "pipeline": "Forward Projection",
+            "mode": "forecast",
+            "rookie_model": {
+                "rookie_impact_scale": rookie_impact_scale,
+                "tuning": rookie_scale_report,
+            },
+            "projections": {},
+        }
+        FORECAST_VALIDATION_REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Saved forecast metadata: {FORECAST_VALIDATION_REPORT}")
 
 
 if __name__ == "__main__":

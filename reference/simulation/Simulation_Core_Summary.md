@@ -486,3 +486,60 @@ The simulation viewer (`app/simulation_viewer.py`) now generates a Forecast tab:
 | Lineup profiles | `reports/forecast_lineup_profiles.json` |
 | Forecast lineup parquet | `data/processed/simulation/forecast_step2_lineup_profiles.parquet` |
 - rotation observed target availability: `90/90`
+
+---
+
+## Entry: 2026-03-07 — Forecast Pipeline v1 fix (Draft-Aware Rookies + Projection/Minutes Upgrade)
+
+### Why this update was made
+
+Forecast rookie generation previously depended on an external rookie CSV path by default. This pass moves rookie intake to an in-pipeline draft source and upgrades projection realism in two places: impact carry (conditional regression-to-mean) and minutes carry (impact/salary/depth-aware adjustments).
+
+### What changed
+
+1. **Draft ingestion and wiring**
+- Added `src/data_fetch/fetch_player_draft_history.py` to fetch and normalize draft metadata into:
+	- `data/historical/player_draft_history.parquet`
+	- `data/historical/player_draft_history.csv`
+- Added draft-path constants in `src/player_eval/constants.py`.
+- Integrated draft fields into `src/profile_aggregate/build_profile_aggregate.py`, so draft metadata flows through the profile aggregate (single source of truth).
+
+2. **Rookie modeling (forecast + backtest)**
+- `src/player_eval/project_next_season.py` now builds rookies from draft data first (`build_rookie_profiles_from_draft`), with CSV preserved only as optional override.
+- Rookie priors were made more conservative:
+	- lottery `-0.05`, mid-first `-0.10`, late-first `-0.15`, second-round `-0.18`, undrafted `-0.22`.
+- Added rookie impact-scale tuning grid `[0.85, 1.00, 1.15]` with default `0.85` from backtest rookie MAE selection.
+
+3. **Impact projection upgrade**
+- Added conditional regression-to-mean in `apply_impact_projection`.
+- Regression strength increases for lower-stability and lower-minute player-seasons, then age curve is applied to the regressed baseline.
+
+4. **Minutes projection upgrade**
+- Added pre-normalization minute adjustments from:
+	- projected impact level,
+	- salary level and salary change,
+	- team role-group competition/depth.
+- Team totals are still normalized to 240 MPG with cap-aware scaling.
+
+5. **Forecast CLI updates**
+- `src/simulation/run_forecast.py` now passes through:
+	- `--rookie-impact-scale`
+	- `--no-rookie-scale-tune`
+- `--rookies` remains available as manual fallback input.
+
+### Validation snapshot after this pass
+
+Team wins backtest (forecast-style):
+- 2023-24: MAE `8.203`, win correlation `0.6711`
+- 2024-25: MAE `9.017`, win correlation `0.6375`
+
+Team margin proxy backtest (projected net vs actual avg margin):
+- 2023-24: MAE `4.404`, correlation `0.6760`
+- 2024-25: MAE `4.645`, correlation `0.5977`
+
+Player carry validation:
+- 2022-23 -> 2023-24: BKE `r=0.4194`, MPG `r=0.7927`, rookie BKE MAE `0.2068`
+- 2023-24 -> 2024-25: BKE `r=0.4901`, MPG `r=0.8189`, rookie BKE MAE `0.2153`
+
+Rookie scale selection:
+- Best grid value selected: `0.85` (lowest rookie BKE MAE across grid).

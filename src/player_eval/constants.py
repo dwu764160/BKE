@@ -33,6 +33,8 @@ CLUTCH_STATS_GLOB = "player_clutch_stats_*.parquet"
 XRAPM_V2_PATH = PROCESSED_DIR / "player_xrapm_v2.parquet"
 XRAPM_V1_PATH = PROCESSED_DIR / "player_xrapm.parquet"
 DARKO_DIR = HISTORICAL_DIR / "darko" / "raw"
+PLAYER_DRAFT_HISTORY_PATH = HISTORICAL_DIR / "player_draft_history.parquet"
+DRAFT_COMMONPLAYERINFO_CACHE_PATH = HISTORICAL_DIR / "player_draft_commonplayerinfo_cache.parquet"
 
 # Stability / diagnostics
 BKE_V29_PLAYER_DIAGNOSTIC_PATH = REPORTS_DIR / "bke_v29_player_diagnostic_report.json"
@@ -172,7 +174,7 @@ FORECAST_SEASON_RESULTS = REPORTS_DIR / "forecast_season_results.json"
 # Forecast lineup projection output
 FORECAST_LINEUP_REPORT = REPORTS_DIR / "forecast_lineup_profiles.json"
 
-# Rookies input (user-supplied CSV for true forecasting)
+# Optional manual rookies input (override path for forecast mode; fallback only).
 ROOKIES_INPUT_PATH = DATA_DIR / "forecasting" / "rookies.csv"
 
 # ── Age Curve Constants ──────────────────────────────────────────
@@ -191,21 +193,27 @@ AGE_CURVE_DELTAS = [
 ]
 
 # ── Rookie Projection Constants ─────────────────────────────────
-# Expected impact by draft slot tier (BKE-scale, replacement = ~0)
+# Expected impact by draft slot tier (BKE-scale).
+# Conservative baseline: even strong rookies are often near/below replacement.
 ROOKIE_IMPACT_BY_TIER = {
-    "lottery": 0.15,        # picks 1-14: above-replacement
-    "mid_first": 0.05,      # picks 15-25: near-replacement
-    "late_first": 0.00,     # picks 26-30: replacement level
-    "second_round": -0.05,  # picks 31-60: below-replacement
-    "undrafted": -0.10,     # undrafted: well below replacement
+    "lottery": -0.05,
+    "mid_first": -0.10,
+    "late_first": -0.15,
+    "second_round": -0.18,
+    "undrafted": -0.22,
 }
+
+# Small search grid to tune rookie priors on historical backtests.
+ROOKIE_IMPACT_SCALE_GRID = [0.85, 1.0, 1.15]
+ROOKIE_IMPACT_SCALE_DEFAULT = 1.0
+
 # Expected MPG by draft slot tier
 ROOKIE_MPG_BY_TIER = {
-    "lottery": 22.0,
-    "mid_first": 14.0,
-    "late_first": 10.0,
+    "lottery": 20.0,
+    "mid_first": 13.0,
+    "late_first": 9.0,
     "second_round": 6.0,
-    "undrafted": 5.0,
+    "undrafted": 4.0,
 }
 # Rookie behavioral rate defaults (league average for position)
 ROOKIE_DEFAULT_USAGE = 0.18
@@ -214,4 +222,32 @@ ROOKIE_DEFAULT_TOV_RATE = 0.14
 ROOKIE_DEFAULT_3PT_RATE = 0.35
 ROOKIE_DEFAULT_EFG = 0.49
 ROOKIE_DEFAULT_FTR = 0.25
+
+# ── Forecast Projection Controls ───────────────────────────────
+
+# Impact regression-to-mean controls.
+ENABLE_IMPACT_REGRESSION_TO_MEAN = True
+IMPACT_REGRESSION_BASE_WEIGHT = 0.12
+IMPACT_REGRESSION_STABILITY_WEIGHT = 0.18
+IMPACT_REGRESSION_MINUTES_WEIGHT = 0.10
+IMPACT_REGRESSION_LOW_MPG_THRESHOLD = 18.0
+IMPACT_REGRESSION_MIN_WEIGHT = 0.08
+IMPACT_REGRESSION_MAX_WEIGHT = 0.30
+
+# Minutes projection controls (age + impact + salary + team depth competition).
+ENABLE_MINUTES_IMPACT_ADJUSTMENT = True
+ENABLE_MINUTES_SALARY_ADJUSTMENT = True
+ENABLE_MINUTES_TEAM_COMPETITION_ADJUSTMENT = True
+
+MINUTES_IMPACT_ADJUST_SLOPE = 1.5
+MINUTES_IMPACT_ADJUST_CLIP = 2.5
+
+MINUTES_SALARY_LEVEL_SCALE_M = 12.0
+MINUTES_SALARY_CHANGE_SCALE_M = 10.0
+MINUTES_SALARY_LEVEL_WEIGHT = 0.8
+MINUTES_SALARY_CHANGE_WEIGHT = 0.6
+MINUTES_SALARY_ADJUST_CLIP = 2.0
+
+MINUTES_COMPETITION_PENALTY = 0.40
+MINUTES_COMPETITION_MAX_PENALTY = 2.5
 

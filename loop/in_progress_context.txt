@@ -1,3 +1,21 @@
+2026-03-07 — Forecast v1.1 draft-aware rookie upgrade COMPLETE
+- Completed code changes:
+  - Added draft fetcher: `src/data_fetch/fetch_player_draft_history.py`
+  - Added draft constants + rookie/minutes/regression knobs: `src/player_eval/constants.py`
+  - Wired draft metadata into profile aggregate: `src/profile_aggregate/build_profile_aggregate.py`
+  - Refactored projection core for draft-aware rookies + tuned rookie priors + conditional regression-to-mean + impact/salary/depth-aware minutes: `src/player_eval/project_next_season.py`
+  - Added forecast CLI passthrough flags for rookie scale control: `src/simulation/run_forecast.py`
+- Completed docs/context updates:
+  - `readme.md` updated with new fetch stage + forecast-stage behavior
+  - `reference/simulation/Simulation_Core_Summary.md` append-only 2026-03-07 entry added
+  - `loop/context_summary.txt` updated with implementation + metrics
+- Current validated snapshot:
+  - Wins backtest-style MAE/r: 2023-24 `8.203/0.6711`, 2024-25 `9.017/0.6375`
+  - Margin proxy MAE/r: 2023-24 `4.404/0.6760`, 2024-25 `4.645/0.5977`
+  - Player carry: BKE r `0.4194 -> 0.4901`, MPG r `0.7927 -> 0.8189`
+  - Rookie scale selected by tuning: `0.85`
+- Optional follow-up (not blocking): rerun draft fetch with full CommonPlayerInfo enrichment when endpoint latency conditions improve.
+
 2026-03-06 — Forecast Pipeline COMPLETE
 - Full forward-projection pipeline built and validated end-to-end
 - All 4 stages working: project_next_season → team_feature_aggregation → season_sim → lineup_projection
