@@ -1,3 +1,55 @@
+- 2026-03-07 — Step 1 PPP quick-fix calibration pass completed and rerun
+	- Root issue confirmed: PPP branch was mis-scaled vs margin path due profile-unit mapping and output display inflation (`ppp_net_rating` scale).
+	- `src/simulation/season_sim.py` updates:
+		- Added empirical season-level impact→net calibration (`_estimate_impact_to_net_scale`) and wired it into PPP game expectation build.
+		- Kept offense/defense blend at `0.50`, added PPP clipping bounds, and possession-aware sigma exponent control (`possessions^0.50`).
+		- Fixed displayed `ppp_net_rating` to use calibrated net units (removed erroneous `*100` inflation).
+	- `src/simulation/simulation_config.py` updates:
+		- Pace regression strengthened to `0.40` prior-team / `0.60` league mean.
+		- Added centralized PPP calibration constants:
+			- `PPP_IMPACT_SCALE_PER100`, `PPP_OFF_DEF_BLEND_WEIGHT`, `PPP_SIGMA_POSSESSION_EXPONENT`, `PPP_MIN`, `PPP_MAX`.
+	- Rerun commands completed:
+		- `python3 src/simulation/season_sim.py`
+		- `python3 src/simulation/validate_sim.py`
+		- `python3 src/simulation/run_forecast.py`
+		- `python3 app/simulation_viewer.py`
+	- Updated validation snapshot:
+		- Step1 backtest overall (`simulation_step1_validation.json`):
+			- `margin`: MAE `5.13`, RMSE `6.19`, corr `0.8861`
+			- `ppp`: MAE `6.09`, RMSE `7.52`, corr `0.8815`
+		- Forecast-style backtest seasons (`run_forecast.py` synthetic schedules):
+			- 2023-24: `margin` MAE `8.20`, corr `0.6711`; `ppp` MAE `8.75`, corr `0.6305`
+			- 2024-25: `margin` MAE `9.02`, corr `0.6375`; `ppp` MAE `8.46`, corr `0.6633`
+
+- 2026-03-07 — Simulation Step 1 dual-model rollout (margin + PPP) completed
+	- Implemented parallel Step 1 simulation outputs in `src/simulation/season_sim.py`:
+		- `margin` model (existing net-rating path) retained as default.
+		- `ppp` model added using minute-weighted team `impact_obke`/`impact_dbke` from player profiles.
+		- Pace source is team-level prior-season pace from `team_game_logs.parquet` with regression-to-mean (`0.75` prior team, `0.25` prior league); no player-pace input.
+		- Shared variance framework preserved: PPP game sigma scales existing margin sigma by possessions/100.
+	- Output schema expanded for both backtest and forecast season results:
+		- `season_stats_by_model`, `team_results_by_model`, `default_model`.
+		- Team rows now include `model`, `ppp_offense`, `ppp_defense`, `ppp_net_rating`, `predicted_pace`.
+		- Forecast mode now also attaches `actual_wins`, `actual_losses`, and `win_error` when historical records are available.
+	- Updated validation in `src/simulation/validate_sim.py`:
+		- Season-level metrics now reported in `overall_by_model`/`per_season_by_model` while keeping backward-compatible `overall`/`per_season`.
+	- Updated frontend in `app/simulation_viewer.py`:
+		- Added Step 1 and Forecast model toggles (`Margin` / `PPP`).
+		- Tables/charts/stats now read model-specific payloads.
+		- Forecast table and chart now show actual W-L and projection error when available.
+	- Regenerated outputs:
+		- `reports/simulation_step1_season_results.json`
+		- `reports/simulation_step1_validation.json`
+		- `reports/forecast_season_results.json`
+		- `app/simulation.html`
+	- Validation snapshot after rollout:
+		- Step1 backtest overall (`simulation_step1_validation.json`):
+			- `margin`: MAE `5.13`, RMSE `6.19`, corr `0.8861`
+			- `ppp`: MAE `12.19`, RMSE `14.38`, corr `0.8499`
+		- Forecast-style backtest seasons (`run_forecast.py` synthetic schedules):
+			- 2023-24: `margin` MAE `8.20`, corr `0.6711`; `ppp` MAE `14.72`, corr `0.6123`
+			- 2024-25: `margin` MAE `9.02`, corr `0.6375`; `ppp` MAE `16.13`, corr `0.6011`
+
 - 2026-03-07 — Forecast v1.1 draft-aware rookie pass completed (fetch -> aggregate -> projection -> simulation)
 	- Added new pipeline fetch stage: `src/data_fetch/fetch_player_draft_history.py`.
 	- New canonical draft outputs: `data/historical/player_draft_history.parquet` and `data/historical/player_draft_history.csv`.

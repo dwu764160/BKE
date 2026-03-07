@@ -159,6 +159,15 @@ h1 { font-size:26px; font-weight:700; color:var(--accent); margin-bottom:2px; }
 .season-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 .season-tab:hover:not(.active) { color:var(--text); background:rgba(88,166,255,0.1); }
 
+/* Model Tabs */
+.model-tabs { display:flex; gap:8px; margin:-8px 0 16px 0; flex-wrap:wrap; }
+.model-tab {
+  border:1px solid var(--border); background:var(--surface); color:var(--text-muted);
+  border-radius:8px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;
+  text-transform:uppercase; letter-spacing:0.35px;
+}
+.model-tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+
 /* Stats Cards */
 .stats-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
 .stat-card {
@@ -434,6 +443,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
 
   <div id="step1View" class="view-panel">
     <div class="season-tabs" id="seasonTabs"></div>
+    <div class="model-tabs" id="step1ModelTabs"></div>
     <div class="stats-row" id="statsRow"></div>
     <div class="charts-row">
       <div class="chart-box" style="flex:2"><h3>Projected vs Actual Wins</h3><div id="winsChart"></div></div>
@@ -466,6 +476,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
 
   <div id="forecastView" class="view-panel hidden">
     <div class="season-tabs" id="forecastSeasonTabs"></div>
+    <div class="model-tabs" id="forecastModelTabs"></div>
     <div class="stats-row" id="forecastStatsRow"></div>
     <div class="charts-row">
       <div class="chart-box" style="flex:2"><h3>Projected Wins (Forecast)</h3><div id="forecastWinsChart"></div></div>
@@ -500,6 +511,8 @@ const FORECAST = DATA.forecast || {};
 let currentSeason = null;
 let lineupSeason = null;
 let forecastSeason = null;
+let step1Model = "margin";
+let forecastModel = "margin";
 let sortCol = "projected_rank";
 let sortDir = "asc";
 let forecastSortCol = "projected_rank";
@@ -520,12 +533,152 @@ function getStep2Seasons() {
   return Object.keys((STEP2 && STEP2.seasons) || {}).sort();
 }
 
+function modelLabel(modelKey) {
+  if (modelKey === "margin") return "Margin";
+  if (modelKey === "ppp") return "PPP";
+  return String(modelKey || "").toUpperCase();
+}
+
+function orderedModels(modelMap, configModels) {
+  const keys = Object.keys(modelMap || {});
+  const out = [];
+  (configModels || []).forEach(m => {
+    if (keys.includes(m) && !out.includes(m)) out.push(m);
+  });
+  keys.sort().forEach(m => {
+    if (!out.includes(m)) out.push(m);
+  });
+  return out;
+}
+
+function getSeasonModelMap(sdata, defaultModel) {
+  if (sdata && sdata.team_results_by_model && Object.keys(sdata.team_results_by_model).length) {
+    return sdata.team_results_by_model;
+  }
+  const map = {};
+  const fallbackModel = (sdata && sdata.default_model) || defaultModel || "margin";
+  map[fallbackModel] = (sdata && sdata.team_results) || [];
+  return map;
+}
+
+function getSeasonStatsMap(sdata, defaultModel) {
+  if (sdata && sdata.season_stats_by_model && Object.keys(sdata.season_stats_by_model).length) {
+    return sdata.season_stats_by_model;
+  }
+  const map = {};
+  const fallbackModel = (sdata && sdata.default_model) || defaultModel || "margin";
+  map[fallbackModel] = (sdata && sdata.season_stats) || {};
+  return map;
+}
+
+function getStep1RowsForSeason(season, modelKey) {
+  const sdata = (DATA.seasons || {})[season] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  if (modelMap[modelKey]) return modelMap[modelKey];
+  const fallback = sdata.default_model && modelMap[sdata.default_model] ? sdata.default_model : Object.keys(modelMap)[0];
+  return fallback ? modelMap[fallback] : [];
+}
+
+function getForecastRowsForSeason(season, modelKey) {
+  const sdata = ((FORECAST && FORECAST.seasons) || {})[season] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  if (modelMap[modelKey]) return modelMap[modelKey];
+  const fallback = sdata.default_model && modelMap[sdata.default_model] ? sdata.default_model : Object.keys(modelMap)[0];
+  return fallback ? modelMap[fallback] : [];
+}
+
+function getForecastStatsForSeason(season, modelKey) {
+  const sdata = ((FORECAST && FORECAST.seasons) || {})[season] || {};
+  const statsMap = getSeasonStatsMap(sdata, "margin");
+  if (statsMap[modelKey]) return statsMap[modelKey];
+  const fallback = sdata.default_model && statsMap[sdata.default_model] ? sdata.default_model : Object.keys(statsMap)[0];
+  return fallback ? statsMap[fallback] : {};
+}
+
+function syncStep1Model() {
+  const sdata = (DATA.seasons || {})[currentSeason] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  const models = orderedModels(modelMap, (DATA.config || {}).models || []);
+  if (!models.length) {
+    step1Model = "margin";
+    return;
+  }
+  if (!models.includes(step1Model)) {
+    step1Model = models.includes(sdata.default_model) ? sdata.default_model : models[0];
+  }
+}
+
+function syncForecastModel() {
+  const sdata = ((FORECAST && FORECAST.seasons) || {})[forecastSeason] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  const models = orderedModels(modelMap, (FORECAST.config || {}).models || []);
+  if (!models.length) {
+    forecastModel = "margin";
+    return;
+  }
+  if (!models.includes(forecastModel)) {
+    forecastModel = models.includes(sdata.default_model) ? sdata.default_model : models[0];
+  }
+}
+
+function initStep1ModelTabs() {
+  const el = document.getElementById("step1ModelTabs");
+  if (!el) return;
+  const sdata = (DATA.seasons || {})[currentSeason] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  const models = orderedModels(modelMap, (DATA.config || {}).models || []);
+  if (!models.length) {
+    el.innerHTML = "";
+    return;
+  }
+  syncStep1Model();
+  el.innerHTML = models.map(m => `
+    <button class="model-tab${m === step1Model ? " active" : ""}" data-model="${m}">${modelLabel(m)}</button>
+  `).join("");
+  el.querySelectorAll(".model-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      step1Model = btn.dataset.model;
+      sortCol = "projected_rank";
+      sortDir = "asc";
+      initStep1ModelTabs();
+      renderStep1();
+    });
+  });
+}
+
+function initForecastModelTabs() {
+  const el = document.getElementById("forecastModelTabs");
+  if (!el) return;
+  const sdata = ((FORECAST && FORECAST.seasons) || {})[forecastSeason] || {};
+  const modelMap = getSeasonModelMap(sdata, "margin");
+  const models = orderedModels(modelMap, (FORECAST.config || {}).models || []);
+  if (!models.length) {
+    el.innerHTML = "";
+    return;
+  }
+  syncForecastModel();
+  el.innerHTML = models.map(m => `
+    <button class="model-tab${m === forecastModel ? " active" : ""}" data-model="${m}">${modelLabel(m)}</button>
+  `).join("");
+  el.querySelectorAll(".model-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      forecastModel = btn.dataset.model;
+      forecastSortCol = "projected_rank";
+      forecastSortDir = "asc";
+      initForecastModelTabs();
+      renderForecast();
+    });
+  });
+}
+
 (function init() {
   const seasons = getStep1Seasons();
   currentSeason = seasons.length ? seasons[seasons.length - 1] : null;
 
   const fSeasons = getForecastSeasons();
   forecastSeason = fSeasons.length ? fSeasons[fSeasons.length - 1] : null;
+  syncStep1Model();
+  syncForecastModel();
 
   const cfg = DATA.config || {};
   document.getElementById("footSigma").textContent = cfg.sigma_league || "?";
@@ -533,6 +686,7 @@ function getStep2Seasons() {
   document.getElementById("footN").textContent = (cfg.n_simulations || 0).toLocaleString();
 
   initStep1SeasonTabs();
+  initStep1ModelTabs();
   initSingleGameSimulator(seasons);
   initViewTabs();
   initStep2View();
@@ -578,6 +732,8 @@ function switchSeason(s) {
   document.querySelectorAll("#seasonTabs .season-tab").forEach(t => {
     t.classList.toggle("active", t.textContent === s);
   });
+  syncStep1Model();
+  initStep1ModelTabs();
   sortCol = "projected_rank";
   sortDir = "asc";
   renderStep1();
@@ -587,25 +743,30 @@ function renderStep1() {
   if (!currentSeason) return;
   const sdata = DATA.seasons[currentSeason];
   if (!sdata) return;
-  renderStats(sdata);
-  renderTable(sdata);
-  renderWinsChart(sdata);
+  syncStep1Model();
+  renderStats(sdata, step1Model);
+  renderTable(sdata, step1Model);
+  renderWinsChart(sdata, step1Model);
   renderCalibration();
 }
 
-function renderStats(sdata) {
-  const ss = sdata.season_stats || {};
+function renderStats(sdata, modelKey) {
+  const ssMap = getSeasonStatsMap(sdata, "margin");
+  const ss = ssMap[modelKey] || sdata.season_stats || {};
   const vg = (DATA.validation && DATA.validation.game_level && DATA.validation.game_level[currentSeason]) || {};
+  const teams = getStep1RowsForSeason(currentSeason, modelKey);
+  const isMarginModel = modelKey === "margin";
 
   const cards = [
+    { label:"Model", value: modelLabel(modelKey), cls:"val-purple", detail:"Projection view" },
     { label:"Correlation", value: fmt(ss.correlation, 3), cls:"val-green", detail:"Proj vs Actual wins" },
     { label:"MAE", value: fmt(ss.mae, 2), cls:"val-accent", detail:"Avg win error" },
     { label:"RMSE", value: fmt(ss.rmse, 2), cls:"val-accent", detail:"Root mean sq error" },
-    { label:"Brier Score", value: fmt(vg.brier_score, 4), cls:"val-orange", detail:"Game-level (0.25=naive)" },
-    { label:"Accuracy", value: vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "-", cls:"val-green", detail:"Game pick accuracy" },
-    { label:"Log Loss", value: fmt(vg.log_loss, 4), cls:"val-purple", detail:"(0.693=coin flip)" },
-    { label:"Margin RMSE", value: fmt(vg.margin_rmse, 1), cls:"val-accent", detail:"Predicted vs actual margin" },
-    { label:"Teams", value: (sdata.team_results || []).length, cls:"val-accent", detail: currentSeason },
+    { label:"Brier Score", value: isMarginModel ? fmt(vg.brier_score, 4) : "-", cls:"val-orange", detail:isMarginModel?"Game-level (0.25=naive)":"Margin-model only" },
+    { label:"Accuracy", value: isMarginModel && vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "-", cls:"val-green", detail:isMarginModel?"Game pick accuracy":"Margin-model only" },
+    { label:"Log Loss", value: isMarginModel ? fmt(vg.log_loss, 4) : "-", cls:"val-purple", detail:isMarginModel?"(0.693=coin flip)":"Margin-model only" },
+    { label:"Margin RMSE", value: isMarginModel ? fmt(vg.margin_rmse, 1) : "-", cls:"val-accent", detail:isMarginModel?"Predicted vs actual margin":"Margin-model only" },
+    { label:"Teams", value: teams.length, cls:"val-accent", detail: currentSeason },
   ];
 
   const el = document.getElementById("statsRow");
@@ -618,8 +779,8 @@ function renderStats(sdata) {
   `).join("");
 }
 
-function renderTable(sdata) {
-  let teams = [...(sdata.team_results || [])];
+function renderTable(sdata, modelKey) {
+  let teams = [...getStep1RowsForSeason(currentSeason, modelKey)];
   teams.sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (va == null) va = 0;
@@ -632,8 +793,11 @@ function renderTable(sdata) {
     { key:"team", label:"Team", cls:"team" },
     { key:"conference", label:"Conf", cls:"num" },
     { key:"projected_conf_rank", label:"Conf Rk", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"-" },
-    { key:"mu", label:"Net Rtg", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
+    { key:"mu", label:modelKey === "ppp" ? "Net PPP" : "Net Rtg", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
     { key:"sigma", label:"Vol", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
+    { key:"predicted_pace", label:"Pace", cls:"num", fmt:v=>v!=null?Number(v).toFixed(2):"-" },
+    { key:"ppp_offense", label:"Off PPP", cls:"num", fmt:v=>v!=null?Number(v).toFixed(3):"-" },
+    { key:"ppp_defense", label:"Def PPP", cls:"num", fmt:v=>v!=null?Number(v).toFixed(3):"-" },
     { key:"projected_wins", label:"Proj W", cls:"num", fmt:v=>v!=null?Number(v).toFixed(1):"-" },
     { key:"win_p5", label:"90% CI", cls:"conf-band", fmt:(v,r)=>`${r.win_p5}-${r.win_p95}` },
     { key:"actual_wins", label:"Actual W", cls:"num", fmt:v=>v!=null?v:"-" },
@@ -684,8 +848,8 @@ function renderTable(sdata) {
   });
 }
 
-function renderWinsChart(sdata) {
-  const teams = [...(sdata.team_results || [])].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
+function renderWinsChart(sdata, modelKey) {
+  const teams = [...getStep1RowsForSeason(currentSeason, modelKey)].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
   const n = teams.length;
   const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
   const h = n * (barH + gap) + 40;
@@ -806,14 +970,14 @@ function initSingleGameSimulator(seasons) {
 
 function populateTeamOptions(season, teamSelectId) {
   const el = document.getElementById(teamSelectId);
-  const teams = ((DATA.seasons[season] || {}).team_results || [])
+  const teams = getStep1RowsForSeason(season, step1Model)
     .slice()
     .sort((a, b) => (a.team || "").localeCompare(b.team || ""));
   el.innerHTML = teams.map(t => `<option value="${t.team}">${t.team}</option>`).join("");
 }
 
 function getTeamEntry(season, teamAbbr) {
-  const rows = ((DATA.seasons[season] || {}).team_results || []);
+  const rows = getStep1RowsForSeason(season, step1Model);
   for (const row of rows) {
     if (row.team === teamAbbr) return row;
   }
@@ -1441,8 +1605,10 @@ function uniqueNamedList(values) {
 function initForecastView() {
   const seasons = getForecastSeasons();
   const tabsEl = document.getElementById("forecastSeasonTabs");
+  const modelTabsEl = document.getElementById("forecastModelTabs");
   if (!tabsEl) return;
   tabsEl.innerHTML = "";
+  if (modelTabsEl) modelTabsEl.innerHTML = "";
   if (seasons.length === 0) {
     tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available. Run: python3 src/simulation/run_forecast.py</div>';
     return;
@@ -1454,6 +1620,8 @@ function initForecastView() {
     tab.onclick = () => switchForecastSeason(s);
     tabsEl.appendChild(tab);
   });
+  syncForecastModel();
+  initForecastModelTabs();
 }
 
 function switchForecastSeason(s) {
@@ -1461,6 +1629,8 @@ function switchForecastSeason(s) {
   document.querySelectorAll("#forecastSeasonTabs .season-tab").forEach(t => {
     t.classList.toggle("active", t.textContent.startsWith(s));
   });
+  syncForecastModel();
+  initForecastModelTabs();
   renderForecast();
 }
 
@@ -1468,18 +1638,20 @@ function renderForecast() {
   if (!forecastSeason || !FORECAST.seasons) return;
   const sdata = FORECAST.seasons[forecastSeason];
   if (!sdata) return;
-  renderForecastStats(sdata);
-  renderForecastTable(sdata);
-  renderForecastWinsChart(sdata);
+  syncForecastModel();
+  renderForecastStats(sdata, forecastModel);
+  renderForecastTable(sdata, forecastModel);
+  renderForecastWinsChart(sdata, forecastModel);
   renderForecastValidation();
 }
 
-function renderForecastStats(sdata) {
-  const teams = sdata.team_results || [];
+function renderForecastStats(sdata, modelKey) {
+  const teams = getForecastRowsForSeason(forecastSeason, modelKey);
+  const seasonStats = getForecastStatsForSeason(forecastSeason, modelKey) || {};
   const wins = teams.map(t => t.projected_wins || 0);
   const avgWins = wins.length ? (wins.reduce((a,b) => a+b, 0) / wins.length) : 0;
-  const maxW = Math.max(...wins);
-  const minW = Math.min(...wins);
+  const maxW = wins.length ? Math.max(...wins) : 0;
+  const minW = wins.length ? Math.min(...wins) : 0;
   const spread = maxW - minW;
 
   // Get validation data
@@ -1500,6 +1672,10 @@ function renderForecastStats(sdata) {
   const fcfg = FORECAST.config || {};
 
   const cards = [
+    { label: "Model", value: modelLabel(modelKey), cls: "val-purple", detail: "Projection view" },
+    { label: "Win Corr", value: fmt(seasonStats.correlation, 3), cls: "val-green", detail: "Proj vs Actual wins" },
+    { label: "Win MAE", value: fmt(seasonStats.mae, 2), cls: "val-accent", detail: "Average win error" },
+    { label: "Win RMSE", value: fmt(seasonStats.rmse, 2), cls: "val-accent", detail: "Root mean sq error" },
     { label: "Teams", value: teams.length, cls: "val-accent", detail: forecastSeason },
     { label: "Avg Wins", value: avgWins.toFixed(1), cls: "val-accent", detail: "Mean projected" },
     { label: "Win Spread", value: spread.toFixed(1), cls: "val-orange", detail: `${minW.toFixed(0)}-${maxW.toFixed(0)}` },
@@ -1520,8 +1696,8 @@ function renderForecastStats(sdata) {
   `).join("");
 }
 
-function renderForecastTable(sdata) {
-  let teams = [...(sdata.team_results || [])];
+function renderForecastTable(sdata, modelKey) {
+  let teams = [...getForecastRowsForSeason(forecastSeason, modelKey)];
   teams.sort((a, b) => {
     let va = a[forecastSortCol], vb = b[forecastSortCol];
     if (va == null) va = 0;
@@ -1534,10 +1710,22 @@ function renderForecastTable(sdata) {
     { key: "team", label: "Team", cls: "team" },
     { key: "conference", label: "Conf", cls: "num" },
     { key: "projected_conf_rank", label: "Conf Rk", cls: "num", fmt: v => v != null ? Number(v).toFixed(1) : "-" },
-    { key: "mu", label: "Net Rtg", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+    { key: "mu", label: modelKey === "ppp" ? "Net PPP" : "Net Rtg", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
     { key: "sigma", label: "Vol", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+    { key: "predicted_pace", label: "Pace", cls: "num", fmt: v => v != null ? Number(v).toFixed(2) : "-" },
+    { key: "ppp_offense", label: "Off PPP", cls: "num", fmt: v => v != null ? Number(v).toFixed(3) : "-" },
+    { key: "ppp_defense", label: "Def PPP", cls: "num", fmt: v => v != null ? Number(v).toFixed(3) : "-" },
     { key: "projected_wins", label: "Proj W", cls: "num val-accent", fmt: v => v != null ? Number(v).toFixed(1) : "-" },
     { key: "win_p5", label: "90% CI", cls: "conf-band", fmt: (v, r) => `${r.win_p5}-${r.win_p95}` },
+    { key: "actual_wins", label: "Actual W", cls: "num", fmt: v => v != null ? v : "-" },
+    { key: "actual_losses", label: "Actual L", cls: "num", fmt: v => v != null ? v : "-" },
+    { key: "win_error", label: "Error", cls: "num", fmt: (v) => {
+      if (v == null) return "-";
+      const abs = Math.abs(v);
+      const sign = v > 0 ? "+" : "";
+      const cls = abs <= 3 ? "err-good" : abs <= 7 ? "err-ok" : "err-bad";
+      return `<span class="${cls}">${sign}${Number(v).toFixed(1)}</span>`;
+    } },
     { key: "direct_playoff_probability", label: "Top 6 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
     { key: "top_10_probability", label: "Top 10 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
     { key: "playin_only_probability", label: "7-10 %", cls: "num", fmt: v => v != null ? (v * 100).toFixed(0) + "%" : "-" },
@@ -1573,18 +1761,18 @@ function renderForecastTable(sdata) {
         forecastSortCol = col;
         forecastSortDir = col === "team" ? "asc" : "desc";
       }
-      renderForecastTable(sdata);
+      renderForecastTable(sdata, modelKey);
     });
   });
 }
 
-function renderForecastWinsChart(sdata) {
-  const teams = [...(sdata.team_results || [])].sort((a, b) => (b.projected_wins || 0) - (a.projected_wins || 0));
+function renderForecastWinsChart(sdata, modelKey) {
+  const teams = [...getForecastRowsForSeason(forecastSeason, modelKey)].sort((a, b) => (b.projected_wins || 0) - (a.projected_wins || 0));
   const n = teams.length;
   const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
   const h = n * (barH + gap) + 40;
   const chartW = 700;
-  const maxWins = Math.max(82, ...teams.map(t => Math.max(t.projected_wins || 0, t.win_p95 || 0)));
+  const maxWins = Math.max(82, ...teams.map(t => Math.max(t.projected_wins || 0, t.win_p95 || 0, t.actual_wins || 0)));
   const xScale = (chartW - leftMargin - rightMargin) / maxWins;
 
   let svg = `<svg width="100%" viewBox="0 0 ${chartW} ${h}" style="max-height:${Math.min(h, 900)}px">`;
@@ -1598,18 +1786,25 @@ function renderForecastWinsChart(sdata) {
     const projW = leftMargin + (t.projected_wins || 0) * xScale;
     const p5x = leftMargin + (t.win_p5 || 0) * xScale;
     const p95x = leftMargin + (t.win_p95 || 0) * xScale;
+    const actW = t.actual_wins != null ? leftMargin + t.actual_wins * xScale : null;
 
     // 90% CI band
     svg += `<rect x="${p5x}" y="${y+2}" width="${p95x - p5x}" height="${barH-4}" rx="2" fill="var(--purple)" opacity="0.15"/>`;
     // Projected bar
     svg += `<rect x="${leftMargin}" y="${y+4}" width="${projW - leftMargin}" height="${barH-8}" rx="2" fill="var(--purple)" opacity="0.7"/>`;
+    if (actW != null) {
+      svg += `<line x1="${actW}" y1="${y+1}" x2="${actW}" y2="${y+barH-1}" stroke="var(--green)" stroke-width="2.5"/>`;
+    }
 
     svg += `<text x="${leftMargin - 4}" y="${y + barH/2 + 4}" text-anchor="end" font-size="11" font-weight="600">${t.team}</text>`;
-    svg += `<text x="${Math.max(projW, p95x) + 6}" y="${y + barH/2 + 4}" font-size="10" fill="var(--text-muted)">${(t.projected_wins || 0).toFixed(0)} [${t.win_p5}-${t.win_p95}]</text>`;
+    const errStr = t.win_error != null ? ` (${t.win_error > 0 ? "+" : ""}${Number(t.win_error).toFixed(1)})` : "";
+    svg += `<text x="${Math.max(projW, p95x, actW || 0) + 6}" y="${y + barH/2 + 4}" font-size="10" fill="var(--text-muted)">${(t.projected_wins || 0).toFixed(0)}P / ${t.actual_wins != null ? t.actual_wins : "?"}A ${errStr}</text>`;
   });
 
   svg += `<rect x="${chartW - 160}" y="${h - 18}" width="12" height="6" rx="1" fill="var(--purple)" opacity="0.7"/>`;
   svg += `<text x="${chartW - 144}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Projected</text>`;
+  svg += `<line x1="${chartW - 104}" y1="${h - 18}" x2="${chartW - 104}" y2="${h - 12}" stroke="var(--green)" stroke-width="2.5"/>`;
+  svg += `<text x="${chartW - 98}" y="${h - 12}" font-size="10" fill="var(--text-muted)">Actual</text>`;
   svg += `<rect x="${chartW - 80}" y="${h - 18}" width="20" height="6" rx="1" fill="var(--purple)" opacity="0.15"/>`;
   svg += `<text x="${chartW - 56}" y="${h - 12}" font-size="10" fill="var(--text-muted)">90% CI</text>`;
 

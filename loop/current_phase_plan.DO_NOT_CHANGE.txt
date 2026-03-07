@@ -100,3 +100,7 @@ End of file — DO NOT CHANGE
 [ ] Stream D: Archetype Evaluation & Model Integration
     Command: python src/modeling/evaluate_players.py
     Notes: Merge archetypes with xRAPM, validate classifications, prepare for prediction models.
+
+[x] Stream F: Simulation Step 1 Dual-Model Rollout (Margin + PPP)
+    Command: python3 src/simulation/season_sim.py && python3 src/simulation/validate_sim.py && python3 src/simulation/run_forecast.py && python3 app/simulation_viewer.py
+    Notes: Completed parallel margin/PPP outputs for backtest + forecast, added forecast actual W-L merge, updated validation to report per-model season stats, and added Step 1/Forecast model toggles in simulation viewer.

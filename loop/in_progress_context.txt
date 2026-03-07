@@ -1,3 +1,37 @@
+2026-03-07 — PPP quick-fix calibration pass COMPLETE
+- Completed quick-fix implementation and full rerun for Step 1/Forecast PPP calibration.
+- Final code changes:
+  - `src/simulation/season_sim.py`
+    - Added empirical `impact_to_net_scale` estimation from team features vs actual margin, then applied to PPP expectation mapping.
+    - Applied PPP blend/clipping/sigma controls via centralized config constants.
+    - Corrected `ppp_net_rating` output scale (removed inflated `*100` display conversion).
+  - `src/simulation/simulation_config.py`
+    - Pace regression now `0.40` team prior / `0.60` league mean.
+    - Added PPP calibration constants (`PPP_IMPACT_SCALE_PER100`, `PPP_OFF_DEF_BLEND_WEIGHT`, `PPP_SIGMA_POSSESSION_EXPONENT`, `PPP_MIN`, `PPP_MAX`).
+- Canonical rerun completed:
+  - `python3 src/simulation/season_sim.py`
+  - `python3 src/simulation/validate_sim.py`
+  - `python3 src/simulation/run_forecast.py`
+  - `python3 app/simulation_viewer.py`
+- Latest metrics:
+  - Step1 backtest overall: `margin` MAE/RMSE/r = `5.13/6.19/0.8861`; `ppp` = `6.09/7.52/0.8815`.
+  - Forecast-style backtest:
+    - 2023-24: `margin` `8.20/0.6711` vs `ppp` `8.75/0.6305` (MAE/r)
+    - 2024-25: `margin` `9.02/0.6375` vs `ppp` `8.46/0.6633` (MAE/r)
+
+2026-03-07 — Active focus update
+- Completed requested Step 1 dual-model implementation (`margin` + `ppp`) with shared Monte Carlo path in `src/simulation/season_sim.py`.
+- Completed forecast-mode actual W-L integration: forecast rows now include `actual_wins`, `actual_losses`, `win_error` when logs exist.
+- Completed frontend toggle wiring in `app/simulation_viewer.py` for Step 1 and Forecast views (model-specific cards/tables/charts).
+- Completed season-level validation expansion in `src/simulation/validate_sim.py` (`overall_by_model`, `per_season_by_model`).
+- Regenerated artifacts and verified outputs exist:
+  - `reports/simulation_step1_season_results.json`
+  - `reports/simulation_step1_validation.json`
+  - `reports/forecast_season_results.json`
+  - `app/simulation.html`
+- Current observed model performance (backtest Step 1):
+  - margin outperforms ppp on MAE/RMSE/correlation; PPP is available as alternate view for diagnostics.
+
 2026-03-07 — Forecast v1.1 draft-aware rookie upgrade COMPLETE
 - Completed code changes:
   - Added draft fetcher: `src/data_fetch/fetch_player_draft_history.py`

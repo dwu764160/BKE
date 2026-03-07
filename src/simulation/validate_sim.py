@@ -189,22 +189,31 @@ def validate_season_level(
         return {"error": "Season results not found — run season_sim.py first"}
 
     data = json.loads(season_results_path.read_text(encoding="utf-8"))
-    all_pred = []
-    all_actual = []
-    per_season = {}
+    per_season_by_model = {}
+    model_accumulators = {}
 
     for season, sdata in data.get("seasons", {}).items():
-        pred = []
-        actual = []
-        for team in sdata.get("team_results", []):
-            if "actual_wins" in team:
-                pred.append(team["projected_wins"])
-                actual.append(team["actual_wins"])
-        if pred:
+        team_results_by_model = sdata.get("team_results_by_model")
+        if not team_results_by_model:
+            fallback_model = sdata.get("default_model", "margin")
+            team_results_by_model = {fallback_model: sdata.get("team_results", [])}
+
+        for model_key, rows in team_results_by_model.items():
+            pred = []
+            actual = []
+            for team in rows:
+                if "actual_wins" in team:
+                    pred.append(team["projected_wins"])
+                    actual.append(team["actual_wins"])
+
+            if not pred:
+                continue
+
             pred_arr = np.array(pred)
             act_arr = np.array(actual)
             errors = pred_arr - act_arr
-            per_season[season] = {
+
+            per_season_by_model.setdefault(model_key, {})[season] = {
                 "n_teams": len(pred),
                 "mae": round(float(np.mean(np.abs(errors))), 2),
                 "rmse": round(float(np.sqrt(np.mean(errors ** 2))), 2),
@@ -213,15 +222,19 @@ def validate_season_level(
                 "max_overestimate": round(float(np.max(errors)), 1),
                 "max_underestimate": round(float(np.min(errors)), 1),
             }
-            all_pred.extend(pred)
-            all_actual.extend(actual)
 
-    overall = {}
-    if all_pred:
-        all_pred = np.array(all_pred)
-        all_actual = np.array(all_actual)
+            model_accumulators.setdefault(model_key, {"pred": [], "actual": []})
+            model_accumulators[model_key]["pred"].extend(pred)
+            model_accumulators[model_key]["actual"].extend(actual)
+
+    overall_by_model = {}
+    for model_key, acc in model_accumulators.items():
+        if not acc["pred"]:
+            continue
+        all_pred = np.array(acc["pred"])
+        all_actual = np.array(acc["actual"])
         all_errors = all_pred - all_actual
-        overall = {
+        overall_by_model[model_key] = {
             "n_team_seasons": len(all_pred),
             "mae": round(float(np.mean(np.abs(all_errors))), 2),
             "rmse": round(float(np.sqrt(np.mean(all_errors ** 2))), 2),
@@ -229,9 +242,13 @@ def validate_season_level(
             "mean_error": round(float(np.mean(all_errors)), 2),
         }
 
+    default_model = "margin" if "margin" in overall_by_model else (next(iter(overall_by_model.keys()), None))
     return {
-        "overall": overall,
-        "per_season": per_season,
+        "overall": overall_by_model.get(default_model, {}),
+        "per_season": per_season_by_model.get(default_model, {}),
+        "overall_by_model": overall_by_model,
+        "per_season_by_model": per_season_by_model,
+        "default_model": default_model,
     }
 
 
@@ -283,6 +300,16 @@ def main() -> None:
         print(f"    MAE: {season_val['overall']['mae']}")
         print(f"    RMSE: {season_val['overall']['rmse']}")
         print(f"    Correlation: {season_val['overall']['correlation']}")
+
+    overall_by_model = season_val.get("overall_by_model", {})
+    if overall_by_model:
+        print("\n  Season-Level By Model:")
+        for model_key in sorted(overall_by_model.keys()):
+            m = overall_by_model[model_key]
+            print(
+                f"    [{model_key}] MAE={m.get('mae')}, "
+                f"RMSE={m.get('rmse')}, Correlation={m.get('correlation')}"
+            )
 
     # D: Aggregate calibration across all seasons
     all_cal_errors = []

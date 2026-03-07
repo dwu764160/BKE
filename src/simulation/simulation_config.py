@@ -43,6 +43,26 @@ HOME_COURT_ADVANTAGE = 2.0
 SEASON_SIMULATIONS = 10_000
 SIMULATION_RANDOM_SEED = 42
 
+# Parallel simulation models
+SIM_MODEL_MARGIN = "margin"
+SIM_MODEL_PPP = "ppp"
+SIM_MODELS = (SIM_MODEL_MARGIN, SIM_MODEL_PPP)
+
+# PPP / possession-based model constants
+LEAGUE_AVG_PPP = 1.14
+DEFAULT_PACE_PER_48 = 100.0
+# Pace is noisy year-to-year, so regress aggressively toward league mean.
+PACE_PRIOR_SEASON_WEIGHT = 0.40
+PACE_REGRESSION_WEIGHT = 0.60
+POSSESSION_FTA_WEIGHT = 0.44
+
+# PPP calibration knobs
+PPP_IMPACT_SCALE_PER100 = 100.0
+PPP_OFF_DEF_BLEND_WEIGHT = 0.50
+PPP_SIGMA_POSSESSION_EXPONENT = 0.50
+PPP_MIN = 0.85
+PPP_MAX = 1.35
+
 # Rank-based postseason cutoffs (per conference)
 DIRECT_PLAYOFF_RANK = 6
 PLAY_IN_RANK = 10
@@ -50,6 +70,39 @@ PLAY_IN_RANK = 10
 # Step 2 lineup model constants
 LINEUP_SIZE = 5
 MIN_MPG_FOR_POOL = 3.0
+
+# Step 2 baseline eligibility and structural checks
+STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES = True
+STEP2_STARTER_REQUIRE_TRUE_BIG = True
+STEP2_STARTER_TRUE_BIG_BANDS = ("Forward-Center", "Center")
+
+# Starter penalty for low projected minutes (soft penalty, not exclusion)
+STEP2_STARTER_LOW_MINUTES_THRESHOLD = 24.0
+STEP2_STARTER_LOW_MINUTES_PENALTY = 1.10
+
+# Step 2 optimization toggles
+STEP2_ENABLE_CONTINUITY_PRIOR = True
+STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT = True
+STEP2_ENABLE_ROTATION_REGIME_MODEL = True
+
+# Continuity prior: continuity_factor = 1 - kappa * (1 - R)
+STEP2_CONTINUITY_KAPPA = 0.35
+STEP2_CONTINUITY_DEFAULT_RETURNING = 1.0
+
+# Clutch core constraint
+STEP2_CLUTCH_CANDIDATE_SIZE = 7
+STEP2_CLUTCH_MIN_STARTERS = 3
+STEP2_CLUTCH_MAX_SWAPS = 2
+
+# Rotation regime model
+STEP2_REGIME_STAR_COEF = 0.8
+STEP2_REGIME_BENCH_COEF = 0.6
+STEP2_ROT_STAGGER_START_W = 0.65
+STEP2_ROT_STAGGER_BENCH_W = 0.35
+STEP2_ROT_BENCH_START_W = 0.30
+STEP2_ROT_BENCH_BENCH_W = 0.70
+STEP2_ROT_SIGMA_BASE = 0.60
+STEP2_ROT_SIGMA_BENCH_W = 0.40
 
 # Clutch score weights: 0.80 * C + 0.20 * (0.65 * I + 0.35 * M)
 CLUTCH_WEIGHT_C = 0.80
