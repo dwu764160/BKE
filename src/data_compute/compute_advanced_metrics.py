@@ -1,8 +1,10 @@
 """
 src/data_compute/compute_advanced_metrics.py
+=============================================================================
 Aggregates 'clean' possessions into Team and Lineup level advanced stats.
 Enriches output with readable Team Names and Player Names.
 Fixed: Handles float/string ID mismatches (e.g., 1234.0 vs "1234").
+=============================================================================
 """
 
 import pandas as pd

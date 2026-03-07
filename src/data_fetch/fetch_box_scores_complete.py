@@ -1,11 +1,13 @@
 """
 src/data_fetch/fetch_box_scores_complete.py
+=============================================================================
 Fetches COMPLETE player box score data for ALL players who appear in possession data.
 
 Key Improvements:
 1. Uses leaguedashplayerstats (ALL players in season) instead of individual player logs
 2. Fetches both Base and Advanced stats for BPM calculation
 3. No ROSTERSTATUS filter - gets everyone who played
+=============================================================================
 """
 
 import pandas as pd

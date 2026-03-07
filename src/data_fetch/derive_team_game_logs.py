@@ -1,5 +1,6 @@
 """
 src/data_fetch/derive_team_game_logs.py
+=============================================================================
 
 Builds/repairs data/historical/team_game_logs.parquet with quality gates.
 
@@ -9,6 +10,7 @@ Priority order:
 3) Fallback to PBP derivation only if API fetch fails.
 
 This prevents corrupted team margin distributions from propagating downstream.
+=============================================================================
 """
 
 from __future__ import annotations

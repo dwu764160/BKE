@@ -1,10 +1,12 @@
 """
 src/data_fetch/fetch_defensive_metrics.py
+=============================================================================
 Fetches additional defensive metrics from the NBA Stats API:
   1. Hustle Stats (deflections, loose balls, charges drawn, contested shots, boxouts)
 
 Outputs:
   - data/tracking/{season}/hustle_stats.parquet
+=============================================================================
 """
 
 import pandas as pd

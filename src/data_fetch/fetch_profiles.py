@@ -1,8 +1,10 @@
 """
 src/data_fetch/fetch_profiles.py
+=============================================================================
 Fetches player and team profile information via NBA endpoints and web scraping.
 Input: player/team IDs
 Output: writes profile records into the local SQLite DB or parquet
+=============================================================================
 """
 
 import sqlite3

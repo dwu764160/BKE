@@ -1,7 +1,9 @@
 """
 src/data_fetch/fetch_official_stats.py
+=============================================================================
 Stream C: Fetches "Official" Advanced Stats for Display.
 Matches NBA.com / Basketball-Reference exactly.
+=============================================================================
 """
 
 import pandas as pd

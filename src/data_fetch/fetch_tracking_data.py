@@ -1,11 +1,13 @@
 """
 src/data_fetch/fetch_tracking_data.py
+=============================================================================
 Fetches "Style" and "Tracking" data using TLS Impersonation (curl_cffi).
 
 v2.6 adds:
   - PostTouch, ElbowTouch, PaintTouch tracking measures
   - Additional defense dashboard categories (2PT, LT10, GT15)
   - Hustle stats (disruption-related metrics)
+=============================================================================
 """
 
 import pandas as pd

@@ -1,3 +1,10 @@
+"""
+src/utils/player_name_normalizer.py
+=============================================================================
+Player name normalization utilities. Handles diacritics, suffixes, punctuation,
+and common name variants for cross-source matching.
+=============================================================================
+"""
 import re
 import unicodedata
 from pathlib import Path

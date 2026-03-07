@@ -1,7 +1,9 @@
 """
 src/utils/export_db_to_parquet.py
+=============================================================================
 Exports 'players' and 'teams' tables from SQLite to Parquet.
 FIXED: Prevents overwriting player_id with team_id.
+=============================================================================
 """
 
 import sqlite3

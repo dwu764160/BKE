@@ -1,3 +1,11 @@
+"""
+src/player_eval/constants.py
+=============================================================================
+Centralized constants, paths, and thresholds for the Player Evaluation
+Component (PEC) pipeline. All configurable parameters for player impact
+profiles, team feature aggregation, and forecast projection live here.
+=============================================================================
+"""
 from pathlib import Path
 
 
@@ -251,3 +259,49 @@ MINUTES_SALARY_ADJUST_CLIP = 2.0
 MINUTES_COMPETITION_PENALTY = 0.40
 MINUTES_COMPETITION_MAX_PENALTY = 2.5
 
+# ═══════════════════════════════════════════════════════════════════
+# Forecast Structural Improvements — Availability, Replacement, Star
+# ═══════════════════════════════════════════════════════════════════
+
+# ── Availability/Health Regression ──────────────────────────────
+# Apply expected games-played discount based on prior-season availability +
+# role weight.  Stars who play 82 games are rare; injury risk rises with
+# age and minute load.  This shrinks projected minutes toward realistic
+# expected games.
+ENABLE_FORECAST_AVAILABILITY_DISCOUNT = True
+# Role-based expected games-played fraction (of 82).
+# Stars who played 82 are still projected at < 82 because most won't repeat.
+FORECAST_AVAIL_STAR_GAMES_FRACTION = 0.88       # ≥28 MPG prior season
+FORECAST_AVAIL_STARTER_GAMES_FRACTION = 0.92    # 20-28 MPG
+FORECAST_AVAIL_ROTATION_GAMES_FRACTION = 0.96   # 10-20 MPG
+FORECAST_AVAIL_BENCH_GAMES_FRACTION = 0.98      # <10 MPG
+# Age-based additional discount (multiplicative on top of role fraction).
+FORECAST_AVAIL_AGE_DISCOUNT_START = 30          # start aging out
+FORECAST_AVAIL_AGE_DISCOUNT_PER_YEAR = 0.015    # 1.5% per year beyond start
+FORECAST_AVAIL_AGE_DISCOUNT_MAX = 0.10           # max 10% extra discount
+# Prior-season games-played factor (multiplicative).
+# Players who missed significant time last year are likelier to miss again.
+FORECAST_AVAIL_PRIOR_GP_DISCOUNT_THRESHOLD = 65 # games below this → extra disc
+FORECAST_AVAIL_PRIOR_GP_DISCOUNT_SLOPE = 0.003  # per game below threshold
+
+# ── Replacement-Level Minutes Buffer ───────────────────────────
+# Reserve a fraction of team minutes for replacement-level contributors
+# (injury replacements, G-League callups, 10-day contracts, etc.).
+# These players contribute near-zero or negative impact.
+ENABLE_FORECAST_REPLACEMENT_BUFFER = True
+FORECAST_REPLACEMENT_BUFFER_FRACTION = 0.12  # 12% of team minutes to replacement
+FORECAST_REPLACEMENT_IMPACT_BKE = -0.20      # replacement player BKE (~bottom 25%)
+FORECAST_REPLACEMENT_IMPACT_OBKE = -0.10
+FORECAST_REPLACEMENT_IMPACT_DBKE = -0.10
+
+# ── Star Concentration / Top-Heavy Adjustment ──────────────────
+# When a team's value is heavily concentrated in 1-2 players, apply a
+# fragility penalty.  Top-heavy rosters have more downside variance
+# (injury to star = catastrophic drop) and historically underperform
+# vs. balanced rosters with similar total talent.
+ENABLE_FORECAST_STAR_CONCENTRATION = True
+# How much weight the top player's share of team BKE carries
+FORECAST_STAR_TOP1_SHARE_THRESHOLD = 0.40     # >40% of team net impact = fragile
+FORECAST_STAR_TOP2_SHARE_THRESHOLD = 0.65     # top 2 holding >65% = very fragile
+FORECAST_STAR_CONCENTRATION_PENALTY_MAX = 2.0 # max net-rating penalty (points)
+FORECAST_STAR_CONCENTRATION_PENALTY_SLOPE = 4.0  # penalty rate above threshold

@@ -1,3 +1,26 @@
+"""
+src/player_eval/build_player_impact_profiles.py
+=============================================================================
+PEC Step 1 — Build Player Impact Profiles
+
+Merges BKE decomposition scores, offensive/defensive archetypes, official
+stats, salaries, and behavioral metrics into a unified player-season profile.
+
+Inputs:
+  data/processed/bke/bke_v30_decomposition.parquet
+  data/processed/player_archetypes.parquet
+  data/processed/defensive_archetypes_v2.parquet
+  data/historical/complete_player_season_stats.parquet
+  data/historical/player_salaries.parquet
+
+Output:
+  data/processed/player_eval/player_impact_profiles.parquet
+  reports/player_eval_step1_profiles_report.json
+
+Usage:
+  python3 src/player_eval/build_player_impact_profiles.py
+=============================================================================
+"""
 import json
 import pickle
 import sys
@@ -476,7 +499,7 @@ def main() -> None:
             "defensive_archetype": "def_primary_archetype_src",
             "defensive_secondary": "def_secondary_archetype_src",
             "defensive_confidence": "def_role_confidence_src",
-        }),
+        }).drop_duplicates(subset=["player_id", "season"], keep="first"),
         on=["player_id", "season"],
         how="left",
     )

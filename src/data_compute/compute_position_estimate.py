@@ -1,5 +1,6 @@
 """
 src/data_compute/compute_position_estimate.py
+=============================================================================
 
 Estimate player position distribution (PG/SG/SF/PF/C) from on-court lineups.
 
@@ -14,6 +15,7 @@ Outputs:
 - data/processed/player_position_estimates_{season}.csv
 - data/processed/player_position_estimates.parquet (combined compatibility output)
 - data/processed/player_position_estimates.csv (combined compatibility output)
+=============================================================================
 """
 
 from pathlib import Path

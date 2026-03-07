@@ -1,7 +1,9 @@
 """
 src/data_normalize/normalize_darko.py
+=============================================================================
 
 Normalize staged DARKO CSV exports to a canonical schema.
+=============================================================================
 """
 
 import glob

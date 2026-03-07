@@ -1,3 +1,25 @@
+- 2026-03-07 — Forecast Improvement Sprint + File Header Standardization
+	- Critical bug fix: Mikal Bridges 8x duplication in defensive_archetypes_v2.parquet
+		- Root cause: 8 identical rows for player_id 1628969 in 2022-23 defensive_archetypes_v2.parquet
+		- The left merge in build_player_impact_profiles.py created a cartesian product (1 × 8 = 8 rows per player-season pair)
+		- Fix: Added `.drop_duplicates(subset=["player_id", "season"], keep="first")` to defensive archetypes before merge
+		- Impact: Profile count 1978→1971, BKN 2023-24 forecast improved from 59.0 to 49.0 wins (-10 error reduction)
+	- Structural improvement 1: Availability discount in project_next_season.py
+		- Role-based expected games: stars 88%, starters 92%, rotation 96%, bench 98%
+		- Age discount: -1.5%/yr over 30 (max 10%); Prior-GP discount: -0.3%/game below 65 GP
+		- ~40 new constants in src/player_eval/constants.py
+	- Structural improvement 2: Replacement minutes buffer in project_next_season.py
+		- Reserves 12% of team minutes for replacement-level contributors (BKE=-0.20)
+		- Adds synthetic rows in projected profiles to represent bench depth
+	- Structural improvement 3: Star concentration penalty in team_feature_aggregation.py
+		- Measures top-1/top-2 player share of team BKE; penalizes top-heavy teams in forecast mode
+		- Max penalty: 2.0 net rating points (fragility adjustment)
+	- Validation: Backtest MAE=5.13/r=0.8861 UNCHANGED; Forecast 2023-24 margin MAE 8.20→7.52 (↓0.68), r 0.6711→0.6887 (↑0.018)
+	- Multi-team roster proposal written at loop/proposal_multi_team_roster.md (AWAITING APPROVAL)
+	- File header standardization: All 66 Python files in src/ + 5 app/ files now have unified format with path + separator lines
+		- Fixed 2 wrong paths (team_feature_aggregation.py said src/player_eval/, train_minute_model.py said src/player_eval/)
+		- Added headers to 3 files missing them entirely (build_player_impact_profiles, constants, player_name_normalizer)
+
 - 2026-03-07 — Step 1 PPP quick-fix calibration pass completed and rerun
 	- Root issue confirmed: PPP branch was mis-scaled vs margin path due profile-unit mapping and output display inflation (`ppp_net_rating` scale).
 	- `src/simulation/season_sim.py` updates:

@@ -1,8 +1,10 @@
 """
 src/data_fetch/fetch_pbp/bootstrap_nba_session.py
+=============================================================================
 Bootstraps a Playwright session to capture cookies and session state for NBA requests.
 Input: none (opens headless browser)
 Output: writes data/nba_session.json for use by CDN fetch scripts
+=============================================================================
 """
 
 import json

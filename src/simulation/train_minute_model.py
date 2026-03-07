@@ -1,5 +1,5 @@
 """
-src/player_eval/train_minute_model.py
+src/simulation/train_minute_model.py
 =============================================================================
 Step 2 — Minutes Per Game (MPG) Prediction Model (v2)
 

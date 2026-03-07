@@ -1,7 +1,9 @@
 """
 src/data_normalize/run_normalization.py
+=============================================================================
 Driver script to normalize raw PBP data using the robust pbp_parser.
 Automatically detects and processes all season files found in data/historical.
+=============================================================================
 """
 import pandas as pd
 import sys

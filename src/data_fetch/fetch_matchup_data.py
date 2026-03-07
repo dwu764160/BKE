@@ -1,5 +1,6 @@
 """
 src/data_fetch/fetch_matchup_data.py
+=============================================================================
 Fetches player matchup data from NBA Stats API for defensive archetype classification.
 
 Endpoints:
@@ -10,6 +11,7 @@ Endpoints:
 This data enables:
 - Matchup Versatility: How many different positions/players a defender guards
 - Matchup Difficulty: Quality of offensive players defended (by opponent PPG/usage)
+=============================================================================
 """
 
 import pandas as pd

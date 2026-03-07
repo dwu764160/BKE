@@ -1,4 +1,7 @@
-"""Summarize team game logs.
+"""
+src/data_fetch/summarize_team_logs.py
+=============================================================================
+Summarize team game logs.
 
 Reads data/historical/team_game_logs.parquet and produces per-team-per-season
 summary rows including games played, wins/losses (if opponent PTS available),
@@ -11,6 +14,7 @@ Writes:
 This script is defensive: if `TEAM_ID` is missing it will attempt to infer
 teams from `MATCHUP` where possible; otherwise it falls back to a league-level
 aggregate and reports the limitation.
+=============================================================================
 """
 from __future__ import annotations
 import os

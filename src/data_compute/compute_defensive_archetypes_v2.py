@@ -1,5 +1,6 @@
 """
 src/data_compute/compute_defensive_archetypes_v2.py
+=============================================================================
 Role-based defensive archetype classification (v3.4).
 
 v3.4 Key Changes from v3.3:
@@ -33,6 +34,7 @@ Primary Roles:
     7. Mobile Big         — Switch-capable big without elite rim profile
     8. Rotational Defender — Help-side / generalist wing-guard role
     9. Low-Activity Defender — Low-engagement behavior profile
+=============================================================================
 """
 
 import warnings

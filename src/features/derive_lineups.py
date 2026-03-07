@@ -1,7 +1,9 @@
 """
 src/features/derive_lineups.py
+=============================================================================
 Infers the 5 players on the court for every event.
 Includes safeguards against Bench Technicals and Ejections inflating lineup counts.
+=============================================================================
 """
 
 import pandas as pd

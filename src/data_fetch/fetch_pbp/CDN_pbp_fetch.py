@@ -1,11 +1,14 @@
 """
+src/data_fetch/fetch_pbp/CDN_pbp_fetch.py
+=============================================================================
 Fetch NBA play-by-play using the NBA.com CDN (Fast & Stable).
 
 Usage:
-  python src/data_fetch/fetch_pbp/fetch_play_by_play.py --seasons 2023-24 2024-25
+  python src/data_fetch/fetch_pbp/CDN_pbp_fetch.py --seasons 2023-24 2024-25
 
 Source:
   https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{game_id}.json
+=============================================================================
 """
 
 import pandas as pd

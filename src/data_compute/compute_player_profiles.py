@@ -1,9 +1,11 @@
 """
 src/data_compute/compute_player_profiles.py
+=============================================================================
 Stream A: Computes "Box Score Plus" and "Four Factors" profiles.
-FINAL FIX (v3): 
+FINAL FIX (v3):
 - Adds 'GP' (Games Played) count for per-game metrics.
 - Retains all previous fixes (Steals, Turnovers, Fouls, OREB).
+=============================================================================
 """
 
 import pandas as pd

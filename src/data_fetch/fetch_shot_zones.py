@@ -1,5 +1,6 @@
 """
 src/data_fetch/fetch_shot_zones.py
+=============================================================================
 Fetches shot zone data from NBA.com using LeagueDashPlayerShotLocations endpoint.
 
 This gives us per-player FGM/FGA/FG_PCT broken down by zone:
@@ -12,6 +13,7 @@ This gives us per-player FGM/FGA/FG_PCT broken down by zone:
   - Backcourt
 
 Uses DistanceRange='By Zone' and fetches for all players league-wide in one call.
+=============================================================================
 """
 
 import pandas as pd

@@ -1,7 +1,9 @@
 """
 src/features/derive_possessions.py
+=============================================================================
 Groups atomic PBP events into logical Possessions.
 UPDATED: Fixed initialization bug (Error -1).
+=============================================================================
 """
 
 import pandas as pd

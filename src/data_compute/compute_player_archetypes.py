@@ -1,5 +1,6 @@
 """
 src/data_compute/compute_player_archetypes.py
+=============================================================================
 Classifies NBA players into offensive archetypes based on tracking, playtype, and shot zone data.
 
 v4.3 — PnR Big Absorption + Harsher Interior Scorer + Archetype Embeddings:
@@ -40,6 +41,7 @@ Archetype Definitions (v4.3):
 12. Off-Ball Movement Shooter — movement/(movement+spotup) >= 0.30
 13. Off-Ball Stationary Shooter — High spot-up
 14. Best-fit fallback      — Closest archetype based on scoring signals (no catch-all)
+=============================================================================
 """
 
 import pandas as pd

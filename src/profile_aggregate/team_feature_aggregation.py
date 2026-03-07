@@ -1,5 +1,5 @@
 """
-src/player_eval/team_feature_aggregation.py
+src/profile_aggregate/team_feature_aggregation.py
 =============================================================================
 PEC Step 3 — Team Feature Aggregation (Offensive & Defensive Structure Layer)
 
@@ -95,6 +95,12 @@ from src.player_eval.constants import (
     ALPHA_CREATION,
     ALPHA_TRANSITION,
     CREATION_CONCENTRATION_THRESHOLD,
+    # Star concentration
+    ENABLE_FORECAST_STAR_CONCENTRATION,
+    FORECAST_STAR_TOP1_SHARE_THRESHOLD,
+    FORECAST_STAR_TOP2_SHARE_THRESHOLD,
+    FORECAST_STAR_CONCENTRATION_PENALTY_MAX,
+    FORECAST_STAR_CONCENTRATION_PENALTY_SLOPE,
 )
 
 
@@ -226,6 +232,81 @@ def _get_interaction_value(arch_i: str, arch_j: str) -> Tuple[float, Optional[st
 # ═════════════════════════════════════════════════════════════════════
 # Core computation functions
 # ═════════════════════════════════════════════════════════════════════
+
+
+def compute_star_concentration(
+    players: pd.DataFrame,
+    team_scale: float,
+    forecast_mode: bool = False,
+) -> Dict[str, float]:
+    """Compute star concentration metrics and fragility penalty.
+
+    Measures how much of a team's projected value is concentrated in the
+    top 1-2 players.  Teams with extreme concentration historically
+    underperform vs. balanced rosters of similar total talent because:
+      - Injury/trade to star = catastrophic drop
+      - Opponents scheme aggressively against lone stars
+      - Supporting cast quality matters more than raw accumulation
+
+    Returns dict with concentration metrics and a net-rating penalty.
+    """
+    result = {}
+    tp = players.copy()
+    tp["impact_bke"] = pd.to_numeric(tp.get("impact_bke"), errors="coerce").fillna(0.0)
+    tp["minute_share"] = pd.to_numeric(tp.get("minute_share"), errors="coerce").fillna(0.0)
+
+    # Weighted impact contribution per player
+    tp["weighted_impact"] = tp["minute_share"] * tp["impact_bke"]
+    team_net = tp["weighted_impact"].sum()
+
+    # Sort by weighted impact descending
+    tp = tp.sort_values("weighted_impact", ascending=False)
+    impacts = tp["weighted_impact"].values
+
+    if len(impacts) == 0 or abs(team_net) < 1e-9:
+        result["star_top1_impact"] = 0.0
+        result["star_top2_impact"] = 0.0
+        result["star_top3_impact"] = 0.0
+        result["star_top1_share"] = 0.0
+        result["star_top2_share"] = 0.0
+        result["star_concentration_penalty"] = 0.0
+        return result
+
+    top1 = float(impacts[0]) if len(impacts) >= 1 else 0.0
+    top2 = float(impacts[:2].sum()) if len(impacts) >= 2 else top1
+    top3 = float(impacts[:3].sum()) if len(impacts) >= 3 else top2
+
+    # Share of positive team impact from top players
+    positive_sum = float(tp[tp["weighted_impact"] > 0]["weighted_impact"].sum())
+    if positive_sum < 1e-9:
+        positive_sum = abs(team_net) + 1e-9
+
+    top1_share = abs(top1) / positive_sum
+    top2_share = abs(top2) / positive_sum
+
+    result["star_top1_impact"] = round(top1 * team_scale, 4)
+    result["star_top2_impact"] = round(top2 * team_scale, 4)
+    result["star_top3_impact"] = round(top3 * team_scale, 4)
+    result["star_top1_share"] = round(top1_share, 4)
+    result["star_top2_share"] = round(top2_share, 4)
+
+    # Concentration penalty (applied in forecast mode)
+    penalty = 0.0
+    if forecast_mode and ENABLE_FORECAST_STAR_CONCENTRATION:
+        # Penalty for top-1 share exceeding threshold
+        if top1_share > FORECAST_STAR_TOP1_SHARE_THRESHOLD:
+            excess = top1_share - FORECAST_STAR_TOP1_SHARE_THRESHOLD
+            penalty += excess * FORECAST_STAR_CONCENTRATION_PENALTY_SLOPE
+
+        # Additional penalty for top-2 share exceeding threshold
+        if top2_share > FORECAST_STAR_TOP2_SHARE_THRESHOLD:
+            excess = top2_share - FORECAST_STAR_TOP2_SHARE_THRESHOLD
+            penalty += excess * FORECAST_STAR_CONCENTRATION_PENALTY_SLOPE * 0.5
+
+        penalty = min(penalty, FORECAST_STAR_CONCENTRATION_PENALTY_MAX)
+
+    result["star_concentration_penalty"] = round(penalty, 4)
+    return result
 
 def _get_primary_archetype(off_probs: Dict[str, float]) -> str:
     """Return the archetype with highest probability."""
@@ -971,12 +1052,16 @@ def main(
         )
 
         # ── Team Net Rating ──
+        # Star concentration penalty (forecast mode only)
+        star_result = compute_star_concentration(tp, TEAM_SCALE, forecast_mode=forecast_mode)
+
         team_net_raw = (
             TEAM_SCALE * off_result["off_talent_base"]
             + defense_sign * TEAM_SCALE * def_result["def_talent_base"]
             + off_result["off_interaction_term"]
             + off_result["off_structure_term"]
             + defense_sign * def_result.get("def_adjustments", 0.0)
+            - star_result.get("star_concentration_penalty", 0.0)
         )
 
         # ── Roster composition summary ──
@@ -1021,6 +1106,13 @@ def main(
             # Net
             "team_net_rating_raw": round(team_net_raw, 4),
             "team_net_rating_projected": round(team_net_raw, 4),
+            # Star concentration
+            "star_top1_impact": star_result.get("star_top1_impact", 0.0),
+            "star_top2_impact": star_result.get("star_top2_impact", 0.0),
+            "star_top3_impact": star_result.get("star_top3_impact", 0.0),
+            "star_top1_share": star_result.get("star_top1_share", 0.0),
+            "star_top2_share": star_result.get("star_top2_share", 0.0),
+            "star_concentration_penalty": star_result.get("star_concentration_penalty", 0.0),
             # Volatility
             "vol_base": round(vol_result["vol_base"], 4),
             "vol_3pa": vol_result.get("vol_3pa", 0.0),

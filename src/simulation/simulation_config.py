@@ -1,4 +1,9 @@
-"""Centralized configuration and paths for the simulation module."""
+"""
+src/simulation/simulation_config.py
+=============================================================================
+Centralized configuration and paths for the simulation module.
+=============================================================================
+"""
 
 from pathlib import Path
 
@@ -80,7 +85,7 @@ STEP2_STARTER_TRUE_BIG_BANDS = ("Forward-Center", "Center")
 STEP2_STARTER_LOW_MINUTES_THRESHOLD = 24.0
 STEP2_STARTER_LOW_MINUTES_PENALTY = 1.10
 
-# Step 2 optimization toggles
+# Step 2 v1 optimization toggles
 STEP2_ENABLE_CONTINUITY_PRIOR = True
 STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT = True
 STEP2_ENABLE_ROTATION_REGIME_MODEL = True

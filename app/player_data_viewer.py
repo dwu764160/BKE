@@ -1,8 +1,10 @@
 """
 app/player_data_viewer.py
+=============================================================================
 Optimised player data browser with full-stats modal popups.
 Lightweight cards for fast rendering; click any card for all details.
 Generates app/player_data.html.
+=============================================================================
 """
 
 import pandas as pd

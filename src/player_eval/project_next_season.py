@@ -81,7 +81,183 @@ from src.player_eval.constants import (
     ROOKIE_IMPACT_BY_TIER,
     ROOKIE_MPG_BY_TIER,
     ROOKIES_INPUT_PATH,
+    # Forecast structural improvements
+    ENABLE_FORECAST_AVAILABILITY_DISCOUNT,
+    FORECAST_AVAIL_STAR_GAMES_FRACTION,
+    FORECAST_AVAIL_STARTER_GAMES_FRACTION,
+    FORECAST_AVAIL_ROTATION_GAMES_FRACTION,
+    FORECAST_AVAIL_BENCH_GAMES_FRACTION,
+    FORECAST_AVAIL_AGE_DISCOUNT_START,
+    FORECAST_AVAIL_AGE_DISCOUNT_PER_YEAR,
+    FORECAST_AVAIL_AGE_DISCOUNT_MAX,
+    FORECAST_AVAIL_PRIOR_GP_DISCOUNT_THRESHOLD,
+    FORECAST_AVAIL_PRIOR_GP_DISCOUNT_SLOPE,
+    ENABLE_FORECAST_REPLACEMENT_BUFFER,
+    FORECAST_REPLACEMENT_BUFFER_FRACTION,
+    FORECAST_REPLACEMENT_IMPACT_BKE,
+    FORECAST_REPLACEMENT_IMPACT_OBKE,
+    FORECAST_REPLACEMENT_IMPACT_DBKE,
 )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Forecast Structural Improvements
+# ═════════════════════════════════════════════════════════════════════
+
+
+def _availability_games_fraction(mpg: float, age: float, prior_games: float) -> float:
+    """Compute expected games-played fraction for a player in the projected season.
+
+    Combines role-based baseline, age penalty, and prior-season GP history.
+    Returns a value in (0, 1] that scales projected games.
+    """
+    # Role-based baseline
+    if mpg >= 28.0:
+        base = FORECAST_AVAIL_STAR_GAMES_FRACTION
+    elif mpg >= 20.0:
+        base = FORECAST_AVAIL_STARTER_GAMES_FRACTION
+    elif mpg >= 10.0:
+        base = FORECAST_AVAIL_ROTATION_GAMES_FRACTION
+    else:
+        base = FORECAST_AVAIL_BENCH_GAMES_FRACTION
+
+    # Age penalty (multiplicative)
+    age_penalty = 0.0
+    if np.isfinite(age) and age >= FORECAST_AVAIL_AGE_DISCOUNT_START:
+        years_over = age - FORECAST_AVAIL_AGE_DISCOUNT_START
+        age_penalty = min(
+            years_over * FORECAST_AVAIL_AGE_DISCOUNT_PER_YEAR,
+            FORECAST_AVAIL_AGE_DISCOUNT_MAX,
+        )
+
+    # Prior-season GP: players who missed games last year are likelier to miss again
+    gp_penalty = 0.0
+    if np.isfinite(prior_games) and prior_games < FORECAST_AVAIL_PRIOR_GP_DISCOUNT_THRESHOLD:
+        shortfall = FORECAST_AVAIL_PRIOR_GP_DISCOUNT_THRESHOLD - prior_games
+        gp_penalty = shortfall * FORECAST_AVAIL_PRIOR_GP_DISCOUNT_SLOPE
+
+    fraction = base * (1.0 - age_penalty) * (1.0 - min(gp_penalty, 0.20))
+    return float(np.clip(fraction, 0.30, 1.0))
+
+
+def apply_availability_discount(df: pd.DataFrame) -> pd.DataFrame:
+    """Scale projected games and derived minutes by availability factor."""
+    if not ENABLE_FORECAST_AVAILABILITY_DISCOUNT:
+        return df
+
+    df = df.copy()
+    df["age"] = pd.to_numeric(df.get("age"), errors="coerce").fillna(25.0)
+    df["mpg"] = pd.to_numeric(df.get("mpg"), errors="coerce").fillna(0.0)
+    df["games"] = pd.to_numeric(df.get("games"), errors="coerce").fillna(72.0)
+
+    fractions = df.apply(
+        lambda r: _availability_games_fraction(
+            float(r.get("mpg", 0)),
+            float(r.get("age", 25)),
+            float(r.get("games", 72)),
+        ),
+        axis=1,
+    )
+    df["availability_discount"] = fractions
+    df["games"] = (df["games"] * fractions).round(0).clip(lower=10)
+    df["minutes"] = df["mpg"] * df["games"]
+    df["possessions"] = df["minutes"] * 2.0
+
+    n_heavy = int((fractions < 0.90).sum())
+    mean_frac = float(fractions.mean())
+    print(f"    Availability discount applied: mean={mean_frac:.3f}, heavy_discount={n_heavy}")
+    return df
+
+
+def apply_replacement_buffer(df: pd.DataFrame) -> pd.DataFrame:
+    """Reserve a fraction of team minutes for replacement-level contributors.
+
+    Scales down each player's minutes proportionally and adds a synthetic
+    replacement-pool row per team-season with near-zero impact.
+    """
+    if not ENABLE_FORECAST_REPLACEMENT_BUFFER:
+        return df
+
+    df = df.copy()
+    buffer_frac = FORECAST_REPLACEMENT_BUFFER_FRACTION
+
+    replacement_rows = []
+    for (season, team), idx in df.groupby(["season", "team_abbreviation"]).groups.items():
+        team_mins = df.loc[idx, "minutes"].sum()
+        if team_mins <= 0:
+            continue
+        # Scale down existing player minutes
+        scale = 1.0 - buffer_frac
+        df.loc[idx, "mpg"] = df.loc[idx, "mpg"] * scale
+        df.loc[idx, "minutes"] = df.loc[idx, "minutes"] * scale
+
+        # Create replacement pool entry
+        repl_mins = team_mins * buffer_frac
+        repl_games = 82.0
+        repl_mpg = repl_mins / repl_games
+        replacement_rows.append({
+            "player_id": f"repl_{team}_{season}",
+            "player_name": f"Replacement Pool ({team})",
+            "season": season,
+            "team_abbreviation": team,
+            "team_id": "",
+            "impact_bke": FORECAST_REPLACEMENT_IMPACT_BKE,
+            "impact_obke": FORECAST_REPLACEMENT_IMPACT_OBKE,
+            "impact_dbke": FORECAST_REPLACEMENT_IMPACT_DBKE,
+            "impact_orapm": FORECAST_REPLACEMENT_IMPACT_BKE * 6.0,
+            "impact_drapm": FORECAST_REPLACEMENT_IMPACT_DBKE * 6.0,
+            "impact_total_impact": 40.0,
+            "impact_bpm": -2.0,
+            "impact_stability": 0.30,
+            "impact_ws": 0.0,
+            "impact_vorp": 0.0,
+            "impact_portable_talent": 40.0,
+            "behavioral_usage": 0.16,
+            "behavioral_assist_rate": 0.10,
+            "behavioral_turnover_rate": 0.14,
+            "behavioral_three_point_rate": 0.35,
+            "behavioral_efg": 0.48,
+            "behavioral_free_throw_rate": 0.25,
+            "behavioral_rim_rate": 0.12,
+            "behavioral_orb_rate": 0.04,
+            "behavioral_drb_rate": 0.10,
+            "behavioral_hustle_pctl": 0.30,
+            "behavioral_foul_rate": 3.5,
+            "mpg": repl_mpg,
+            "minutes": repl_mins,
+            "games": repl_games,
+            "possessions": repl_mins * 2.0,
+            "age": 24.0,
+            "experience_years": 2.0,
+            "off_primary_archetype": "Connector",
+            "def_primary_archetype": "Wing Defender",
+            "off_role_confidence": 0.2,
+            "def_role_confidence": 0.2,
+            "salary": 1_500_000,
+            "availability_score": 0.5,
+        })
+
+    if replacement_rows:
+        repl_df = pd.DataFrame(replacement_rows)
+        # Ensure columns align
+        for col in df.columns:
+            if col not in repl_df.columns:
+                if col == "playtype_vector":
+                    repl_df[col] = [np.zeros(11).tolist()] * len(repl_df)
+                elif col == "offensive_archetype_probs":
+                    repl_df[col] = [{}] * len(repl_df)
+                elif col == "defensive_archetype_probs":
+                    repl_df[col] = [{}] * len(repl_df)
+                elif df[col].dtype in [float, np.float64]:
+                    repl_df[col] = np.nan
+                else:
+                    repl_df[col] = ""
+        repl_df = repl_df[[c for c in df.columns if c in repl_df.columns]]
+        df = pd.concat([df, repl_df], ignore_index=True)
+        print(f"    Replacement buffer: {len(replacement_rows)} pools, "
+              f"{buffer_frac:.0%} of minutes reserved")
+
+    return df
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -949,8 +1125,11 @@ def project_season(
     # 5. Project minutes with conditional adjustments
     projected = project_minutes(projected, target_salary_map=target_salary_map)
 
+    # 5a. Apply availability discount (expected missed games)
+    projected = apply_availability_discount(projected)
+
     # Recompute derived minute fields
-    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=60)
+    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=10)
     projected["possessions"] = projected["minutes"] * 2.0  # rough approximation
 
     # 6. Add rookies
@@ -1002,8 +1181,15 @@ def project_season(
 
     # 7. Re-normalize team minutes after adding rookies
     projected = project_minutes(projected, target_salary_map=target_salary_map)
-    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=60)
+
+    # 7a. Apply availability discount again after re-normalization
+    projected = apply_availability_discount(projected)
+
+    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=10)
     projected["possessions"] = projected["minutes"] * 2.0
+
+    # 8. Add replacement-level minutes buffer
+    projected = apply_replacement_buffer(projected)
 
     return projected
 

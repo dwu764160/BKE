@@ -1,9 +1,11 @@
 """
 src/data_compute/compute_clean_possessions.py
-Final cleaning step. 
+=============================================================================
+Final cleaning step.
 1. Loads derived possessions.
 2. Filters out the < 0.1% of rows with invalid lineup counts (3, 4, 6 players).
 3. Saves the final 'clean' dataset for modeling.
+=============================================================================
 """
 
 import pandas as pd

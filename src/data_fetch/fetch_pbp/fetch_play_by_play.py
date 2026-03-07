@@ -1,11 +1,14 @@
 """
+src/data_fetch/fetch_pbp/fetch_play_by_play.py
+=============================================================================
 Fetch NBA play-by-play using NBA.com __NEXT_DATA__ (stable approach).
 
 Usage:
-  python src/data_fetch/fetch_play_by_play.py --seasons 2023-24 2024-25
+  python src/data_fetch/fetch_pbp/fetch_play_by_play.py --seasons 2023-24 2024-25
 
 Requires:
   - team_game_logs.parquet with GAME_ID + SEASON
+=============================================================================
 """
 
 from playwright.sync_api import sync_playwright

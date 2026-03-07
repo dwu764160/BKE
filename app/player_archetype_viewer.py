@@ -1,7 +1,9 @@
 """
 app/player_archetype_viewer.py
+=============================================================================
 Interactive player archetype viewer with search and filtering.
 Generates an HTML file that can be opened in any browser.
+=============================================================================
 """
 
 import pandas as pd

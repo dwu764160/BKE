@@ -1,6 +1,6 @@
 """
-compute_local_metrics.py
-
+src/data_compute/compute_local_metrics.py
+=============================================================================
 Reads:
  - data/player_game_logs.parquet  (required)  -- player-level box scores, one row per player-game
  - data/team_game_logs.parquet    (optional)  -- team-level game stats (one row per team-game). If not present,
@@ -13,6 +13,7 @@ Outputs:
 Notes:
  - The script computes only metrics derivable from box scores and team aggregates.
  - Some formulas use approximations (documented inline).
+=============================================================================
 """
 
 import os

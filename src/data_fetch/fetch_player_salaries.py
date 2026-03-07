@@ -1,6 +1,6 @@
 """
-fetch_player_salaries.py
------------------------------------
+src/data_fetch/fetch_player_salaries.py
+=============================================================================
 Fetches NBA player salary data for all available seasons by scraping Spotrac.
 For each player listed on the Spotrac contracts page, visits their contract page and extracts per-season salary data.
 Joins with player ID/name mapping from the pipeline, computes years in league, and outputs a parquet file:
@@ -14,7 +14,7 @@ Notes:
 - Be polite to Spotrac: the script sleeps between requests.
 - This script fetches all available player-seasons, not just a fixed set.
 - Output is joined to your player ID/name map for downstream use.
------------------------------------
+=============================================================================
 """
 import requests
 import pandas as pd

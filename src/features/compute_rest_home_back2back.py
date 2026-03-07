@@ -1,11 +1,13 @@
 """
 src/features/compute_rest_home_back2back.py
+=============================================================================
 Calculates schedule-based metrics:
 - Rest days
 - Home/Away status
 - Back-to-Back flags
 
 Requires: data/historical/team_game_logs.parquet (The master log file)
+=============================================================================
 """
 
 import pandas as pd

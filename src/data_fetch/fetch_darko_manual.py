@@ -1,10 +1,11 @@
-
 """
-
+src/data_fetch/fetch_darko_manual.py
+=============================================================================
 Automated DARKO fetch script.
 
 Fetches DARKO data for 2022-23, 2023-24, and 2024-25 seasons from nbarapm.com MetricHistory page
 and saves each season as a separate parquet file in data/historical/darko/raw.
+=============================================================================
 """
 
 

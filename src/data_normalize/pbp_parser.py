@@ -1,7 +1,9 @@
 """
 src/data_normalize/pbp_parser.py
+=============================================================================
 Deterministic, regex-based parser for NBA Play-by-Play text.
 Handles both legacy text-only data and new JSON-derived structure.
+=============================================================================
 """
 
 import re

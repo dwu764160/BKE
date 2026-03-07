@@ -1,4 +1,6 @@
 """
+src/data_normalize/normalize_player_names.py
+=============================================================================
 Normalize player names across core pipeline artifacts.
 
 Fixes:
@@ -8,6 +10,7 @@ Fixes:
 
 Usage:
   python3 src/data_normalize/normalize_player_names.py
+=============================================================================
 """
 
 import json

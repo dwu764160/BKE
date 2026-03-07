@@ -1,5 +1,6 @@
 """
 src/data_compute/compute_defensive_archetypes.py
+=============================================================================
 Classifies NBA players into defensive archetypes based on matchup and tracking data.
 
 *************************NOT IN USE, REPLACED BY v2*************************
@@ -23,6 +24,7 @@ Key Metrics Used:
 - Defensive Synergy (PPP allowed by playtype)
 - Hustle Stats (contests, deflections)
 - Box Score (BLK, STL, DREB)
+=============================================================================
 """
 
 import pandas as pd

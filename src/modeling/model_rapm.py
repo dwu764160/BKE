@@ -1,11 +1,13 @@
 """
 src/modeling/model_rapm.py
+=============================================================================
 RAPM / ORAPM / DRAPM modeling with pooled-prior refinement.
 
 Key design choices:
 - RAPM (net) uses lineup matrix with +1 offense / -1 defense.
 - ORAPM/DRAPM use opponent-controlled split matrix in one joint fit.
 - Multi-season mode uses pooled prior, then refines to target-season coefficients.
+=============================================================================
 """
 
 import glob
