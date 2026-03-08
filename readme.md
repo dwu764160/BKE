@@ -119,7 +119,7 @@ Pipeline stages:
 1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), scenario team mapping (`end_of_season` or `preseason_snapshot`), draft-aware rookie generation (no CSV dependency by default), and minutes projection via `age + impact + salary + depth competition` then 240/team normalization
 2. **team_feature_aggregation.py** (`src/profile_aggregate/`, forecast_mode=True) — Team net ratings from projected profiles, no calibration against actual data
 3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule with parallel `margin` + `ppp` model outputs; PPP branch uses minute-weighted team OBKE/DBKE with season-level empirical impact→net scaling, offense/defense blend control, PPP clipping, and possessions-aware sigma scaling; pace is estimated from prior-season team pace + stronger regression-to-mean (no player pace input)
-4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups
+4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups with backtest-equivalent validation targets when observed historical data exists (Q1 PBP starters + top-5 clutch minutes + rotation lineups >=50 poss and <=2 starters)
 5. **run_forecast.py** — Scenario orchestrator that writes both scenario-specific artifacts and combined frontend payloads (`default_scenario` + `scenarios` map)
 
 Backtest validation: BKE carry r≈0.42-0.49, MPG carry r≈0.79-0.82; forecast team-level win MAE/r: `margin` ≈ 8.20-9.02 / 0.64-0.67, `ppp` ≈ 8.46-8.75 / 0.63-0.66 (latest quick-fix calibration pass)
@@ -137,7 +137,7 @@ python3 app/player_data_viewer.py         # Generate player data viewer (with sa
 python3 scripts/export_bke_components.py  # Export per-player BKE components JSON for interactive viewer
 python3 app/player_bke_viewer.py          # Generate standalone BKE interactive explorer (lambda slider + split toggle)
 python3 app/player_eval_viewer.py         # Generate PEC viewer (player cards, team view, detail modal, predicted vs actual MPG)
-python3 app/simulation_viewer.py          # Generate simulation viewer (Step 1 season simulation + Step 2 lineup projection + Forecast tab)
+python3 app/simulation_viewer.py          # Generate simulation viewer (Step 1 + Step 2 + Step 1 Forecast + Step 2 Forecast tabs)
 python3 src/utils/export_db_to_parquet.py # Export DB tables to parquet
 ```
 

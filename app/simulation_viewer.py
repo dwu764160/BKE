@@ -540,12 +540,13 @@ tr:hover { background:rgba(88,166,255,0.06); }
 <body>
 <div class="container">
   <h1>BKE Simulation Core</h1>
-  <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Forecast</div>
+  <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Step 1 Forecast + Step 2 Forecast</div>
 
   <div class="view-tabs" id="viewTabs">
     <button class="view-tab active" data-view="step1View">Step 1: Season Simulation</button>
     <button class="view-tab" data-view="step2View">Step 2: Lineup Projection</button>
-    <button class="view-tab" data-view="forecastView">Forecast</button>
+    <button class="view-tab" data-view="step1ForecastView">Step 1 Forecast</button>
+    <button class="view-tab" data-view="step2ForecastView">Step 2 Forecast</button>
   </div>
 
   <div id="step1View" class="view-panel">
@@ -578,11 +579,12 @@ tr:hover { background:rgba(88,166,255,0.06); }
 
   <div id="step2View" class="view-panel hidden">
     <div class="season-tabs" id="lineupSeasonTabs"></div>
+    <div class="filter-tabs" id="step2ConferenceTabs"></div>
     <div class="stats-row" id="lineupStatsRow"></div>
     <div class="lineup-grid" id="lineupCardGrid"></div>
   </div>
 
-  <div id="forecastView" class="view-panel hidden">
+  <div id="step1ForecastView" class="view-panel hidden">
     <div class="model-tabs" id="forecastScenarioTabs"></div>
     <div class="season-tabs" id="forecastSeasonTabs"></div>
     <div class="model-tabs" id="forecastModelTabs"></div>
@@ -593,6 +595,14 @@ tr:hover { background:rgba(88,166,255,0.06); }
       <div class="chart-box" style="flex:1"><h3>Projection Validation</h3><div id="forecastValChart"></div></div>
     </div>
     <div class="table-wrap"><div class="table-scroll" id="forecastTableWrap"></div></div>
+  </div>
+
+  <div id="step2ForecastView" class="view-panel hidden">
+    <div class="model-tabs" id="forecastScenarioTabsStep2"></div>
+    <div class="season-tabs" id="forecastSeasonTabsStep2"></div>
+    <div class="stats-row" id="forecastLineupStatsRow"></div>
+    <div class="filter-tabs" id="forecastLineupConferenceTabs"></div>
+    <div class="lineup-grid" id="forecastLineupCardGrid"></div>
   </div>
 
   <div class="lineup-modal-overlay" id="lineupModalOverlay">
@@ -606,7 +616,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
   </div>
 
   <div class="footer">
-    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation), Step 2 (lineup projection), Forecast (forward projection).
+    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation), Step 2 (lineup projection), Step 1 Forecast, Step 2 Forecast.
     &sigma;<sub>league</sub> = <span id="footSigma"></span>,
     HCA = <span id="footHCA"></span>,
     N = <span id="footN"></span>
@@ -629,7 +639,9 @@ let sortDir = "asc";
 let forecastSortCol = "projected_rank";
 let forecastSortDir = "asc";
 let step1ConferenceFilter = "all";
+let step2ConferenceFilter = "all";
 let forecastConferenceFilter = "all";
+let forecastLineupConferenceFilter = "all";
 let currentSimulatedGame = null;
 let activeView = "step1View";
 const STEP2_SEASON_PLAYER_MAP = {};
@@ -687,6 +699,51 @@ function getForecastScenarioPayload(scenarioKey) {
 function getForecastSeasons() {
   const payload = getForecastScenarioPayload(forecastScenario);
   return Object.keys((payload && payload.seasons) || {}).sort();
+}
+
+function _renderForecastSeasonTabs(containerId) {
+  const seasons = getForecastSeasons();
+  const tabsEl = document.getElementById(containerId);
+  if (!tabsEl) return false;
+
+  tabsEl.innerHTML = "";
+  if (seasons.length === 0) {
+    tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available for this scenario. Run: python3 src/simulation/run_forecast.py</div>';
+    return false;
+  }
+
+  if (!seasons.includes(forecastSeason)) {
+    forecastSeason = seasons[seasons.length - 1];
+  }
+
+  seasons.forEach(s => {
+    const tab = document.createElement("div");
+    tab.className = "season-tab" + (s === forecastSeason ? " active" : "");
+    tab.textContent = s + " (Forecast)";
+    tab.onclick = () => setForecastSeason(s);
+    tabsEl.appendChild(tab);
+  });
+  return true;
+}
+
+function setForecastScenario(scenarioKey) {
+  forecastScenario = scenarioKey;
+  const seasons = getForecastSeasons();
+  forecastSeason = seasons.length ? seasons[seasons.length - 1] : null;
+  forecastModel = "margin";
+  forecastSortCol = "projected_rank";
+  forecastSortDir = "asc";
+  initForecastView();
+  initForecastStep2View();
+  renderForecast();
+}
+
+function setForecastSeason(season) {
+  forecastSeason = season;
+  syncForecastModel();
+  initForecastView();
+  initForecastStep2View();
+  renderForecast();
 }
 
 function getStep2Seasons() {
@@ -835,8 +892,8 @@ function initForecastModelTabs() {
   });
 }
 
-function initForecastScenarioTabs() {
-  const el = document.getElementById("forecastScenarioTabs");
+function _renderForecastScenarioTabs(containerId) {
+  const el = document.getElementById(containerId);
   if (!el) return;
   const keys = getForecastScenarioKeys();
   if (!keys.length) {
@@ -855,16 +912,17 @@ function initForecastScenarioTabs() {
   `).join("");
   el.querySelectorAll(".model-tab").forEach(btn => {
     btn.addEventListener("click", () => {
-      forecastScenario = btn.dataset.scenario;
-      const seasons = getForecastSeasons();
-      forecastSeason = seasons.length ? seasons[seasons.length - 1] : null;
-      forecastModel = "margin";
-      forecastSortCol = "projected_rank";
-      forecastSortDir = "asc";
-      initForecastView();
-      renderForecast();
+      setForecastScenario(btn.dataset.scenario);
     });
   });
+}
+
+function initForecastScenarioTabs() {
+  _renderForecastScenarioTabs("forecastScenarioTabs");
+}
+
+function initForecastScenarioTabsStep2() {
+  _renderForecastScenarioTabs("forecastScenarioTabsStep2");
 }
 
 (function init() {
@@ -891,6 +949,7 @@ function initForecastScenarioTabs() {
   initViewTabs();
   initStep2View();
   initForecastView();
+  initForecastStep2View();
   bindModalEvents();
   renderStep1();
 })();
@@ -907,8 +966,10 @@ function initViewTabs() {
         renderStep1();
       } else if (activeView === "step2View") {
         renderStep2();
-      } else if (activeView === "forecastView") {
+      } else if (activeView === "step1ForecastView") {
         renderForecast();
+      } else if (activeView === "step2ForecastView") {
+        renderForecastLineup();
       }
     });
   });
@@ -1513,6 +1574,7 @@ function initStep2View() {
     tabs.appendChild(tab);
   });
 
+  initStep2ConferenceTabs();
   renderStep2();
 }
 
@@ -1521,7 +1583,28 @@ function switchLineupSeason(season) {
   document.querySelectorAll("#lineupSeasonTabs .season-tab").forEach(t => {
     t.classList.toggle("active", t.textContent === season);
   });
+  initStep2ConferenceTabs();
   renderStep2();
+}
+
+function initStep2ConferenceTabs() {
+  const el = document.getElementById("step2ConferenceTabs");
+  if (!el) return;
+  const options = [
+    { key: "all", label: "All Teams" },
+    { key: "east", label: "East" },
+    { key: "west", label: "West" },
+  ];
+  el.innerHTML = options.map(opt => `
+    <button class="filter-tab${opt.key === step2ConferenceFilter ? " active" : ""}" data-filter="${opt.key}">${opt.label}</button>
+  `).join("");
+  el.querySelectorAll(".filter-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      step2ConferenceFilter = btn.dataset.filter || "all";
+      initStep2ConferenceTabs();
+      renderStep2();
+    });
+  });
 }
 
 function renderStep2() {
@@ -1571,7 +1654,8 @@ function renderStep2Stats(seasonData) {
 }
 
 function renderStep2Cards(seasonData) {
-  const teams = (seasonData.teams || []).slice().sort((a, b) => (a.team_abbreviation || "").localeCompare(b.team_abbreviation || ""));
+  let teams = (seasonData.teams || []).slice().sort((a, b) => (a.team_abbreviation || "").localeCompare(b.team_abbreviation || ""));
+  teams = filterRowsByConference(teams, step2ConferenceFilter);
   const grid = document.getElementById("lineupCardGrid");
 
   if (!teams.length) {
@@ -1830,34 +1914,27 @@ function uniqueNamedList(values) {
 
 function initForecastView() {
   initForecastScenarioTabs();
-  const seasons = getForecastSeasons();
-  const tabsEl = document.getElementById("forecastSeasonTabs");
+  const hasSeasons = _renderForecastSeasonTabs("forecastSeasonTabs");
   const modelTabsEl = document.getElementById("forecastModelTabs");
-  if (!tabsEl) return;
-  tabsEl.innerHTML = "";
   if (modelTabsEl) modelTabsEl.innerHTML = "";
-  if (seasons.length === 0) {
-    tabsEl.innerHTML = '<div style="color:var(--text-muted);padding:10px">No forecast data available for this scenario. Run: python3 src/simulation/run_forecast.py</div>';
+  if (!hasSeasons) {
     return;
   }
-  if (!seasons.includes(forecastSeason)) {
-    forecastSeason = seasons[seasons.length - 1];
-  }
-  seasons.forEach(s => {
-    const tab = document.createElement("div");
-    tab.className = "season-tab" + (s === forecastSeason ? " active" : "");
-    tab.textContent = s + " (Forecast)";
-    tab.onclick = () => switchForecastSeason(s);
-    tabsEl.appendChild(tab);
-  });
   syncForecastModel();
   initForecastModelTabs();
+  initForecastConferenceTabs();
+}
+
+function initForecastStep2View() {
+  initForecastScenarioTabsStep2();
+  _renderForecastSeasonTabs("forecastSeasonTabsStep2");
+  initForecastLineupConferenceTabs();
+  renderForecastLineup();
 }
 
 function switchForecastSeason(s) {
-  forecastSeason = s;
-  initForecastConferenceTabs();
-  document.querySelectorAll("#forecastSeasonTabs .season-tab").forEach(t => {
+  setForecastSeason(s);
+}
 
 function initForecastConferenceTabs() {
   const el = document.getElementById("forecastConferenceTabs");
@@ -1878,12 +1955,6 @@ function initForecastConferenceTabs() {
     });
   });
 }
-    t.classList.toggle("active", t.textContent.startsWith(s));
-  });
-  syncForecastModel();
-  initForecastModelTabs();
-  renderForecast();
-}
 
 function renderForecast() {
   const payload = getForecastScenarioPayload(forecastScenario);
@@ -1897,6 +1968,7 @@ function renderForecast() {
   renderForecastTable(sdata, forecastModel, filteredRows);
   renderForecastWinsChart(sdata, forecastModel, filteredRows);
   renderForecastValidation();
+  renderForecastLineup();
 }
 
 function renderForecastStats(sdata, modelKey, filteredRows) {
@@ -2103,6 +2175,204 @@ function renderForecastValidation() {
 
   html += '</div>';
   el.innerHTML = html;
+}
+
+function getForecastLineupData() {
+  const payload = getForecastScenarioPayload(forecastScenario);
+  return (payload && payload.lineup) || {};
+}
+
+function getForecastLineupSeasons() {
+  const lineupData = getForecastLineupData();
+  return Object.keys((lineupData && lineupData.seasons) || {}).sort();
+}
+
+function initForecastLineupConferenceTabs() {
+  const el = document.getElementById("forecastLineupConferenceTabs");
+  if (!el) return;
+  const options = [
+    { key: "all", label: "All Teams" },
+    { key: "east", label: "East" },
+    { key: "west", label: "West" },
+  ];
+  el.innerHTML = options.map(opt => `
+    <button class="filter-tab${opt.key === forecastLineupConferenceFilter ? " active" : ""}" data-filter="${opt.key}">${opt.label}</button>
+  `).join("");
+  el.querySelectorAll(".filter-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      forecastLineupConferenceFilter = btn.dataset.filter || "all";
+      initForecastLineupConferenceTabs();
+      renderForecastLineup();
+    });
+  });
+}
+
+function renderForecastLineup() {
+  const lineupData = getForecastLineupData();
+  const lineupSeasons = getForecastLineupSeasons();
+
+  if (!lineupSeasons.length || !lineupData.seasons) {
+    document.getElementById("forecastLineupStatsRow").innerHTML = `
+      <div class="stat-card"><div class="label">Forecast Lineup</div><div class="value val-orange">No Data</div><div class="detail">Run: python3 src/simulation/run_forecast.py (without --skip-lineup)</div></div>
+    `;
+    document.getElementById("forecastLineupCardGrid").innerHTML = "";
+    return;
+  }
+
+  // Use the same season as the forecast season tab if available, else latest
+  const targetSeason = lineupSeasons.includes(forecastSeason) ? forecastSeason : lineupSeasons[lineupSeasons.length - 1];
+  const seasonData = lineupData.seasons[targetSeason];
+  if (!seasonData) {
+    document.getElementById("forecastLineupStatsRow").innerHTML = "";
+    document.getElementById("forecastLineupCardGrid").innerHTML = "";
+    return;
+  }
+
+  renderForecastLineupStats(seasonData, targetSeason);
+  renderForecastLineupCards(seasonData, targetSeason);
+}
+
+function renderForecastLineupStats(seasonData, season) {
+  const s = seasonData.summary || {};
+  const scenarioLabel = getForecastScenarioLabel(forecastScenario);
+  const cards = [
+    {
+      label: "Scenario",
+      value: scenarioLabel,
+      cls: "val-purple",
+      detail: forecastScenario || "default"
+    },
+    {
+      label: "Season",
+      value: season || "-",
+      cls: "val-purple",
+      detail: "Forecast lineup projection"
+    },
+    {
+      label: "Teams",
+      value: s.n_teams != null ? String(s.n_teams) : "-",
+      cls: "val-accent",
+      detail: "Teams with projected lineups"
+    },
+    {
+      label: "Starter Overlap",
+      value: s.starter_overlap_count_mean != null ? Number(s.starter_overlap_count_mean).toFixed(2) : "-",
+      cls: (s.starter_target_met ? "val-green" : "val-orange"),
+      detail: "Predicted vs observed first-quarter starters from PBP"
+    },
+    {
+      label: "Clutch Overlap",
+      value: s.clutch_overlap_count_mean != null ? Number(s.clutch_overlap_count_mean).toFixed(2) : "-",
+      cls: (s.clutch_target_met ? "val-green" : "val-orange"),
+      detail: "Predicted vs top-5 clutch-minute players"
+    },
+    {
+      label: "Rotation Corr",
+      value: s.rotation_corr != null ? Number(s.rotation_corr).toFixed(3) : "-",
+      cls: (s.rotation_target_met ? "val-green" : "val-purple"),
+      detail: "Predicted rotation vs lineups >=50 poss and <=2 starters"
+    },
+  ];
+
+  document.getElementById("forecastLineupStatsRow").innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value}</div>
+      <div class="detail">${c.detail}</div>
+    </div>
+  `).join("");
+}
+
+function renderForecastLineupCards(seasonData, season) {
+  let teams = (seasonData.teams || []).slice().sort((a, b) => (a.team_abbreviation || "").localeCompare(b.team_abbreviation || ""));
+  teams = filterRowsByConference(teams, forecastLineupConferenceFilter);
+  const grid = document.getElementById("forecastLineupCardGrid");
+
+  if (!teams.length) {
+    grid.innerHTML = `<div class="stat-card"><div class="label">Lineup Cards</div><div class="value val-orange">No Teams</div><div class="detail">No forecast lineup data for ${conferenceFilterLabel(forecastLineupConferenceFilter)}</div></div>`;
+    return;
+  }
+
+  grid.innerHTML = teams.map(team => {
+    const v = team.validation || {};
+    return `
+      <div class="lineup-card" data-team="${team.team_abbreviation}" data-source="forecast" data-season="${season}">
+        <div class="title-row">
+          <div class="team-name">${team.team_abbreviation}</div>
+          <div class="conf">${team.conference || "Unknown"}</div>
+        </div>
+        <div class="mini">
+          <div class="k">Starter</div><div class="v">${fmt(team.mu_start, 2)} / ${fmt(team.sigma_start, 2)}</div>
+          <div class="k">Rotation</div><div class="v">${fmt(team.mu_rotation, 2)} / ${fmt(team.sigma_rotation, 2)}</div>
+          <div class="k">Clutch</div><div class="v">${fmt(team.mu_clutch, 2)} / ${fmt(team.sigma_clutch, 2)}</div>
+          <div class="k">Pool Size</div><div class="v">${team.n_players_pool || "-"}</div>
+        </div>
+        <div class="validation">
+          <span>S: ${v.starter_overlap != null ? v.starter_overlap : "-"}/5</span>
+          <span>C: ${v.clutch_overlap != null ? v.clutch_overlap : "-"}/5</span>
+          <span>R: ${v.rotation_actual_net != null ? fmt(v.rotation_actual_net, 2) : "-"}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  document.querySelectorAll("#forecastLineupCardGrid .lineup-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const teamAbbr = card.dataset.team;
+      const cardSeason = card.dataset.season;
+      openForecastLineupModal(cardSeason, teamAbbr);
+    });
+  });
+}
+
+function findForecastLineupTeam(season, teamAbbr) {
+  const lineupData = getForecastLineupData();
+  const seasonData = ((lineupData && lineupData.seasons) || {})[season] || {};
+  const teams = seasonData.teams || [];
+  return teams.find(t => t.team_abbreviation === teamAbbr) || null;
+}
+
+function openForecastLineupModal(season, teamAbbr) {
+  const team = findForecastLineupTeam(season, teamAbbr);
+  if (!team) return;
+
+  document.getElementById("lineupModalTitle").textContent = `${team.team_abbreviation} (${season}) — Forecast`;
+
+  const html = `
+    <div class="lineup-modal-grid">
+      <div class="lineup-panel">
+        <h4>Phase Metrics (Forecast)</h4>
+        <div class="kv">
+          <div class="k">Starter Mu / Sigma</div><div class="v">${fmt(team.mu_start,2)} / ${fmt(team.sigma_start,2)}</div>
+          <div class="k">Rotation Mu / Sigma</div><div class="v">${fmt(team.mu_rotation,2)} / ${fmt(team.sigma_rotation,2)}</div>
+          <div class="k">Clutch Mu / Sigma</div><div class="v">${fmt(team.mu_clutch,2)} / ${fmt(team.sigma_clutch,2)}</div>
+          <div class="k">Pool Size</div><div class="v">${team.n_players_pool || "-"}</div>
+        </div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Rotation Breakdown</h4>
+        <div class="kv">
+          <div class="k">Bench Impact</div><div class="v">${fmt((team.rotation_breakdown||{}).bench_impact, 2)}</div>
+          <div class="k">Stagger Impact</div><div class="v">${fmt((team.rotation_breakdown||{}).stagger_impact, 2)}</div>
+          <div class="k">Alpha</div><div class="v">${fmt((team.rotation_breakdown||{}).alpha, 2)}</div>
+        </div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Predicted Starters</h4>
+        ${renderPlayerList(team.starter_players || [])}
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Predicted Clutch Lineup</h4>
+        ${renderPlayerList(team.clutch_players || [])}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("lineupModalContent").innerHTML = html;
+  document.getElementById("lineupModalOverlay").classList.add("open");
 }
 </script>
 </body>

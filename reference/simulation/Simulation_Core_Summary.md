@@ -543,3 +543,55 @@ Player carry validation:
 
 Rookie scale selection:
 - Best grid value selected: `0.85` (lowest rookie BKE MAE across grid).
+
+---
+
+## Entry: 2026-03-07 — Forecast Step 2 Validation Alignment + Forecast Tab Split
+
+### Why this update was made
+
+Forecast lineup projection outputs were previously embedded inside the single Forecast view and did not behave as a fully separated Step 2 surface. In addition, forecast-mode lineup validation needed to use the same observed-target definitions as backtest whenever historical targets are available.
+
+### Backend updates
+
+Updated `src/simulation/lineup_projection.py`:
+
+1. **Removed archetype gate filtering**
+- Removed the `Insufficient Minutes` offensive-archetype exclusion gate from lineup pool selection.
+- This removal applies to both backtest and forecast mode runs.
+
+2. **Forecast scoring remains leakage-safe**
+- In forecast mode, clutch inputs are still excluded from model scoring (merged clutch table is intentionally empty for scoring features).
+
+3. **Forecast validation now mirrors backtest targets (when available)**
+- Forecast mode now loads the same observed-target sources used by backtest validation:
+	- first-quarter PBP starter targets,
+	- top-5 clutch-minute targets,
+	- rotation benchmark from lineups with `total_poss >= 50` and starter overlap `<= 2`.
+- These targets are used only for validation attachment and summary metrics, not for forecast scoring.
+
+Updated `src/simulation/simulation_config.py`:
+
+- Removed the obsolete `STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES` constant to keep config aligned with runtime logic.
+
+### Frontend updates
+
+Updated `app/simulation_viewer.py`:
+
+1. **Forecast view split into two top-level tabs**
+- `Step 1 Forecast` (season simulation forecast outputs)
+- `Step 2 Forecast` (lineup projection forecast outputs)
+
+2. **Step 2 Forecast now has dedicated controls**
+- Added dedicated scenario tabs and season tabs in the Step 2 Forecast panel.
+- Reused shared forecast scenario/season state so both forecast tabs stay synchronized.
+
+3. **Step 2 Forecast validation presentation aligned with backtest UI**
+- Summary cards now include starter overlap, clutch overlap, and rotation correlation with target-state coloring.
+- Team cards now show per-team validation row (`S/C/R`) matching Step 2 backtest style.
+
+### Documentation alignment
+
+- `readme.md` updated to document:
+	- split forecast tabs (`Step 1 Forecast`, `Step 2 Forecast`),
+	- forecast Step 2 validation parity with backtest target definitions.

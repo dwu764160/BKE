@@ -1,3 +1,57 @@
+2026-03-08 — Step 2 archetype-gate removal + forecast Step 2 split + validation parity
+--------------------------------------------------------------------------------------
+- Implemented user-requested removal of Step 2 archetype gate filtering in both backtest and forecast:
+	- `src/simulation/lineup_projection.py`: removed lineup-pool exclusion of `Insufficient Minutes` archetype rows.
+	- `src/simulation/simulation_config.py`: removed obsolete gate constant `STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES`.
+- Forecast Step 2 validation now mirrors backtest target construction while keeping forecast scoring leakage-safe:
+	- Forecast scoring path still uses no clutch-minute scoring inputs.
+	- Validation path now loads/uses observed targets (Q1 starters from PBP, top-5 clutch minutes, rotation lineups with `total_poss >= 50` and overlap `<= 2`).
+	- This parity is implemented in `src/simulation/lineup_projection.py` by splitting forecast clutch usage into `clutch_model` (empty) vs `clutch_validation` (observed targets).
+- Frontend forecast view split into two top-level tabs in `app/simulation_viewer.py`:
+	- `Step 1 Forecast` (season simulation forecast outputs)
+	- `Step 2 Forecast` (forecast lineup projection outputs)
+	- Added dedicated Step 2 forecast scenario/season controls and synchronized forecast state across both tabs.
+	- Added Step 2 forecast validation cards/team rows to match backtest Step 2 style (`Starter/Clutch/Rotation` validation signals).
+- Rebuilt artifacts and validated outputs:
+	- Backtest Step 2 rerun completed; summary metrics remained healthy.
+	- Forecast scenario rerun completed for `end_of_season` and `preseason_snapshot`.
+	- Verified `reports/forecast_lineup_profiles.json` contains populated scenario-level validation overall metrics.
+	- Regenerated `app/simulation.html` from updated viewer template.
+- Documentation updated:
+	- `readme.md` now documents split forecast tabs and forecast Step 2 validation parity.
+	- `reference/simulation/Simulation_Core_Summary.md` appended with this pass details.
+- NOTE: This entry supersedes earlier same-day notes that described an active Step 2 archetype gate.
+
+2026-03-08 — Simulation Step 2 constraint tuning + rotation alpha optimization + forecast lineup deployment
+-----------------------------------------------------------------------------------------------------------
+- Implemented missing constraint tuning features in `src/simulation/lineup_projection.py`:
+  - Archetype gate: filters "Insufficient Minutes" players from lineup pool
+  - Low-minutes penalty: divides starter_score by 1.10 for players under 24 MPG
+  - True-big requirement: starter lineup must include at least one Forward-Center or Center
+  - Added 5 new fields to `Step2Config` dataclass and corresponding imports from `simulation_config.py`
+  - Modified `_select_best_lineup()` to accept optional `require_position_bands` parameter
+- Rotation correlation optimization in `src/simulation/simulation_config.py`:
+  - Changed `ROTATION_ALPHA` from 0.55 to 0.30 (grid search identified optimal range 0.25-0.35)
+  - Disabled rotation regime model (`STEP2_ENABLE_ROTATION_REGIME_MODEL = False`) — regime model hurt correlation by ~0.03
+- Ran production backtest: starter=0.7178, clutch=0.86, rotation_corr=0.6177
+  - Improvement over TRUE baseline (0.6956/0.8578/0.553): starter +3.2%, clutch +0.3%, rotation +11.7%
+  - NOTE: Prior context_summary claimed baseline was 0.7267/0.8667/0.6048 — this was INCORRECT; verified by git stash + clean run
+- Ran forecast pipeline: `python3 src/simulation/run_forecast.py --skip-preseason-fetch` (45.3s)
+  - Both scenarios (end_of_season, preseason_snapshot) generated lineup profiles for 60 teams each
+  - Combined output at `reports/forecast_lineup_profiles.json`
+- Frontend fixes (from prior session, validated this session):
+  - JS nesting bug fix: extracted `initForecastConferenceTabs()` from inside `switchForecastSeason()`
+  - Added Step 2 conference filter tabs
+  - Added Forecast Step 2 lineup panel (7 new JS functions, conference filter, card grid, modals)
+  - Forecast mode scoring: reversed clutch logic (no current-season leakage), bifurcated weights
+- HTML regenerated: `python3 app/simulation_viewer.py` → `app/simulation.html`
+- Frontend validation:
+  - All 78 JS functions present, all braces/parens/brackets balanced
+  - FORECAST_LINEUP data properly embedded with both scenarios
+  - Conference filter tabs on all views (Step 1, Step 2, Forecast, Forecast Lineup)
+  - Scenario tabs functional for forecast view
+  - No Python errors in any modified files
+
 2026-03-07 - Frontend multi-team display consistency follow-up
 ---------------------------------------------------------------
 - Updated `app/player_data_viewer.py` to aggregate per-player-season team context, merge canonical `player_team_stints.parquet` context, and surface it across card header, modal subtitle, and compare UI labels.

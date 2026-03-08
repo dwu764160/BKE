@@ -76,8 +76,7 @@ PLAY_IN_RANK = 10
 LINEUP_SIZE = 5
 MIN_MPG_FOR_POOL = 3.0
 
-# Step 2 baseline eligibility and structural checks
-STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES = True
+# Step 2 baseline structural checks
 STEP2_STARTER_REQUIRE_TRUE_BIG = True
 STEP2_STARTER_TRUE_BIG_BANDS = ("Forward-Center", "Center")
 
@@ -88,7 +87,7 @@ STEP2_STARTER_LOW_MINUTES_PENALTY = 1.10
 # Step 2 v1 optimization toggles
 STEP2_ENABLE_CONTINUITY_PRIOR = True
 STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT = True
-STEP2_ENABLE_ROTATION_REGIME_MODEL = True
+STEP2_ENABLE_ROTATION_REGIME_MODEL = False
 
 # Continuity prior: continuity_factor = 1 - kappa * (1 - R)
 STEP2_CONTINUITY_KAPPA = 0.35
@@ -122,7 +121,7 @@ STARTER_WEIGHT_POS = 0.10
 STARTER_WEIGHT_C = 0.15
 
 # Rotation model: mu_rotation = alpha * stagger + (1-alpha) * bench
-ROTATION_ALPHA = 0.55
+ROTATION_ALPHA = 0.30
 STAGGER_MINUTES_THRESHOLD = 24.0
 
 # Volatility proxy from impact_stability

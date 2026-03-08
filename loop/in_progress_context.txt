@@ -1,3 +1,53 @@
+2026-03-08 — User-requested follow-up complete: remove Step 2 archetype gate + split forecast tabs + add forecast Step 2 validation parity
+===============================================================================================================================
+
+Completed in this pass:
+  - Removed Step 2 archetype gate from both backtest/forecast runtime behavior.
+    - Deleted `Insufficient Minutes` filter path in `src/simulation/lineup_projection.py`.
+    - Deleted stale config toggle `STEP2_EXCLUDE_INSUFFICIENT_MINUTES_ARCHETYPES` in `src/simulation/simulation_config.py`.
+  - Added forecast Step 2 validation parity with backtest while preserving forecast leakage guardrails.
+    - Forecast scoring still does not consume clutch-minute targets.
+    - Forecast validation now consumes observed targets via the same target builders used by backtest.
+  - Split forecast frontend into two tabs in `app/simulation_viewer.py`:
+    - `Step 1 Forecast`
+    - `Step 2 Forecast`
+  - Added dedicated Step 2 forecast scenario/season tabs and synchronized forecast state between both forecast views.
+  - Added Step 2 forecast validation cards/team-card validation rows (`S/C/R`) aligned with backtest Step 2 presentation.
+  - Updated docs:
+    - `readme.md`
+    - `reference/simulation/Simulation_Core_Summary.md`
+  - Regenerated `app/simulation.html` and reran backtest/forecast pipelines.
+
+Validation snapshot from latest reruns:
+  - Forecast Step 2 `validation_overall` is now populated by scenario:
+    - `end_of_season`: starter=0.6133, clutch=0.6367, rotation=0.4643, n=60
+    - `preseason_snapshot`: starter=0.6267, clutch=0.6333, rotation=0.4288, n=60
+
+Outstanding:
+  - Optional: commit/push if user requests.
+
+2026-03-08 — Simulation Step 2 constraint tuning + rotation optimization + forecast lineup deployment
+====================================================================================================
+
+Completed in this session:
+  - Implemented constraint tuning features in `src/simulation/lineup_projection.py`:
+    - Archetype gate: exclude "Insufficient Minutes" players from lineup pool
+    - Low-minutes penalty: divide starter_score by 1.10 for sub-24 MPG candidates
+    - True-big requirement: require Forward-Center or Center in starter lineup
+    - Added 5 new config fields to `Step2Config` dataclass
+    - Added `require_position_bands` parameter to `_select_best_lineup()`
+  - Optimized rotation alpha in `src/simulation/simulation_config.py`:
+    - `ROTATION_ALPHA`: 0.55 → 0.30 (grid search optimal range 0.25-0.35)
+    - `STEP2_ENABLE_ROTATION_REGIME_MODEL`: True → False (regime model detrimental)
+  - Ran production backtest: starter=0.7178, clutch=0.86, rotation_corr=0.6177
+    - TRUE baseline verified at 0.6956/0.8578/0.553 (not 0.7267/0.8667/0.6048 as previously claimed)
+  - Ran forecast pipeline with lineup projection (both scenarios, 45.3s)
+  - Regenerated `app/simulation.html` with all updated data
+  - Validated frontend: all 78 JS functions, balanced syntax, correct data binding
+
+Outstanding:
+  - Git commit not yet made (user hasn't explicitly requested)
+
 2026-03-07 - Frontend multi-team display consistency follow-up
 ==============================================================
 

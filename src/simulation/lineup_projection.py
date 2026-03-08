@@ -71,11 +71,28 @@ from src.simulation.simulation_config import (
     STARTER_WEIGHT_I,
     STARTER_WEIGHT_M,
     STARTER_WEIGHT_POS,
+    STEP2_CLUTCH_CANDIDATE_SIZE,
+    STEP2_CLUTCH_MAX_SWAPS,
+    STEP2_CLUTCH_MIN_STARTERS,
+    STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT,
+    STEP2_ENABLE_ROTATION_REGIME_MODEL,
     STEP2_IMPACT_COLUMN,
     STEP2_LINEUP_PROFILES_PATH,
     STEP2_LINEUP_REPORT_PATH,
     STEP2_MINUTES_COLUMN,
+    STEP2_REGIME_BENCH_COEF,
+    STEP2_REGIME_STAR_COEF,
+    STEP2_ROT_BENCH_BENCH_W,
+    STEP2_ROT_BENCH_START_W,
+    STEP2_ROT_SIGMA_BASE,
+    STEP2_ROT_SIGMA_BENCH_W,
+    STEP2_ROT_STAGGER_BENCH_W,
+    STEP2_ROT_STAGGER_START_W,
     STEP2_STABILITY_COLUMN,
+    STEP2_STARTER_LOW_MINUTES_PENALTY,
+    STEP2_STARTER_LOW_MINUTES_THRESHOLD,
+    STEP2_STARTER_REQUIRE_TRUE_BIG,
+    STEP2_STARTER_TRUE_BIG_BANDS,
     STEP2_VALIDATION_PATH,
     TEAMS_PATH,
 )
@@ -452,6 +469,26 @@ class Step2Config:
     player_vol_stability_center: float = PLAYER_VOL_STABILITY_CENTER
     player_vol_floor: float = PLAYER_VOL_FLOOR
     player_vol_ceiling: float = PLAYER_VOL_CEILING
+    forecast_mode: bool = False
+    # v1 optimization toggles
+    enable_clutch_core: bool = STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT
+    enable_rotation_regime: bool = STEP2_ENABLE_ROTATION_REGIME_MODEL
+    clutch_candidate_size: int = STEP2_CLUTCH_CANDIDATE_SIZE
+    clutch_min_starters: int = STEP2_CLUTCH_MIN_STARTERS
+    clutch_max_swaps: int = STEP2_CLUTCH_MAX_SWAPS
+    regime_star_coef: float = STEP2_REGIME_STAR_COEF
+    regime_bench_coef: float = STEP2_REGIME_BENCH_COEF
+    rot_stagger_start_w: float = STEP2_ROT_STAGGER_START_W
+    rot_stagger_bench_w: float = STEP2_ROT_STAGGER_BENCH_W
+    rot_bench_start_w: float = STEP2_ROT_BENCH_START_W
+    rot_bench_bench_w: float = STEP2_ROT_BENCH_BENCH_W
+    rot_sigma_base: float = STEP2_ROT_SIGMA_BASE
+    rot_sigma_bench_w: float = STEP2_ROT_SIGMA_BENCH_W
+    # Constraint tuning
+    require_true_big: bool = STEP2_STARTER_REQUIRE_TRUE_BIG
+    true_big_bands: Tuple[str, ...] = STEP2_STARTER_TRUE_BIG_BANDS
+    low_minutes_threshold: float = STEP2_STARTER_LOW_MINUTES_THRESHOLD
+    low_minutes_penalty: float = STEP2_STARTER_LOW_MINUTES_PENALTY
 
 
 def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
@@ -634,7 +671,12 @@ def load_metrics_lineups(full_to_abbr: Dict[str, str]) -> pd.DataFrame:
     return lineups[["season", "team_abbreviation", "NET_RTG", "total_poss", "lineup_ids"]]
 
 
-def _select_best_lineup(pool: pd.DataFrame, score_col: str, lineup_size: int) -> pd.DataFrame:
+def _select_best_lineup(
+    pool: pd.DataFrame,
+    score_col: str,
+    lineup_size: int,
+    require_position_bands: Optional[Tuple[str, ...]] = None,
+) -> pd.DataFrame:
     players = pool.sort_values(score_col, ascending=False).reset_index(drop=True)
     if len(players) <= lineup_size:
         return players.head(lineup_size).copy()
@@ -647,6 +689,10 @@ def _select_best_lineup(pool: pd.DataFrame, score_col: str, lineup_size: int) ->
         roles = set(chunk["role"].tolist())
         if not {"Guard", "Wing", "Big"}.issubset(roles):
             continue
+        if require_position_bands:
+            bands = set(chunk["position_band"].astype(str).tolist())
+            if not bands.intersection(set(require_position_bands)):
+                continue
         score = float(chunk[score_col].sum())
         if score > best_score:
             best_score = score
@@ -654,6 +700,48 @@ def _select_best_lineup(pool: pd.DataFrame, score_col: str, lineup_size: int) ->
 
     if best_idx is None:
         return players.head(lineup_size).copy()
+    return players.iloc[list(best_idx)].copy()
+
+
+def _select_clutch_constrained(
+    candidates: pd.DataFrame,
+    starter_ids: Set[str],
+    lineup_size: int,
+    min_starters: int,
+    max_swaps: int,
+) -> pd.DataFrame:
+    """Select clutch lineup from candidates with starter carryover constraint.
+
+    Requires at least `min_starters` from the starter lineup and at most
+    `max_swaps` non-starters.  Falls back to best-score if no valid combo
+    satisfies the G/W/B coverage requirement.
+    """
+    players = candidates.sort_values("clutch_score", ascending=False).reset_index(drop=True)
+    if len(players) <= lineup_size:
+        return players.head(lineup_size).copy()
+
+    best_idx = None
+    best_score = -np.inf
+
+    for combo in combinations(range(len(players)), lineup_size):
+        chunk = players.iloc[list(combo)]
+        roles = set(chunk["role"].tolist())
+        if not {"Guard", "Wing", "Big"}.issubset(roles):
+            continue
+        n_starters = sum(1 for pid in chunk["player_id"].astype(str) if pid in starter_ids)
+        if n_starters < min_starters:
+            continue
+        n_swaps = lineup_size - n_starters
+        if n_swaps > max_swaps:
+            continue
+        score = float(chunk["clutch_score"].sum())
+        if score > best_score:
+            best_score = score
+            best_idx = combo
+
+    if best_idx is None:
+        # Fallback: relax constraint, just use best score with G/W/B coverage
+        return _select_best_lineup(candidates, "clutch_score", lineup_size)
     return players.iloc[list(best_idx)].copy()
 
 
@@ -701,29 +789,81 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
             cfg.player_vol_ceiling,
         )
 
-        lineup_pool["clutch_score"] = (
-            cfg.clutch_weight_c * lineup_pool["clutch_share"]
-            + cfg.clutch_weight_talent
-            * (
-                cfg.clutch_weight_i * lineup_pool["impact_norm"]
-                + cfg.clutch_weight_m * lineup_pool["minutes_norm"]
+        # --- Scoring formulas differ between backtest and forecast modes ---
+        if cfg.forecast_mode:
+            # Forecast: no clutch_minutes available — score purely by impact + minutes
+            # Starter: redistribute clutch weight to minutes + impact
+            lineup_pool["starter_score"] = (
+                0.55 * lineup_pool["minutes_norm"]
+                + 0.30 * lineup_pool["impact_norm"]
+                + 0.15 * lineup_pool["pos_scarcity"]
             )
-        )
+        else:
+            # Backtest: original formula with clutch_share contribution
+            lineup_pool["clutch_score"] = (
+                cfg.clutch_weight_c * lineup_pool["clutch_share"]
+                + cfg.clutch_weight_talent
+                * (
+                    cfg.clutch_weight_i * lineup_pool["impact_norm"]
+                    + cfg.clutch_weight_m * lineup_pool["minutes_norm"]
+                )
+            )
 
-        lineup_pool["starter_score"] = (
-            cfg.starter_weight_m * lineup_pool["minutes_norm"]
-            + cfg.starter_weight_i * lineup_pool["impact_norm"]
-            + cfg.starter_weight_pos * lineup_pool["pos_scarcity"]
-            + cfg.starter_weight_c * lineup_pool["clutch_share"]
-        )
+            lineup_pool["starter_score"] = (
+                cfg.starter_weight_m * lineup_pool["minutes_norm"]
+                + cfg.starter_weight_i * lineup_pool["impact_norm"]
+                + cfg.starter_weight_pos * lineup_pool["pos_scarcity"]
+                + cfg.starter_weight_c * lineup_pool["clutch_share"]
+            )
 
-        clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size)
-        starter_lineup = _select_best_lineup(lineup_pool, "starter_score", cfg.lineup_size)
+        # --- Constraint: penalize low-minutes starter candidates ---
+        if cfg.low_minutes_penalty > 1.0:
+            low_min_mask = lineup_pool["minutes"] < cfg.low_minutes_threshold
+            lineup_pool.loc[low_min_mask, "starter_score"] = (
+                lineup_pool.loc[low_min_mask, "starter_score"] / cfg.low_minutes_penalty
+            )
+
+        # --- Select starters ---
+        big_bands = cfg.true_big_bands if cfg.require_true_big else None
+        starter_lineup = _select_best_lineup(
+            lineup_pool, "starter_score", cfg.lineup_size,
+            require_position_bands=big_bands,
+        )
+        starter_mu, starter_sigma = _lineup_strength(starter_lineup)
+        starter_ids = set(starter_lineup["player_id"].astype(str))
+
+        # --- Select clutch lineup ---
+        if cfg.forecast_mode:
+            # Forecast clutch: starters + high-impact players are clutch candidates.
+            # Score by impact with a starter-indicator bonus.
+            lineup_pool["_is_starter"] = lineup_pool["player_id"].astype(str).isin(starter_ids).astype(float)
+            lineup_pool["clutch_score"] = (
+                0.60 * lineup_pool["impact_norm"]
+                + 0.20 * lineup_pool["minutes_norm"]
+                + 0.20 * lineup_pool["_is_starter"]
+            )
+            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size)
+        elif cfg.enable_clutch_core and not cfg.forecast_mode:
+            # v1 clutch core constraint: select from top-N candidates,
+            # requiring >=min_starters from the starter lineup, with max swaps.
+            candidates = lineup_pool.sort_values("clutch_score", ascending=False).head(cfg.clutch_candidate_size).copy()
+            # Ensure all starters are in the candidate pool
+            for sid in starter_ids:
+                if sid not in candidates["player_id"].astype(str).values:
+                    starter_row = lineup_pool[lineup_pool["player_id"].astype(str) == sid]
+                    if not starter_row.empty:
+                        candidates = pd.concat([candidates, starter_row.head(1)], ignore_index=True)
+            candidates = candidates.drop_duplicates(subset=["player_id"], keep="first")
+            clutch_lineup = _select_clutch_constrained(
+                candidates, starter_ids, cfg.lineup_size,
+                cfg.clutch_min_starters, cfg.clutch_max_swaps,
+            )
+        else:
+            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size)
 
         clutch_mu, clutch_sigma = _lineup_strength(clutch_lineup)
-        starter_mu, starter_sigma = _lineup_strength(starter_lineup)
 
-        starter_ids = set(starter_lineup["player_id"].astype(str))
+        # --- Rotation model ---
         bench = lineup_pool[~lineup_pool["player_id"].astype(str).isin(starter_ids)].copy()
 
         bench_mu = _weighted_avg(bench["impact_value"].to_numpy(dtype=float), np.maximum(bench["minutes"].to_numpy(dtype=float), 1e-3))
@@ -747,8 +887,28 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
                 stagger_weights,
             )
 
-        rotation_mu = cfg.rotation_alpha * stagger_mu + (1.0 - cfg.rotation_alpha) * bench_mu
-        rotation_sigma = math.sqrt(max(bench_sigma_sq + 0.5 * stagger_sigma_sq, 0.0))
+        if cfg.enable_rotation_regime:
+            # Rotation regime model: sigmoid-based regime detection
+            # p_stagger = sigmoid(star_coef * S - bench_coef * B)
+            # where S = max starter impact_norm, B = mean bench impact_norm
+            star_max = float(starter_lineup["impact_norm"].max()) if not starter_lineup.empty else 0.5
+            bench_mean = float(bench["impact_norm"].mean()) if not bench.empty else 0.5
+            regime_logit = cfg.regime_star_coef * star_max - cfg.regime_bench_coef * bench_mean
+            p_stagger = 1.0 / (1.0 + math.exp(-regime_logit))
+
+            # Regime-blended rotation:
+            # In star-heavy regime (high p_stagger): stagger dominates
+            # In bench-deep regime (low p_stagger): bench dominates
+            stagger_blend_mu = cfg.rot_stagger_start_w * stagger_mu + cfg.rot_stagger_bench_w * bench_mu
+            bench_blend_mu = cfg.rot_bench_start_w * stagger_mu + cfg.rot_bench_bench_w * bench_mu
+            rotation_mu = p_stagger * stagger_blend_mu + (1.0 - p_stagger) * bench_blend_mu
+            rotation_sigma = math.sqrt(max(
+                cfg.rot_sigma_base * stagger_sigma_sq + cfg.rot_sigma_bench_w * bench_sigma_sq,
+                0.0,
+            ))
+        else:
+            rotation_mu = cfg.rotation_alpha * stagger_mu + (1.0 - cfg.rotation_alpha) * bench_mu
+            rotation_sigma = math.sqrt(max(bench_sigma_sq + 0.5 * stagger_sigma_sq, 0.0))
 
         def _pack_players(df: pd.DataFrame, score_col: str) -> List[Dict]:
             frame = df.sort_values(score_col, ascending=False)
@@ -765,7 +925,7 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
                         "def_archetype": _clean_text(row.get("def_archetype")),
                         "minutes": _safe_float(row["minutes"], 2),
                         "impact": _safe_float(row["impact_value"], 4),
-                        "clutch_minutes": _safe_float(row["clutch_minutes"], 2),
+                        "clutch_minutes": _safe_float(row.get("clutch_minutes", 0), 2),
                         "score": _safe_float(row[score_col], 4),
                     }
                 )
@@ -1023,7 +1183,7 @@ def main(
 ) -> None:
     mode_label = "FORECAST" if forecast_mode else "BACKTEST"
     print(f"Simulation Core — Step 2: Lineup Projection [{mode_label}]")
-    cfg = Step2Config()
+    cfg = Step2Config(forecast_mode=forecast_mode)
 
     from src.simulation.simulation_config import (
         FORECAST_LINEUP_PROFILES_PATH,
@@ -1054,25 +1214,28 @@ def main(
     positions = load_positions()
 
     if forecast_mode:
-        # No clutch stats or lineup metrics for future seasons
-        clutch = pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
-        lineups = pd.DataFrame(columns=["season", "team_abbreviation", "NET_RTG", "total_poss", "lineup_ids"])
-        starter_games = pd.DataFrame()
+        # Keep forecast scoring leakage-safe: do not inject clutch minutes into the model pool.
+        clutch_model = pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
+        # Validation still uses the same observed targets as backtest when historical targets exist.
+        clutch_validation = load_clutch_stats()
     else:
-        clutch = load_clutch_stats()
-        lineups = load_metrics_lineups(full_to_abbr)
-        starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
+        clutch_model = load_clutch_stats()
+        clutch_validation = clutch_model
+
+    lineups = load_metrics_lineups(full_to_abbr)
+    starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
 
     print(f"  Players loaded: {len(players)}")
     print(f"  Positions loaded: {len(positions)}")
-    if not forecast_mode:
-        print(f"  Clutch rows loaded: {len(clutch)}")
-        print(f"  Lineup rows loaded: {len(lineups)}")
-        print(f"  Q1 starter game rows loaded: {len(starter_games)}")
+    if forecast_mode:
+        print("  Forecast scoring clutch source: disabled (leakage-safe)")
+    print(f"  Clutch rows loaded for validation: {len(clutch_validation)}")
+    print(f"  Lineup rows loaded for validation: {len(lineups)}")
+    print(f"  Q1 starter game rows loaded for validation: {len(starter_games)}")
 
     players = players.merge(positions, on=["player_id", "season"], how="left")
     players = players.merge(
-        clutch,
+        clutch_model,
         on=["player_id", "season", "team_abbreviation"],
         how="left",
     )
@@ -1100,7 +1263,7 @@ def main(
 
     actual_starters, actual_clutch, actual_rotation_net, starter_meta = build_actual_maps(
         lineups=lineups,
-        clutch=clutch,
+        clutch=clutch_validation,
         predicted_rows=predicted_rows,
         starter_games=starter_games,
     )
