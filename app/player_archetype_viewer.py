@@ -12,6 +12,7 @@ import os
 
 DATA_DIR = "data/processed"
 OUTPUT_FILE = "app/player_archetypes.html"
+PLAYER_TEAM_STINTS_PATH = f"{DATA_DIR}/player_team_stints.parquet"
 
 
 def load_archetypes():
@@ -314,6 +315,79 @@ def _clean_team_abbreviation(val):
     return text
 
 
+def _build_team_context_map(df: pd.DataFrame) -> dict:
+    """Map (player_id, season) to sorted unique team abbreviations."""
+    out = {}
+    if df is None or df.empty:
+        return out
+
+    for _, row in df.iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("SEASON", row.get("season", "")) or "").strip()
+        if not pid or not season:
+            continue
+        team = (
+            _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+            or _clean_team_abbreviation(row.get("team_abbreviation"))
+            or _clean_team_abbreviation(row.get("team"))
+        )
+        if not team:
+            continue
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    return out
+
+
+def _load_stint_team_context_map(path: str = PLAYER_TEAM_STINTS_PATH) -> dict:
+    """Load canonical team context map from player_team_stints parquet."""
+    out = {}
+    if not os.path.exists(path):
+        return out
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return out
+    if df is None or df.empty:
+        return out
+
+    work = df.copy()
+    if "player_id" not in work.columns and "PLAYER_ID" in work.columns:
+        work["player_id"] = work["PLAYER_ID"]
+    if "SEASON" not in work.columns and "season" in work.columns:
+        work["SEASON"] = work["season"]
+    if "TEAM_ABBREVIATION" not in work.columns and "team_abbreviation" in work.columns:
+        work["TEAM_ABBREVIATION"] = work["team_abbreviation"]
+    required = {"player_id", "SEASON", "TEAM_ABBREVIATION"}
+    if not required.issubset(work.columns):
+        return out
+
+    work = work[["player_id", "SEASON", "TEAM_ABBREVIATION"]].copy()
+    work["player_id"] = work["player_id"].astype(str)
+    work["SEASON"] = work["SEASON"].astype(str)
+    work["TEAM_ABBREVIATION"] = work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    for _, row in work.dropna(subset=["player_id", "SEASON"]).iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("SEASON", "") or "").strip()
+        team = _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+        if not pid or not season or not team:
+            continue
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    for key, teams in out.items():
+        out[key] = sorted(teams)
+
+    return out
+
+
 def generate_html(off_df, def_df):
     """Generate interactive HTML viewer."""
 
@@ -364,6 +438,15 @@ def generate_html(off_df, def_df):
 
     def_for_merge = def_work[def_cols].drop_duplicates(subset=join_keys, keep="first")
     merged = off_work.merge(def_for_merge, on=join_keys, how='left')
+
+    team_context_map = _build_team_context_map(merged)
+    stint_team_context_map = _load_stint_team_context_map()
+    for key, teams in stint_team_context_map.items():
+        existing = team_context_map.get(key, [])
+        for team in teams:
+            if team not in existing:
+                existing.append(team)
+        team_context_map[key] = sorted(existing)
     
     # Build player data for JSON
     players = []
@@ -396,6 +479,8 @@ def generate_html(off_df, def_df):
             'name': row['PLAYER_NAME'],
             'season': row['SEASON'],
             'team': team_abbr,
+            'team_context': ' / '.join(team_context_map.get((str(row['player_id']), str(row['SEASON'])), [team_abbr] if team_abbr else [])),
+            'team_context_count': len(team_context_map.get((str(row['player_id']), str(row['SEASON'])), [team_abbr] if team_abbr else [])),
             'stint_number': stint_number,
             'stint_count': stint_count,
             'stint_team_count': stint_team_count,
@@ -601,6 +686,17 @@ def generate_html(off_df, def_df):
             else if (p.is_primary_stint) tags.push('Primary');
             return `(${{tags.join(' · ')}})`;
         }}
+
+        function teamContextLabel(p) {{
+            const base = (p && p.team) ? String(p.team) : '';
+            const ctx = (p && p.team_context) ? String(p.team_context) : '';
+            const count = Number((p && p.team_context_count) || 0);
+            if (count > 1 && ctx) {{
+                if (base && !ctx.split(' / ').includes(base)) return `${{base}} [${{ctx}}]`;
+                return ctx;
+            }}
+            return base || ctx || '—';
+        }}
         
         function renderPlayers(filtered) {{
             const grid = document.getElementById('playerGrid');
@@ -628,7 +724,8 @@ def generate_html(off_df, def_df):
                 }}
 
                 const stint = stintSuffix(p);
-                const teamText = p.team ? `<span class="player-team"> · ${{p.team}}${{stint ? ' ' + stint : ''}}</span>` : (stint ? `<span class="player-team"> · ${{stint}}</span>` : '');
+                const teamLabel = teamContextLabel(p);
+                const teamText = teamLabel ? `<span class="player-team"> · ${{teamLabel}}${{stint ? ' ' + stint : ''}}</span>` : (stint ? `<span class="player-team"> · ${{stint}}</span>` : '');
                 const seasonText = `${{p.season}}${{stint ? ' ' + stint : ''}}`;
                 
                 return `

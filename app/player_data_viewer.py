@@ -16,6 +16,7 @@ import re
 PROCESSED_DIR = "data/processed"
 HISTORICAL_DIR = "data/historical"
 OUTPUT_FILE = "app/player_data.html"
+PLAYER_TEAM_STINTS_PATH = f"{PROCESSED_DIR}/player_team_stints.parquet"
 
 # ---------------------------------------------------------------------------
 # Data loaders
@@ -407,6 +408,86 @@ def _clean_team_abbreviation(val):
     return text
 
 
+def _build_team_context_map(df):
+    """Map (player_id, season) -> sorted list of team abbreviations for that season."""
+    out = {}
+    if df is None or df.empty:
+        return out
+
+    team_cols = ["TEAM_ABBREVIATION", "team_abbreviation", "pred_team_abbreviation", "team"]
+
+    for _, row in df.iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("SEASON", row.get("season", "")) or "").strip()
+        if not pid or not season:
+            continue
+
+        team = ""
+        for col in team_cols:
+            team = _clean_team_abbreviation(row.get(col))
+            if team:
+                break
+        if not team:
+            continue
+
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    for key, teams in out.items():
+        out[key] = sorted(teams)
+
+    return out
+
+
+def _load_stint_team_context_map(path=PLAYER_TEAM_STINTS_PATH):
+    """Load canonical team-context map from player_team_stints parquet when available."""
+    out = {}
+    if not os.path.exists(path):
+        return out
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return out
+    if df is None or df.empty:
+        return out
+
+    work = df.copy()
+    if "player_id" not in work.columns and "PLAYER_ID" in work.columns:
+        work["player_id"] = work["PLAYER_ID"]
+    if "SEASON" not in work.columns and "season" in work.columns:
+        work["SEASON"] = work["season"]
+    if "TEAM_ABBREVIATION" not in work.columns and "team_abbreviation" in work.columns:
+        work["TEAM_ABBREVIATION"] = work["team_abbreviation"]
+    required = {"player_id", "SEASON", "TEAM_ABBREVIATION"}
+    if not required.issubset(work.columns):
+        return out
+
+    work = work[["player_id", "SEASON", "TEAM_ABBREVIATION"]].copy()
+    work["player_id"] = work["player_id"].apply(normalize_player_id)
+    work["SEASON"] = work["SEASON"].astype(str)
+    work["TEAM_ABBREVIATION"] = work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    for _, row in work.dropna(subset=["player_id", "SEASON"]).iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("SEASON", "") or "").strip()
+        team = _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+        if not pid or not season or not team:
+            continue
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    for key, teams in out.items():
+        out[key] = sorted(teams)
+
+    return out
+
+
 def _build_player_stint_key(player_id, season, team_abbr, stint_number):
     team = team_abbr or "UNK"
     stint = max(1, _safe_int(stint_number, default=1))
@@ -731,6 +812,14 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
 
     def_for_merge = def_work[def_cols].drop_duplicates(subset=join_keys, keep="first")
     merged = off_work.merge(def_for_merge, on=join_keys, how='left')
+    team_context_map = _build_team_context_map(merged)
+    stint_team_context_map = _load_stint_team_context_map()
+    for key, teams in stint_team_context_map.items():
+        existing = team_context_map.get(key, [])
+        for team in teams:
+            if team not in existing:
+                existing.append(team)
+        team_context_map[key] = sorted(existing)
 
     profiles_map = build_record_map(profiles_df, ["player_id", "SEASON"], ["player_name", "season"])
     rapm_map     = build_record_map(rapm_df,     ["player_id", "SEASON"], ["player_name", "season"])
@@ -798,6 +887,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
         is_final_stint = _safe_bool(row.get("is_final_stint"), default=(stint_number == stint_count))
         team_assignment_source = str(row.get("team_assignment_source", "") or "").strip() or "season"
         key = _build_player_stint_key(pid, season, team_abbr, stint_number)
+        team_context_list = team_context_map.get((pid, season), [team_abbr] if team_abbr else [])
+        team_context = " / ".join(team_context_list)
         pos_est = pos_est_map.get((pid, season), {})
         bke_rec = bke_map.get((pid, season), {}) or {}
 
@@ -813,6 +904,8 @@ def generate_html(off_df, def_df, profiles_df, bios_df, pos_est_df, rapm_df, xra
             'is_primary_stint': is_primary_stint,
             'is_final_stint': is_final_stint,
             'team_assignment_source': team_assignment_source,
+            'team_context': team_context,
+            'team_context_count': len(team_context_list),
             'off_archetype': row.get('primary_archetype', 'Unknown'),
             'off_secondary': row.get('secondary_archetype', ''),
             'off_confidence': round(row.get('role_confidence', row.get('archetype_confidence', 0)) * 100),
@@ -1330,6 +1423,15 @@ function stintMetaText(card){
     return bits.join(' · ');
 }
 
+function teamContextLabel(card){
+    if(!card)return '';
+    var ctx=(card.team_context||'').trim();
+    var count=Number(card.team_context_count||0);
+    if(ctx&&count>1)return ctx;
+    if(ctx)return ctx;
+    return card.team||'';
+}
+
 function _preferSeasonCard(candidate,current){
     if(!current)return true;
     if(!!candidate.is_final_stint!==!!current.is_final_stint)return !!candidate.is_final_stint;
@@ -1500,8 +1602,9 @@ function cardHTML(p){
   var op=getBkeField(p,'obke_pct'),dp=getBkeField(p,'dbke_pct');var lean='';
   if(op!=null&&dp!=null&&(op+dp)>0){var ow=op/(op+dp)*100;lean='<div class="lean-wrap" title="O/D Lean: Off '+op.toFixed(0)+'% | Def '+dp.toFixed(0)+'%"><div class="lean-bar"><div class="lean-o" style="width:'+ow.toFixed(1)+'%"></div><div class="lean-d" style="width:'+(100-ow).toFixed(1)+'%"></div></div></div>';}
     var sfx=stintSuffix(p);
+        var teamLabel=teamContextLabel(p);
     var teamLbl='';
-    if(p.team)teamLbl='<span class="pteam"> &middot; '+p.team+(sfx?' '+sfx:'')+'</span>';
+        if(teamLabel)teamLbl='<span class="pteam"> &middot; '+teamLabel+(sfx?' '+sfx:'')+'</span>';
     else if(sfx)teamLbl='<span class="pteam"> &middot; '+sfx+'</span>';
     var seasonLbl=p.season+(sfx?' '+sfx:'');
   return '<div class="card" onclick="openModal(\\''+p.key+'\\')">'
@@ -1682,7 +1785,7 @@ function openModal(key){
   var d=getDetail(key);
   var pr=d.profile||{};
     var salary=d.salary;
-  var team=p.team||pr.team_abbrev||'';
+    var team=teamContextLabel(p)||pr.team_abbrev||'';
   document.getElementById('mTitle').textContent=p.name+' ('+p.season+')';
   var sub=team;
     var stintInfo=stintMetaText(p);
@@ -1941,7 +2044,8 @@ function cmpAutocomplete(slot){
     var html='';
     for(var i=0;i<matches.length;i++){
         var msfx=stintSuffix(matches[i]);
-        html+='<div class="cmp-dd-item" onclick="cmpSelect('+slot+',\\''+matches[i].key+'\\')">'+matches[i].name+'<span class="cmp-dd-season">'+matches[i].season+(msfx?' '+msfx:'')+(matches[i].team?' \u00b7 '+matches[i].team:'')+'</span></div>';
+        var mteam=teamContextLabel(matches[i]);
+        html+='<div class="cmp-dd-item" onclick="cmpSelect('+slot+',\\''+matches[i].key+'\\')">'+matches[i].name+'<span class="cmp-dd-season">'+matches[i].season+(msfx?' '+msfx:'')+(mteam?' \u00b7 '+mteam:'')+'</span></div>';
     }
     dd.innerHTML=html;dd.classList.add('open');
 }
@@ -1975,7 +2079,8 @@ function runComparison(){
     ];
 
     var p1sfx=stintSuffix(p1),p2sfx=stintSuffix(p2);
-    var hdr='<div class="cmp-hdr-row"><div class="cmp-player-hdr" style="color:#ff6b6b">'+p1.name+'<br><span style="font-size:12px;color:#888">'+p1.season+(p1sfx?' '+p1sfx:'')+(p1.team?' \u00b7 '+p1.team:'')+'</span></div><div class="cmp-label" style="font-size:10px;color:#555">STAT</div><div class="cmp-player-hdr" style="color:#4ecdc4">'+p2.name+'<br><span style="font-size:12px;color:#888">'+p2.season+(p2sfx?' '+p2sfx:'')+(p2.team?' \u00b7 '+p2.team:'')+'</span></div></div>';
+    var p1team=teamContextLabel(p1),p2team=teamContextLabel(p2);
+    var hdr='<div class="cmp-hdr-row"><div class="cmp-player-hdr" style="color:#ff6b6b">'+p1.name+'<br><span style="font-size:12px;color:#888">'+p1.season+(p1sfx?' '+p1sfx:'')+(p1team?' \u00b7 '+p1team:'')+'</span></div><div class="cmp-label" style="font-size:10px;color:#555">STAT</div><div class="cmp-player-hdr" style="color:#4ecdc4">'+p2.name+'<br><span style="font-size:12px;color:#888">'+p2.season+(p2sfx?' '+p2sfx:'')+(p2team?' \u00b7 '+p2team:'')+'</span></div></div>';
 
     var rows='';
     for(var i=0;i<stats.length;i++){

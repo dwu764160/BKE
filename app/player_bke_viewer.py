@@ -27,8 +27,67 @@ import json
 import os
 import sys
 
+try:
+  import pandas as pd
+except Exception:
+  pd = None
+
 COMPONENTS_JSON = "data/processed/bke/bke_v31_components.json"
 OUTPUT_HTML = "app/player_bke_viewer.html"
+PLAYER_TEAM_STINTS_PATH = "data/processed/player_team_stints.parquet"
+
+
+def _clean_team_abbreviation(value: object) -> str:
+  team = str(value or "").strip().upper()
+  if team in {"", "TOT", "NAN", "NONE", "NULL"}:
+    return ""
+  return team
+
+
+def _load_stint_team_context_map(path: str = PLAYER_TEAM_STINTS_PATH) -> dict:
+  """Load canonical (player_id::season -> teams[]) map from player_team_stints."""
+  out = {}
+  if pd is None or not os.path.exists(path):
+    return out
+  try:
+    df = pd.read_parquet(path)
+  except Exception:
+    return out
+  if df is None or df.empty:
+    return out
+
+  work = df.copy()
+  if "player_id" not in work.columns and "PLAYER_ID" in work.columns:
+    work["player_id"] = work["PLAYER_ID"]
+  if "SEASON" not in work.columns and "season" in work.columns:
+    work["SEASON"] = work["season"]
+  if "TEAM_ABBREVIATION" not in work.columns and "team_abbreviation" in work.columns:
+    work["TEAM_ABBREVIATION"] = work["team_abbreviation"]
+  required = {"player_id", "SEASON", "TEAM_ABBREVIATION"}
+  if not required.issubset(work.columns):
+    return out
+
+  work = work[["player_id", "SEASON", "TEAM_ABBREVIATION"]].copy()
+  work["player_id"] = work["player_id"].astype(str)
+  work["SEASON"] = work["SEASON"].astype(str)
+  work["TEAM_ABBREVIATION"] = work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+  for _, row in work.dropna(subset=["player_id", "SEASON"]).iterrows():
+    pid = str(row.get("player_id", "") or "").strip()
+    season = str(row.get("SEASON", "") or "").strip()
+    team = _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+    if not pid or not season or not team:
+      continue
+    key = f"{pid}::{season}"
+    if key not in out:
+      out[key] = []
+    if team not in out[key]:
+      out[key].append(team)
+
+  for key, teams in out.items():
+    out[key] = sorted(teams)
+
+  return out
 
 
 def generate_html(components_path: str = COMPONENTS_JSON, output_path: str = OUTPUT_HTML) -> str:
@@ -40,6 +99,7 @@ def generate_html(components_path: str = COMPONENTS_JSON, output_path: str = OUT
 
     # Embed the data directly as a JS variable
     data_json = json.dumps(data, separators=(",", ":"))
+    stint_team_context_json = json.dumps(_load_stint_team_context_map(), separators=(",", ":"))
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -159,6 +219,39 @@ const DATA = {data_json};
 const PLAYERS_SOURCE = Array.isArray(DATA.players) ? DATA.players : [];
 const CONFIG = DATA.config;
 const PROXY = DATA.production_proxy;
+const STINT_TEAM_CONTEXT_MAP = {stint_team_context_json};
+
+function normalizeTeamAbbr(value) {{
+  const team = String(value || "").trim().toUpperCase();
+  if (!team || team === "TOT" || team === "NAN" || team === "NONE" || team === "NULL") return "";
+  return team;
+}}
+
+function buildTeamContextMap(rows) {{
+  const out = {{}};
+  if (STINT_TEAM_CONTEXT_MAP && typeof STINT_TEAM_CONTEXT_MAP === "object") {{
+    Object.keys(STINT_TEAM_CONTEXT_MAP).forEach(key => {{
+      const src = Array.isArray(STINT_TEAM_CONTEXT_MAP[key]) ? STINT_TEAM_CONTEXT_MAP[key] : [];
+      const teams = src.map(normalizeTeamAbbr).filter(Boolean);
+      if (!teams.length) return;
+      out[key] = [...new Set(teams)].sort();
+    }});
+  }}
+  rows.forEach(p => {{
+    const pid = String(p && p.player_id != null ? p.player_id : "").trim();
+    const season = String(p && p.season != null ? p.season : "").trim();
+    if (!pid || !season) return;
+    const team = normalizeTeamAbbr((p && (p.team_abbreviation || p.team)) || "");
+    if (!team) return;
+    const key = `${{pid}}::${{season}}`;
+    if (!out[key]) out[key] = [];
+    if (!out[key].includes(team)) out[key].push(team);
+  }});
+  Object.keys(out).forEach(key => out[key].sort());
+  return out;
+}}
+
+const TEAM_CONTEXT_MAP = buildTeamContextMap(PLAYERS_SOURCE);
 
 function buildRowKey(p, idx) {{
   const pid = String(p && p.player_id != null ? p.player_id : "").trim() || "UNK";
@@ -170,21 +263,37 @@ function buildRowKey(p, idx) {{
 }}
 
 function buildTeamDisplay(p) {{
-  const team = String((p && (p.team_abbreviation || p.team)) || "").trim();
+  const pid = String(p && p.player_id != null ? p.player_id : "").trim();
+  const season = String(p && p.season != null ? p.season : "").trim();
+  const contextKey = `${{pid}}::${{season}}`;
+  const contextTeams = TEAM_CONTEXT_MAP[contextKey] || [];
+  const context = contextTeams.join(" / ");
+  const team = normalizeTeamAbbr((p && (p.team_abbreviation || p.team)) || "");
+  const teamLabel = context || team;
   const stintRaw = p && (p.stint_number != null ? p.stint_number : p.team_stint_number);
   const stintCountRaw = p && (p.stint_count != null ? p.stint_count : p.stint_team_count);
   const stint = Number.isFinite(Number(stintRaw)) ? Math.max(1, Math.trunc(Number(stintRaw))) : 1;
   const stintCount = Number.isFinite(Number(stintCountRaw)) ? Math.max(1, Math.trunc(Number(stintCountRaw))) : 1;
   if (stintCount > 1 || stint > 1) {{
-    return `${{team || 'UNK'}} (S${{stint}}/${{stintCount}})`;
+    return `${{teamLabel || 'UNK'}} (S${{stint}}/${{stintCount}})`;
   }}
-  return team;
+  return teamLabel || "UNK";
 }}
 
 const PLAYERS_RAW = PLAYERS_SOURCE.map((p, idx) => ({{
-  ...p,
-  __row_key: buildRowKey(p, idx),
-  team_display: buildTeamDisplay(p),
+  ...(function() {{
+    const pid = String(p && p.player_id != null ? p.player_id : "").trim();
+    const season = String(p && p.season != null ? p.season : "").trim();
+    const contextKey = `${{pid}}::${{season}}`;
+    const contextTeams = TEAM_CONTEXT_MAP[contextKey] || [];
+    return {{
+      ...p,
+      __row_key: buildRowKey(p, idx),
+      team_context: contextTeams.join(" / "),
+      team_context_count: contextTeams.length,
+      team_display: buildTeamDisplay(p),
+    }};
+  }})(),
 }}));
 
 // State

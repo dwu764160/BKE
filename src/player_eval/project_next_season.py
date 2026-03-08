@@ -832,11 +832,14 @@ def map_players_to_teams_backtest(
     prior["player_id"] = _norm_id(prior["player_id"])
 
     if team_mapping_mode == "preseason_snapshot":
-        # If preseason snapshot exists, only mapped players keep teams.
+        # If preseason snapshot exists, apply mapped teams and keep carry-forward
+        # team assignment for players missing from the snapshot.
         if preseason_team_map:
-            prior["team_abbreviation"] = prior["player_id"].map(preseason_team_map)
+            mapped_team = prior["player_id"].map(preseason_team_map)
+            prior["team_abbreviation"] = mapped_team.fillna(prior.get("team_abbreviation"))
             if "team_id" in prior.columns:
-                prior["team_id"] = prior["player_id"].map(preseason_team_id_map)
+                mapped_team_id = prior["player_id"].map(preseason_team_id_map)
+                prior["team_id"] = mapped_team_id.fillna(prior.get("team_id"))
         merged = prior
     else:
         # End-of-season (peek) scenario uses final target-season stint/team.
@@ -877,9 +880,11 @@ def map_players_to_teams_forecast(
     # End-of-season scenario = carry-forward prior team. Preseason scenario overrides.
     if team_mapping_mode == "preseason_snapshot":
         if preseason_team_map:
-            df["team_abbreviation"] = df["player_id"].map(preseason_team_map)
+            mapped_team = df["player_id"].map(preseason_team_map)
+            df["team_abbreviation"] = mapped_team.fillna(df.get("team_abbreviation"))
             if "team_id" in df.columns:
-                df["team_id"] = df["player_id"].map(preseason_team_id_map)
+                mapped_team_id = df["player_id"].map(preseason_team_id_map)
+                df["team_id"] = mapped_team_id.fillna(df.get("team_id"))
 
     if roster_override_map:
         manual = df["player_id"].map(roster_override_map)
@@ -1261,6 +1266,7 @@ def project_season(
     roster_override_map = _load_manual_roster_map(roster_path)
     preseason_team_map: Dict[str, str] = {}
     preseason_team_id_map: Dict[str, str] = {}
+    mapping_source = "none"
     if team_mapping_mode == "preseason_snapshot":
         preseason_team_map, preseason_team_id_map = load_preseason_roster_maps(
             target_season=target_season,
@@ -1268,8 +1274,25 @@ def project_season(
         )
         if preseason_team_map:
             print(f"    Preseason snapshot rows mapped: {len(preseason_team_map)} players")
+            mapping_source = "preseason_rosters"
         else:
-            print("    WARNING: preseason snapshot unavailable; falling back to carry-forward teams")
+            # Local fallback: target-season salary feed often contains updated team assignments
+            # and avoids no-op scenario behavior when API snapshots are unavailable.
+            salary_team_map = target_salary_team_map or {}
+            salary_team_map = {
+                str(pid).strip(): str(team).strip().upper()
+                for pid, team in salary_team_map.items()
+                if str(pid).strip() and str(team).strip()
+            }
+            if salary_team_map:
+                preseason_team_map = salary_team_map
+                mapping_source = "target_salary_team_map"
+                print(
+                    "    WARNING: preseason snapshot unavailable; "
+                    f"using target-season salary team map ({len(preseason_team_map)} players)"
+                )
+            else:
+                print("    WARNING: preseason snapshot unavailable; falling back to carry-forward teams")
 
     if mode == "backtest":
         target = all_profiles[all_profiles["season"] == target_season].copy()
@@ -1295,6 +1318,9 @@ def project_season(
             roster_override_map=roster_override_map,
         )
         print(f"    Players carried forward: {len(projected)}")
+
+    if team_mapping_mode == "preseason_snapshot" and mapping_source != "none":
+        projected["team_mapping_source"] = mapping_source
 
     # Drop players with no valid team (suspended, waived, etc.)
     before = len(projected)

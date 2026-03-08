@@ -1,3 +1,35 @@
+2026-03-07 - Frontend multi-team display consistency follow-up
+==============================================================
+
+Completed in this follow-up:
+  - `app/player_data_viewer.py`
+    - Added per-player-season `team_context` aggregation helper.
+    - Merged canonical `data/processed/player_team_stints.parquet` team context into payload build.
+    - Added `team_context` and `team_context_count` to card payload.
+    - Updated card header, modal subtitle, and compare UI labels to use team-context display.
+  - `app/player_bke_viewer.py`
+    - Added embedded `STINT_TEAM_CONTEXT_MAP` from `player_team_stints.parquet` and merged it into client-side `TEAM_CONTEXT_MAP`.
+    - Team column now renders aggregated team abbreviations per player-season and keeps stint suffixing.
+  - `app/player_eval_viewer.py`
+    - Fixed helper indentation issue in `_build_team_context_map` and made team ordering deterministic.
+    - Merged canonical `player_team_stints.parquet` team context into payload build.
+  - `app/player_archetype_viewer.py`
+    - Merged canonical `player_team_stints.parquet` team context into payload build.
+  - Regenerated affected frontend HTML artifacts:
+    - `app/player_eval.html`
+    - `app/player_archetypes.html`
+    - `app/player_data.html`
+    - `app/player_bke_viewer.html`
+    - `app/simulation.html`
+
+Validation in this pass:
+  - Python/static checks clean for updated viewer scripts (`get_errors`: no errors).
+  - `simulation.html` still contains scenario payload/tabs and `actual_wins` fields.
+  - Verified multi-team context is now present in generated payloads via stint map:
+    - `app/player_data.html`: `team_context_count > 1` for 111 entries (max 3 teams)
+    - `app/player_eval.html`: `team_context_count > 1` for 198 entries (max 3 teams)
+    - `app/player_archetypes.html`: `team_context_count > 1` for 111 entries (max 3 teams)
+
 2026-03-07 — Multi-Team Stint + Dual-Scenario Forecast Rollout (Implementation Pass)
 ====================================================================================
 
@@ -57,6 +89,22 @@ Outstanding from user request:
     - Preseason fetch smoke status:
       - `fetch_preseason_rosters.py --season 2025-26` now imports/starts correctly.
       - In current environment, outbound calls to `stats.nba.com` intermittently read-timeout; script logs warn-and-continue but full-season completion can be long when many team calls timeout.
+
+  2026-03-07 — Simulation frontend follow-up (scenario toggle + conference filters)
+  ==============================================================================
+
+  Completed:
+    - Updated `app/simulation_viewer.py` forecast payload assembly so scenario tabs render even when `reports/forecast_season_results.json` is legacy single-scenario.
+      - New fallback loader discovers and reads scenario-suffixed files (`forecast_season_results_<scenario>.json`, `forecast_validation_<scenario>.json`).
+      - Scenario metadata is merged from available `scenario_labels` / `default_scenario` sources.
+    - Added East/West conference filter tabs (default `All Teams`) to simulation UI:
+      - Step 1 section filter controls now apply to charts/tables.
+      - Forecast section filter controls now apply to charts/tables.
+    - Regenerated `app/simulation.html` and validated embedded payload now contains `end_of_season` + `preseason_snapshot` scenarios.
+
+  Validation:
+    - `python3 app/simulation_viewer.py` succeeded and regenerated HTML.
+    - `get_errors` clean for `app/simulation_viewer.py`.
 
 2026-03-07 — Forecast Improvement Sprint COMPLETE
 ==================================================

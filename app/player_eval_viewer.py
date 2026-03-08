@@ -44,6 +44,7 @@ PROFILES_PATH = "data/processed/player_eval/player_impact_profiles.parquet"
 PREDICTIONS_PATH = "data/processed/player_eval/minute_model_predictions_v2.parquet"
 TEAM_AGG_PATH = "data/processed/player_eval/team_feature_aggregation.parquet"
 OUTPUT_HTML = "app/player_eval.html"
+PLAYER_TEAM_STINTS_PATH = "data/processed/player_team_stints.parquet"
 
 
 def _safe_json_val(v):
@@ -80,6 +81,82 @@ def _clean_team_abbreviation(v):
         return ""
     return team
 
+def _build_team_context_map(df: pd.DataFrame) -> dict:
+    """Map (player_id, season) -> sorted unique team abbreviation list."""
+    out = {}
+    if df is None or df.empty:
+        return out
+
+    for _, row in df.iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("season", "") or "").strip()
+        if not pid or not season:
+            continue
+        team = (
+            _clean_team_abbreviation(row.get("team_abbreviation"))
+            or _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+            or _clean_team_abbreviation(row.get("pred_team_abbreviation"))
+            or _clean_team_abbreviation(row.get("team"))
+        )
+        if not team:
+            continue
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    for key, teams in out.items():
+        out[key] = sorted(teams)
+
+    return out
+
+
+def _load_stint_team_context_map(path: str = PLAYER_TEAM_STINTS_PATH) -> dict:
+    """Load canonical team context map from player_team_stints parquet."""
+    out = {}
+    if not os.path.exists(path):
+        return out
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return out
+    if df is None or df.empty:
+        return out
+
+    work = df.copy()
+    if "player_id" not in work.columns and "PLAYER_ID" in work.columns:
+        work["player_id"] = work["PLAYER_ID"]
+    if "season" not in work.columns and "SEASON" in work.columns:
+        work["season"] = work["SEASON"]
+    if "TEAM_ABBREVIATION" not in work.columns and "team_abbreviation" in work.columns:
+        work["TEAM_ABBREVIATION"] = work["team_abbreviation"]
+    required = {"player_id", "season", "TEAM_ABBREVIATION"}
+    if not required.issubset(work.columns):
+        return out
+
+    work = work[["player_id", "season", "TEAM_ABBREVIATION"]].copy()
+    work["player_id"] = work["player_id"].astype(str)
+    work["season"] = work["season"].astype(str)
+    work["TEAM_ABBREVIATION"] = work["TEAM_ABBREVIATION"].map(_clean_team_abbreviation)
+
+    for _, row in work.dropna(subset=["player_id", "season"]).iterrows():
+        pid = str(row.get("player_id", "") or "").strip()
+        season = str(row.get("season", "") or "").strip()
+        team = _clean_team_abbreviation(row.get("TEAM_ABBREVIATION"))
+        if not pid or not season or not team:
+            continue
+        key = (pid, season)
+        if key not in out:
+            out[key] = []
+        if team not in out[key]:
+            out[key].append(team)
+
+    for key, teams in out.items():
+        out[key] = sorted(teams)
+
+    return out
+
 
 def build_payload():
     """Build JSON payload from Step 1 profiles and Step 2 predictions."""
@@ -98,6 +175,15 @@ def build_payload():
         if c not in ["player_id", "season", "player_name"]:
             pred_cols.append(c)
     merged = profiles.merge(predictions[pred_cols], on=["player_id", "season"], how="left")
+
+    team_context_map = _build_team_context_map(merged)
+    stint_team_context_map = _load_stint_team_context_map()
+    for key, teams in stint_team_context_map.items():
+        existing = team_context_map.get(key, [])
+        for team in teams:
+            if team not in existing:
+                existing.append(team)
+        team_context_map[key] = sorted(existing)
 
     # Normalize names in payload (ID-first, alias-aware)
     name_sources = [
@@ -152,6 +238,8 @@ def build_payload():
             "name": str(row.get("player_name", "Unknown")),
             "season": str(row.get("season", "")),
           "team": team_abbr,
+          "team_context": " / ".join(team_context_map.get((str(row.get("player_id", "")), str(row.get("season", ""))), [team_abbr] if team_abbr else [])),
+          "team_context_count": len(team_context_map.get((str(row.get("player_id", "")), str(row.get("season", ""))), [team_abbr] if team_abbr else [])),
           "stint_number": stint_number,
           "stint_count": stint_count,
           "stint_team_count": stint_team_count,
@@ -536,6 +624,17 @@ function stintSuffix(p) {{
   return ` · Stint ${{p.stint_number}}/${{p.stint_count}}${{role}}`;
 }}
 
+function teamContextLabel(p) {{
+  const base = (p && p.team) ? String(p.team) : '';
+  const ctx = (p && p.team_context) ? String(p.team_context) : '';
+  const count = Number((p && p.team_context_count) || 0);
+  if (count > 1 && ctx) {{
+    if (base && !ctx.split(' / ').includes(base)) return `${{base}} [${{ctx}}]`;
+    return ctx;
+  }}
+  return base || ctx || '—';
+}}
+
 function renderCards(list) {{
   const grid = document.getElementById('cardGrid');
   const maxMpg = 40;
@@ -547,7 +646,7 @@ function renderCards(list) {{
     return `<div class="card" onclick="openModal('${{p.key}}')">
       <div class="card-header">
         <div><div class="card-name">${{p.name}}</div>
-          <div class="card-team">${{p.team}} · ${{p.season}}${{stintSuffix(p)}} · ${{p.position||'—'}} · Age ${{p.age||'—'}}</div>
+          <div class="card-team">${{teamContextLabel(p)}} · ${{p.season}}${{stintSuffix(p)}} · ${{p.position||'—'}} · Age ${{p.age||'—'}}</div>
         </div>
         <span class="card-badge" style="background:${{bkeColor(p.bke)}}33;${{bkeStyle}}">${{fmt(p.bke,2)}} BKE</span>
       </div>
@@ -654,11 +753,12 @@ function openModal(playerKey) {{
   const stintMeta = p.stint_count>1
     ? ` · Stint ${{p.stint_number}}/${{p.stint_count}}${{p.is_primary_stint?' (Primary)':''}}${{p.is_final_stint?' (Final)':''}}`
     : '';
+  const teamMeta = teamContextLabel(p);
 
   m.innerHTML = `
     <button class="modal-close" onclick="closeModal()">&times;</button>
     <h2>${{p.name}}</h2>
-    <div class="meta">${{p.team}} · ${{p.season}}${{stintMeta}} · ${{p.position||'—'}} · Age ${{p.age||'—'}} · ${{p.height?Math.floor(p.height/12)+"'"+Math.round(p.height%12)+'"':'—'}} · ${{p.weight?p.weight+' lbs':'—'}} · Exp ${{p.experience||'—'}}y · ${{fmtSalary(p.salary)}}</div>
+    <div class="meta">${{teamMeta}} · ${{p.season}}${{stintMeta}} · ${{p.position||'—'}} · Age ${{p.age||'—'}} · ${{p.height?Math.floor(p.height/12)+"'"+Math.round(p.height%12)+'"':'—'}} · ${{p.weight?p.weight+' lbs':'—'}} · Exp ${{p.experience||'—'}}y · ${{fmtSalary(p.salary)}}</div>
 
     <div class="section">
       <h3>Impact Metrics</h3>

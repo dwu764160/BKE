@@ -28,6 +28,7 @@ Usage:
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -38,6 +39,33 @@ FORECAST_RESULTS = "reports/forecast_season_results.json"
 FORECAST_VALIDATION = "reports/forecast_validation.json"
 FORECAST_LINEUP = "reports/forecast_lineup_profiles.json"
 OUTPUT_HTML = "app/simulation.html"
+
+
+def _load_json_if_exists(path: str) -> dict:
+  if not os.path.exists(path):
+    return {}
+  with open(path, "r", encoding="utf-8") as f:
+    return json.load(f)
+
+
+def _scenario_key_from_path(path: Path, stem_prefix: str) -> str:
+  stem = path.stem
+  if not stem.startswith(stem_prefix):
+    return ""
+  key = stem[len(stem_prefix):]
+  return key.strip("_")
+
+
+def _discover_scenario_files(base_path: str) -> dict:
+  base = Path(base_path)
+  parent = base.parent
+  stem_prefix = f"{base.stem}_"
+  out = {}
+  for p in sorted(parent.glob(f"{stem_prefix}*.json")):
+    key = _scenario_key_from_path(p, stem_prefix)
+    if key:
+      out[key] = str(p)
+  return out
 
 
 def _safe(v):
@@ -83,18 +111,13 @@ def generate_html(
     }
 
     # Load forecast data if available
-    forecast_data = {}
-    if os.path.exists(FORECAST_RESULTS):
-        with open(FORECAST_RESULTS, "r", encoding="utf-8") as f:
-            forecast_data = json.load(f)
-    forecast_validation = {}
-    if os.path.exists(FORECAST_VALIDATION):
-        with open(FORECAST_VALIDATION, "r", encoding="utf-8") as f:
-            forecast_validation = json.load(f)
-    forecast_lineup = {}
-    if os.path.exists(FORECAST_LINEUP):
-        with open(FORECAST_LINEUP, "r", encoding="utf-8") as f:
-            forecast_lineup = json.load(f)
+    forecast_data = _load_json_if_exists(FORECAST_RESULTS)
+    forecast_validation = _load_json_if_exists(FORECAST_VALIDATION)
+    forecast_lineup = _load_json_if_exists(FORECAST_LINEUP)
+
+    scenario_result_files = _discover_scenario_files(FORECAST_RESULTS)
+    scenario_validation_files = _discover_scenario_files(FORECAST_VALIDATION)
+
     # Forecast payload supports both legacy single-scenario and new multi-scenario formats.
     forecast_blob = {
       "config": forecast_data.get("config", {}),
@@ -106,41 +129,74 @@ def generate_html(
       "scenarios": {},
     }
 
-    if isinstance(forecast_data.get("scenarios"), dict) and forecast_data.get("scenarios"):
-      scenario_labels = forecast_data.get("scenario_labels", {}) or {}
-      default_scenario = forecast_data.get("default_scenario") or next(iter(forecast_data["scenarios"].keys()))
-      scenarios_blob = {}
-      for scenario_key, scenario_payload in forecast_data["scenarios"].items():
-        label = scenario_payload.get("label") or scenario_labels.get(scenario_key) or scenario_key
-        scenario_validation = (
-          forecast_validation.get("scenarios", {}).get(scenario_key, {})
-          if isinstance(forecast_validation, dict)
-          else {}
-        )
-        scenario_lineup = (
-          forecast_lineup.get("scenarios", {}).get(scenario_key, {})
-          if isinstance(forecast_lineup, dict)
-          else {}
-        )
-        scenarios_blob[scenario_key] = {
-          "label": label,
-          "config": scenario_payload.get("config", {}),
-          "seasons": scenario_payload.get("seasons", {}),
-          "validation": scenario_validation,
-          "lineup": scenario_lineup,
-        }
+    labels_map = {}
+    for source in (forecast_data, forecast_validation, forecast_lineup):
+        if isinstance(source, dict) and isinstance(source.get("scenario_labels"), dict):
+            labels_map.update(source.get("scenario_labels", {}))
 
-      fallback_key = default_scenario if default_scenario in scenarios_blob else next(iter(scenarios_blob.keys()))
-      fallback_payload = scenarios_blob[fallback_key]
-      forecast_blob = {
-        "config": fallback_payload.get("config", {}),
-        "seasons": fallback_payload.get("seasons", {}),
-        "validation": fallback_payload.get("validation", {}),
-        "lineup": fallback_payload.get("lineup", {}),
-        "default_scenario": fallback_key,
-        "scenario_labels": {k: v.get("label", k) for k, v in scenarios_blob.items()},
-        "scenarios": scenarios_blob,
-      }
+    scenario_keys = set()
+    if isinstance(forecast_data.get("scenarios"), dict):
+        scenario_keys.update(forecast_data["scenarios"].keys())
+    if isinstance(forecast_validation.get("scenarios"), dict):
+        scenario_keys.update(forecast_validation["scenarios"].keys())
+    if isinstance(forecast_lineup.get("scenarios"), dict):
+        scenario_keys.update(forecast_lineup["scenarios"].keys())
+    scenario_keys.update(scenario_result_files.keys())
+    scenario_keys.update(scenario_validation_files.keys())
+
+    if scenario_keys:
+        scenarios_blob = {}
+        for scenario_key in sorted(scenario_keys):
+            scenario_payload = {}
+            if isinstance(forecast_data.get("scenarios"), dict):
+                scenario_payload = forecast_data.get("scenarios", {}).get(scenario_key, {}) or {}
+
+            # Legacy fallback: read scenario-suffixed season results when combined file is single-scenario.
+            if not scenario_payload and scenario_key in scenario_result_files:
+                scenario_payload = _load_json_if_exists(scenario_result_files[scenario_key])
+
+            scenario_validation = {}
+            if isinstance(forecast_validation.get("scenarios"), dict):
+                scenario_validation = forecast_validation.get("scenarios", {}).get(scenario_key, {}) or {}
+            if not scenario_validation and scenario_key in scenario_validation_files:
+                scenario_validation = _load_json_if_exists(scenario_validation_files[scenario_key])
+
+            scenario_lineup = {}
+            if isinstance(forecast_lineup.get("scenarios"), dict):
+                scenario_lineup = forecast_lineup.get("scenarios", {}).get(scenario_key, {}) or {}
+
+            label = (
+                scenario_payload.get("label")
+                or labels_map.get(scenario_key)
+                or scenario_key
+            )
+
+            scenarios_blob[scenario_key] = {
+                "label": label,
+                "config": scenario_payload.get("config", forecast_data.get("config", {})),
+                "seasons": scenario_payload.get("seasons", {}),
+                "validation": scenario_validation,
+                "lineup": scenario_lineup,
+            }
+
+        default_scenario = (
+            forecast_data.get("default_scenario")
+            or forecast_validation.get("default_scenario")
+            or forecast_lineup.get("default_scenario")
+            or next(iter(scenarios_blob.keys()))
+        )
+        fallback_key = default_scenario if default_scenario in scenarios_blob else next(iter(scenarios_blob.keys()))
+        fallback_payload = scenarios_blob[fallback_key]
+
+        forecast_blob = {
+            "config": fallback_payload.get("config", {}),
+            "seasons": fallback_payload.get("seasons", {}),
+            "validation": fallback_payload.get("validation", {}),
+            "lineup": fallback_payload.get("lineup", {}),
+            "default_scenario": fallback_key,
+            "scenario_labels": {k: v.get("label", k) for k, v in scenarios_blob.items()},
+            "scenarios": scenarios_blob,
+        }
 
     data_blob["forecast"] = forecast_blob
 
@@ -209,6 +265,15 @@ h1 { font-size:26px; font-weight:700; color:var(--accent); margin-bottom:2px; }
   text-transform:uppercase; letter-spacing:0.35px;
 }
 .model-tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+/* Conference Filter Tabs */
+.filter-tabs { display:flex; gap:8px; margin:-8px 0 16px 0; flex-wrap:wrap; }
+.filter-tab {
+  border:1px solid var(--border); background:var(--surface); color:var(--text-muted);
+  border-radius:8px; padding:6px 10px; font-size:12px; font-weight:700; cursor:pointer;
+  letter-spacing:0.3px;
+}
+.filter-tab.active { background:var(--green); border-color:var(--green); color:#fff; }
 
 /* Stats Cards */
 .stats-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
@@ -486,6 +551,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
   <div id="step1View" class="view-panel">
     <div class="season-tabs" id="seasonTabs"></div>
     <div class="model-tabs" id="step1ModelTabs"></div>
+    <div class="filter-tabs" id="step1ConferenceTabs"></div>
     <div class="stats-row" id="statsRow"></div>
     <div class="charts-row">
       <div class="chart-box" style="flex:2"><h3>Projected vs Actual Wins</h3><div id="winsChart"></div></div>
@@ -520,6 +586,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
     <div class="model-tabs" id="forecastScenarioTabs"></div>
     <div class="season-tabs" id="forecastSeasonTabs"></div>
     <div class="model-tabs" id="forecastModelTabs"></div>
+    <div class="filter-tabs" id="forecastConferenceTabs"></div>
     <div class="stats-row" id="forecastStatsRow"></div>
     <div class="charts-row">
       <div class="chart-box" style="flex:2"><h3>Projected Wins (Forecast)</h3><div id="forecastWinsChart"></div></div>
@@ -561,9 +628,30 @@ let sortCol = "projected_rank";
 let sortDir = "asc";
 let forecastSortCol = "projected_rank";
 let forecastSortDir = "asc";
+let step1ConferenceFilter = "all";
+let forecastConferenceFilter = "all";
 let currentSimulatedGame = null;
 let activeView = "step1View";
 const STEP2_SEASON_PLAYER_MAP = {};
+
+function normalizeConference(conf) {
+  const text = String(conf || "").trim().toLowerCase();
+  if (text === "east" || text === "eastern") return "east";
+  if (text === "west" || text === "western") return "west";
+  return "unknown";
+}
+
+function conferenceFilterLabel(key) {
+  if (key === "east") return "East";
+  if (key === "west") return "West";
+  return "All Teams";
+}
+
+function filterRowsByConference(rows, filterKey) {
+  if (!Array.isArray(rows)) return [];
+  if (!filterKey || filterKey === "all") return rows;
+  return rows.filter(r => normalizeConference(r && r.conference) === filterKey);
+}
 
 function getStep1Seasons() {
   return Object.keys(DATA.seasons || {}).sort();
@@ -798,6 +886,7 @@ function initForecastScenarioTabs() {
 
   initStep1SeasonTabs();
   initStep1ModelTabs();
+  initStep1ConferenceTabs();
   initSingleGameSimulator(seasons);
   initViewTabs();
   initStep2View();
@@ -850,22 +939,44 @@ function switchSeason(s) {
   renderStep1();
 }
 
+function initStep1ConferenceTabs() {
+  const el = document.getElementById("step1ConferenceTabs");
+  if (!el) return;
+  const options = [
+    { key: "all", label: "All Teams" },
+    { key: "east", label: "East" },
+    { key: "west", label: "West" },
+  ];
+  el.innerHTML = options.map(opt => `
+    <button class="filter-tab${opt.key === step1ConferenceFilter ? " active" : ""}" data-filter="${opt.key}">${opt.label}</button>
+  `).join("");
+  el.querySelectorAll(".filter-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      step1ConferenceFilter = btn.dataset.filter || "all";
+      initStep1ConferenceTabs();
+      renderStep1();
+    });
+  });
+}
+
 function renderStep1() {
   if (!currentSeason) return;
   const sdata = DATA.seasons[currentSeason];
   if (!sdata) return;
   syncStep1Model();
-  renderStats(sdata, step1Model);
-  renderTable(sdata, step1Model);
-  renderWinsChart(sdata, step1Model);
+  const rows = getStep1RowsForSeason(currentSeason, step1Model);
+  const filteredRows = filterRowsByConference(rows, step1ConferenceFilter);
+  renderStats(sdata, step1Model, filteredRows);
+  renderTable(sdata, step1Model, filteredRows);
+  renderWinsChart(sdata, step1Model, filteredRows);
   renderCalibration();
 }
 
-function renderStats(sdata, modelKey) {
+function renderStats(sdata, modelKey, filteredRows) {
   const ssMap = getSeasonStatsMap(sdata, "margin");
   const ss = ssMap[modelKey] || sdata.season_stats || {};
   const vg = (DATA.validation && DATA.validation.game_level && DATA.validation.game_level[currentSeason]) || {};
-  const teams = getStep1RowsForSeason(currentSeason, modelKey);
+  const teams = Array.isArray(filteredRows) ? filteredRows : getStep1RowsForSeason(currentSeason, modelKey);
   const isMarginModel = modelKey === "margin";
 
   const cards = [
@@ -877,7 +988,7 @@ function renderStats(sdata, modelKey) {
     { label:"Accuracy", value: isMarginModel && vg.accuracy ? (vg.accuracy * 100).toFixed(1) + "%" : "-", cls:"val-green", detail:isMarginModel?"Game pick accuracy":"Margin-model only" },
     { label:"Log Loss", value: isMarginModel ? fmt(vg.log_loss, 4) : "-", cls:"val-purple", detail:isMarginModel?"(0.693=coin flip)":"Margin-model only" },
     { label:"Margin RMSE", value: isMarginModel ? fmt(vg.margin_rmse, 1) : "-", cls:"val-accent", detail:isMarginModel?"Predicted vs actual margin":"Margin-model only" },
-    { label:"Teams", value: teams.length, cls:"val-accent", detail: currentSeason },
+    { label:"Teams", value: teams.length, cls:"val-accent", detail: `${currentSeason} · ${conferenceFilterLabel(step1ConferenceFilter)}` },
   ];
 
   const el = document.getElementById("statsRow");
@@ -890,8 +1001,8 @@ function renderStats(sdata, modelKey) {
   `).join("");
 }
 
-function renderTable(sdata, modelKey) {
-  let teams = [...getStep1RowsForSeason(currentSeason, modelKey)];
+function renderTable(sdata, modelKey, filteredRows) {
+  let teams = [...(Array.isArray(filteredRows) ? filteredRows : filterRowsByConference(getStep1RowsForSeason(currentSeason, modelKey), step1ConferenceFilter))];
   teams.sort((a, b) => {
     let va = a[sortCol], vb = b[sortCol];
     if (va == null) va = 0;
@@ -954,13 +1065,17 @@ function renderTable(sdata, modelKey) {
         sortCol = col;
         sortDir = col === "team" ? "asc" : "desc";
       }
-      renderTable(sdata);
+      renderStep1();
     });
   });
 }
 
-function renderWinsChart(sdata, modelKey) {
-  const teams = [...getStep1RowsForSeason(currentSeason, modelKey)].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
+function renderWinsChart(sdata, modelKey, filteredRows) {
+  const teams = [...(Array.isArray(filteredRows) ? filteredRows : filterRowsByConference(getStep1RowsForSeason(currentSeason, modelKey), step1ConferenceFilter))].sort((a,b) => (b.projected_wins||0) - (a.projected_wins||0));
+  if (!teams.length) {
+    document.getElementById("winsChart").innerHTML = '<div style="color:var(--text-muted);padding:20px">No teams for this conference filter.</div>';
+    return;
+  }
   const n = teams.length;
   const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
   const h = n * (barH + gap) + 40;
@@ -1741,7 +1856,28 @@ function initForecastView() {
 
 function switchForecastSeason(s) {
   forecastSeason = s;
+  initForecastConferenceTabs();
   document.querySelectorAll("#forecastSeasonTabs .season-tab").forEach(t => {
+
+function initForecastConferenceTabs() {
+  const el = document.getElementById("forecastConferenceTabs");
+  if (!el) return;
+  const options = [
+    { key: "all", label: "All Teams" },
+    { key: "east", label: "East" },
+    { key: "west", label: "West" },
+  ];
+  el.innerHTML = options.map(opt => `
+    <button class="filter-tab${opt.key === forecastConferenceFilter ? " active" : ""}" data-filter="${opt.key}">${opt.label}</button>
+  `).join("");
+  el.querySelectorAll(".filter-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      forecastConferenceFilter = btn.dataset.filter || "all";
+      initForecastConferenceTabs();
+      renderForecast();
+    });
+  });
+}
     t.classList.toggle("active", t.textContent.startsWith(s));
   });
   syncForecastModel();
@@ -1755,15 +1891,17 @@ function renderForecast() {
   const sdata = payload.seasons[forecastSeason];
   if (!sdata) return;
   syncForecastModel();
-  renderForecastStats(sdata, forecastModel);
-  renderForecastTable(sdata, forecastModel);
-  renderForecastWinsChart(sdata, forecastModel);
+  const rows = getForecastRowsForSeason(forecastSeason, forecastModel);
+  const filteredRows = filterRowsByConference(rows, forecastConferenceFilter);
+  renderForecastStats(sdata, forecastModel, filteredRows);
+  renderForecastTable(sdata, forecastModel, filteredRows);
+  renderForecastWinsChart(sdata, forecastModel, filteredRows);
   renderForecastValidation();
 }
 
-function renderForecastStats(sdata, modelKey) {
+function renderForecastStats(sdata, modelKey, filteredRows) {
   const payload = getForecastScenarioPayload(forecastScenario);
-  const teams = getForecastRowsForSeason(forecastSeason, modelKey);
+  const teams = Array.isArray(filteredRows) ? filteredRows : getForecastRowsForSeason(forecastSeason, modelKey);
   const seasonStats = getForecastStatsForSeason(forecastSeason, modelKey) || {};
   const wins = teams.map(t => t.projected_wins || 0);
   const avgWins = wins.length ? (wins.reduce((a,b) => a+b, 0) / wins.length) : 0;
@@ -1795,7 +1933,7 @@ function renderForecastStats(sdata, modelKey) {
     { label: "Win Corr", value: fmt(seasonStats.correlation, 3), cls: "val-green", detail: "Proj vs Actual wins" },
     { label: "Win MAE", value: fmt(seasonStats.mae, 2), cls: "val-accent", detail: "Average win error" },
     { label: "Win RMSE", value: fmt(seasonStats.rmse, 2), cls: "val-accent", detail: "Root mean sq error" },
-    { label: "Teams", value: teams.length, cls: "val-accent", detail: forecastSeason },
+    { label: "Teams", value: teams.length, cls: "val-accent", detail: `${forecastSeason} · ${conferenceFilterLabel(forecastConferenceFilter)}` },
     { label: "Avg Wins", value: avgWins.toFixed(1), cls: "val-accent", detail: "Mean projected" },
     { label: "Win Spread", value: spread.toFixed(1), cls: "val-orange", detail: `${minW.toFixed(0)}-${maxW.toFixed(0)}` },
     { label: "BKE r", value: bkeCorr != null ? bkeCorr.toFixed(3) : "-", cls: "val-green", detail: "Yr-to-yr carry" },
@@ -1815,8 +1953,8 @@ function renderForecastStats(sdata, modelKey) {
   `).join("");
 }
 
-function renderForecastTable(sdata, modelKey) {
-  let teams = [...getForecastRowsForSeason(forecastSeason, modelKey)];
+function renderForecastTable(sdata, modelKey, filteredRows) {
+  let teams = [...(Array.isArray(filteredRows) ? filteredRows : filterRowsByConference(getForecastRowsForSeason(forecastSeason, modelKey), forecastConferenceFilter))];
   teams.sort((a, b) => {
     let va = a[forecastSortCol], vb = b[forecastSortCol];
     if (va == null) va = 0;
@@ -1880,13 +2018,17 @@ function renderForecastTable(sdata, modelKey) {
         forecastSortCol = col;
         forecastSortDir = col === "team" ? "asc" : "desc";
       }
-      renderForecastTable(sdata, modelKey);
+      renderForecast();
     });
   });
 }
 
-function renderForecastWinsChart(sdata, modelKey) {
-  const teams = [...getForecastRowsForSeason(forecastSeason, modelKey)].sort((a, b) => (b.projected_wins || 0) - (a.projected_wins || 0));
+function renderForecastWinsChart(sdata, modelKey, filteredRows) {
+  const teams = [...(Array.isArray(filteredRows) ? filteredRows : filterRowsByConference(getForecastRowsForSeason(forecastSeason, modelKey), forecastConferenceFilter))].sort((a, b) => (b.projected_wins || 0) - (a.projected_wins || 0));
+  if (!teams.length) {
+    document.getElementById("forecastWinsChart").innerHTML = '<div style="color:var(--text-muted);padding:20px">No teams for this conference filter.</div>';
+    return;
+  }
   const n = teams.length;
   const barH = 18, gap = 4, leftMargin = 50, rightMargin = 80;
   const h = n * (barH + gap) + 40;

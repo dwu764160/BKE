@@ -1,3 +1,23 @@
+2026-03-07 - Frontend multi-team display consistency follow-up
+---------------------------------------------------------------
+- Updated `app/player_data_viewer.py` to aggregate per-player-season team context, merge canonical `player_team_stints.parquet` context, and surface it across card header, modal subtitle, and compare UI labels.
+- Updated `app/player_bke_viewer.py` with embedded `STINT_TEAM_CONTEXT_MAP` (from `player_team_stints.parquet`) merged into client-side `TEAM_CONTEXT_MAP`, with team-column rendering that shows aggregated abbreviations plus stint suffix when applicable.
+- Updated `app/player_eval_viewer.py` and `app/player_archetype_viewer.py` to merge canonical `player_team_stints.parquet` context into payload team labels.
+- Fixed helper indentation/ordering issues in `app/player_eval_viewer.py` while applying the above.
+- Regenerated all affected frontends:
+	- `app/player_eval.html`
+	- `app/player_archetypes.html`
+	- `app/player_data.html`
+	- `app/player_bke_viewer.html`
+	- `app/simulation.html`
+- Validation snapshot:
+	- `get_errors` clean for updated viewer scripts.
+	- `simulation.html` still contains scenario tabs/payload and `actual_wins` values.
+	- Multi-team context now present in generated payloads:
+		- `app/player_data.html`: `team_context_count > 1` for 111 entries (max 3)
+		- `app/player_eval.html`: `team_context_count > 1` for 198 entries (max 3)
+		- `app/player_archetypes.html`: `team_context_count > 1` for 111 entries (max 3)
+
 2026-03-07 — Multi-Team Stint Architecture + Option B Scenario Forecasting
 ----------------------------------------------------------------------------
 - Implemented stint derivation stage:
@@ -20,6 +40,8 @@
 	- `derive_player_team_stints.py` rerun successful (`rows=1580`, `multi_team_player_seasons=187`).
 	- `run_forecast.py` scenario smoke runs successful for `end_of_season`, `preseason_snapshot`, and combined `end_of_season,preseason_snapshot` (with `--skip-lineup --skip-preseason-fetch`).
 	- `fetch_preseason_rosters.py` import/dependency path is now unblocked with `nba_api==1.10.2`; in this environment, network calls to `stats.nba.com` can still be slow/intermittent and may require longer runtime due to request timeouts.
+	- `app/simulation_viewer.py` updated to reconstruct scenario tabs from scenario-suffixed forecast artifacts when combined forecast JSON is legacy single-scenario.
+	- `simulation.html` now includes East/West filter tabs (default `All Teams`) for both Step 1 and Forecast charts/tables.
 - Team-rating regression degree experiment (season-holdout, 90 team-seasons):
 	- MAE by polynomial degree: d1=1.9514, d2=1.9509, d3=1.9554, d4=1.9309 (best), d5=2.0867.
 	- Degree-4 marginally improves MAE vs linear but with slightly worse RMSE.
