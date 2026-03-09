@@ -70,10 +70,9 @@ def load_team_net_ratings():
     
     teams = pd.read_parquet(path)
     
-    # Team net rating per 100 possessions (approx from plus/minus per game / ~2 for 100 poss)
-    # PLUS_MINUS_PER_GAME is the seasonal average point differential
-    # Need to convert to per 100 possessions - divide by ~1.02 (avg possessions per game / 100)
-    teams['team_net_rtg'] = teams['PLUS_MINUS_PER_GAME'] / teams['GAMES']  # Per game average
+    # PLUS_MINUS_PER_GAME already stores per-game point differential.
+    # Keep this value directly as the coarse team net proxy.
+    teams['team_net_rtg'] = teams['PLUS_MINUS_PER_GAME']
     
     # Rename for merge
     teams = teams.rename(columns={'TEAM_ID': 'team', 'SEASON': 'season'})
@@ -186,10 +185,16 @@ def compute_win_shares_bref(df, league_ctx):
         df['Pts_Per_Win'] = 0.32 * 114.2  # ~36.5
     
     # L_PPP from player data (ratio is correct even if sums are 5x)
-    l_ppp_season = df.groupby('season').apply(
-        lambda x: x['TEAM_PTS_ON_COURT'].sum() / x['POSS_OFF'].sum()
-    ).reset_index(name='L_PPP')
-    df = pd.merge(df, l_ppp_season, on='season', how='left')
+    l_ppp_season = df.groupby('season', as_index=False).agg(
+        team_pts_on_court=('TEAM_PTS_ON_COURT', 'sum'),
+        poss_off=('POSS_OFF', 'sum')
+    )
+    l_ppp_season['L_PPP'] = np.where(
+        l_ppp_season['poss_off'] > 0,
+        l_ppp_season['team_pts_on_court'] / l_ppp_season['poss_off'],
+        np.nan,
+    )
+    df = pd.merge(df, l_ppp_season[['season', 'L_PPP']], on='season', how='left')
     
     # =========================================================================
     # OFFENSIVE WIN SHARES
@@ -458,18 +463,21 @@ def compute_win_shares_bref(df, league_ctx):
     # =========================================================================
     # TOTAL WIN SHARES
     # =========================================================================
-    # DWS NORMALIZATION: Scale per season so total WS ≈ 1230
+    # DWS NORMALIZATION: Scale per season so total WS ~= target
     for season in df['season'].unique():
         mask = df['season'] == season
         total_ows = df.loc[mask, 'OWS'].sum()
         total_dws = df.loc[mask, 'DWS'].sum()
         target = 30 * 82 / 2  # 1230
         if total_dws > 0:
-            dws_share = total_dws / max(total_ows + total_dws, 1)
-            target_dws = target * dws_share
+            # Reserve the remaining target for defense after offense is fixed.
+            target_dws = max(target - total_ows, 0.0)
             scale = target_dws / total_dws
             df.loc[mask, 'DWS'] = df.loc[mask, 'DWS'] * scale
-            print(f"  DWS norm {season}: {total_dws:.1f} -> {df.loc[mask, 'DWS'].sum():.1f} (scale {scale:.3f})")
+            print(
+                f"  DWS norm {season}: {total_dws:.1f} -> {df.loc[mask, 'DWS'].sum():.1f} "
+                f"(scale {scale:.3f}, target_total_ws={target:.1f})"
+            )
 
     df['WS'] = df['OWS'] + df['DWS']
     

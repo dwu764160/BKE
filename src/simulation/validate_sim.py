@@ -119,8 +119,8 @@ def validate_game_level(
         "accuracy": round(accuracy, 4),
         "home_win_rate_actual": round(home_win_rate, 4),
         "home_win_rate_predicted": round(avg_predicted_home_win, 4),
-        "margin_rmse": round(margin_rmse, 4) if margin_rmse else None,
-        "margin_mae": round(margin_mae, 4) if margin_mae else None,
+        "margin_rmse": round(margin_rmse, 4) if margin_rmse is not None else None,
+        "margin_mae": round(margin_mae, 4) if margin_mae is not None else None,
     }
 
 

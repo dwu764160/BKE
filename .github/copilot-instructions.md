@@ -31,6 +31,45 @@ The [loop](loop/) folder is your live context and planning hub. You must:
 - **You must refer to this instructions file every time you run or make a major decision.**
 - If you are unsure about workflow, conventions, or next steps, always check this file and the loop folder before proceeding.
 
+## Skills-first Workflow
+- **Search for a matching skill first:** Before taking action on any task, look for a relevant skill in the `/.github/skills/` folder and prefer invoking that skill when it covers the work. Skills are the canonical, reusable procedures and tool-wrappers.
+- **Invoke skill behaviourally:** If a matching skill is found, follow its `preferred_tools`, `job_scope`, and `example_prompts` to perform the task. Respect the skill's `avoid_tools` and persona guidance.
+- **Create new skills when appropriate:** If no suitable skill exists and the task is likely to recur or is reusable across agents/workflows, create a new skill in `/.github/skills/` rather than embedding the logic inside an agent or scattered scripts. Keep skills focused and atomic.
+- **Avoid duplication:** Before creating a new skill, check for overlapping skills by searching `/.github/skills/` for similar names or descriptions.
+- **Skill lifecycle:** When you add a new skill, update this file's checklist and add a one-line reference to the skill in the loop context (`loop/in_progress_context.txt`) describing why it was created and where it is used.
+
+### Skill creation rules & template
+- File location: create skill files under `/.github/skills/` and name them `<shortname>.skill.md`.
+- Required frontmatter fields: `name`, `description`, `persona`, `preferred_tools`, `avoid_tools`, `job_scope`, `when_to_use`, `example_prompts`.
+- Keep each skill focused to a single reusable operation or small family of closely-related operations.
+- Example minimal template (copy into a new file and fill in):
+
+```
+---
+name: "Short Name Skill"
+description: |
+  One-line summary of what the skill does.
+persona:
+  - "Role or persona one"
+preferred_tools:
+  - read_file
+  - grep_search
+avoid_tools:
+  - run_in_terminal
+job_scope:
+  - "Run and validate X"
+when_to_use:
+  - "When changes affect X or Y"
+example_prompts:
+  - "Run validation on pipeline step X"
+---
+# Short Name Skill
+
+Short explanation and any invocation hints.
+```
+
+If you create a new skill, add at least one `example_prompts` entry that demonstrates how you intend to call it from an agent or an interactive session.
+
 ## Developer Workflow (Strict Order)
 1. **Environment setup:**
 	- `python3 -m venv .venv`
@@ -81,5 +120,7 @@ The [loop](loop/) folder is your live context and planning hub. You must:
 - [ ] Centralize logic and thresholds; never scatter constants.
 - [ ] Document all new outputs and their locations in [readme.md](readme.md).
 - [ ] Validate and test after every change; update the loop folder with findings.
+ - [ ] Search and prefer existing skills in `/.github/skills/` before taking action on a task.
+ - [ ] When a task is reusable, create a new skill in `/.github/skills/` and add a reference to it in the loop context.
 
 **If in doubt, refer to the loop folder and [readme.md](readme.md) for the latest project state and required workflow.**

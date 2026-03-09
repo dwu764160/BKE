@@ -1,3 +1,42 @@
+2026-03-09 — compute_linear_metrics logic fix: DWS normalization target + net proxy correction
+-------------------------------------------------------------------------------------------------------------
+- Continued deep audit of remaining `src/data_compute` scripts identified a high-confidence active logic bug in:
+	- `src/data_compute/compute_linear_metrics.py`
+		- DWS normalization math did not enforce stated season WS target (`1230`), causing systematic WS inflation.
+		- Team net proxy helper incorrectly divided `PLUS_MINUS_PER_GAME` by `GAMES` (double-normalization).
+- Fixes implemented:
+	- DWS normalization now scales to `target_dws = max(1230 - total_ows, 0)` per season.
+	- `load_team_net_ratings()` now uses `PLUS_MINUS_PER_GAME` directly.
+	- Replaced deprecated `groupby.apply` for `L_PPP` with explicit grouped aggregation (future-safe behavior, no logic change).
+- Validation:
+	- `python3 src/data_compute/compute_linear_metrics.py`
+	- Before -> after total WS by season:
+		- 2022-23: `1301.6 -> 1230.0`
+		- 2023-24: `1307.7 -> 1230.0`
+		- 2024-25: `1309.9 -> 1230.0`
+	- Script reruns cleanly, and output saved to `data/processed/metrics_linear.parquet`.
+
+2026-03-09 — Projection carry guardrail tuning + simulation validation null-handling fix
+-------------------------------------------------------------------------------------------------------------
+- Deep audit continuation across `src/player_eval`, `src/simulation`, `src/data_compute`, and `src/modeling` identified two high-confidence logic fixes with measurable/behavioral impact:
+	- `src/player_eval/project_next_season.py`
+		- `fit_minutes_carry_model(...)` fallback guardrail relaxed from `corr < 0.80` to `corr < 0.75`.
+		- Rationale: current historical fit quality is consistently ~0.774, so old cutoff disabled learned carry coefficients in all runs and forced fallback-only behavior.
+	- `src/simulation/validate_sim.py`
+		- Fixed falsy check for margin metrics serialization:
+			- `margin_rmse` / `margin_mae` now use `is not None` guard, so true zero values are no longer emitted as `null`.
+- Documentation sync:
+	- Updated `readme.md` Forecast Stage 1 description to document carry-anchor acceptance threshold (`>= 0.75`).
+- Validation and impact (controlled before/after, same data and settings):
+	- Projection quality (`team_mapping_mode=end_of_season`):
+		- 2022-23 -> 2023-24 MPG MAE: `3.9834 -> 3.9125` (delta `-0.0710`)
+		- 2023-24 -> 2024-25 MPG MAE: `4.2281 -> 4.1436` (delta `-0.0845`)
+		- Average MPG MAE: `4.1058 -> 4.0280` (delta `-0.0778`, ~`1.9%` better)
+		- Average MPG correlation: `0.8394 -> 0.8396` (slight improvement)
+	- Full rerun confirms carry model now activates in both transitions:
+		- `n=539, r=0.7744` and `n=1200, r=0.7736`.
+	- Simulation validation rerun completed successfully (`python3 src/simulation/validate_sim.py`), output written to `reports/simulation_step1_validation.json`.
+
 2026-03-08 — Team summary crash fix (mixed TEAM_ID types)
 -------------------------------------------------------------------------------------------------------------
 - Continued deep review identified a deterministic crash path in `src/data_fetch/summarize_team_logs.py`:

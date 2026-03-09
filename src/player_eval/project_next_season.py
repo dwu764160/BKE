@@ -687,8 +687,9 @@ def fit_minutes_carry_model(
         "fit_corr": float(round(corr, 4)) if np.isfinite(corr) else None,
     }
 
-    # Guardrail: if fitted relationship is weak, prefer a stable high-carry default.
-    if not np.isfinite(corr) or corr < 0.80:
+    # Guardrail: prefer fallback only when fit is genuinely weak.
+    # A 0.75 cutoff keeps noisy fits out while allowing useful carry signal.
+    if not np.isfinite(corr) or corr < 0.75:
         fallback = default_model.copy()
         fallback["n_samples"] = int(len(train))
         fallback["fit_corr"] = float(round(corr, 4)) if np.isfinite(corr) else None

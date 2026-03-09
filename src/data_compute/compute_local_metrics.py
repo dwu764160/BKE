@@ -257,11 +257,17 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     if team_col is None:
         raise ValueError("No team identifier found in player logs (TEAM_ID or TEAM_ABBREVIATION).")
 
-    # Determine team key in team_agg
-    if "TEAM_ID" in team_agg.columns:
-        merge_team_col = "TEAM_ID"
-    elif "TEAM_ABBREVIATION" in team_agg.columns:
+    # Determine team key in team_agg; prioritize matching the player-log team key.
+    if team_col in team_agg.columns:
+        merge_team_col = team_col
+    elif team_col == "TEAM" and "TEAM_ABBREVIATION" in team_agg.columns:
         merge_team_col = "TEAM_ABBREVIATION"
+    elif team_col == "TEAM_ABBREVIATION" and "TEAM" in team_agg.columns:
+        merge_team_col = "TEAM"
+    elif "TEAM_ABBREVIATION" in team_agg.columns and "TEAM_ABBREVIATION" in df.columns:
+        merge_team_col = "TEAM_ABBREVIATION"
+    elif "TEAM_ID" in team_agg.columns and "TEAM_ID" in df.columns:
+        merge_team_col = "TEAM_ID"
     else:
         other_cols = [c for c in team_agg.columns if c != "GAME_ID"]
         if len(other_cols) == 0:
@@ -281,8 +287,12 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
         df = df.merge(team_agg, on=merge_keys, how="left")
     else:
         # Cast merge keys to string to avoid object vs float64 type mismatch
-        df[team_col] = df[team_col].astype(str)
-        team_agg[merge_team_col] = team_agg[merge_team_col].astype(str)
+        if team_col in ["TEAM_ABBREVIATION", "TEAM"] and merge_team_col in ["TEAM_ABBREVIATION", "TEAM"]:
+            df[team_col] = df[team_col].astype(str).str.upper()
+            team_agg[merge_team_col] = team_agg[merge_team_col].astype(str).str.upper()
+        else:
+            df[team_col] = df[team_col].astype(str)
+            team_agg[merge_team_col] = team_agg[merge_team_col].astype(str)
         # Drop overlapping columns from team_agg to avoid _x/_y suffixes (e.g. SEASON, GAME_DATE)
         merge_keys_right = ["GAME_ID", merge_team_col]
         overlap = [c for c in team_agg.columns if c in df.columns and c not in merge_keys_right]
@@ -344,16 +354,16 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
 
     # Assist % (AST%) approximation:
     # AST% = 100 * AST * (TEAM_MIN/5) / (MIN * (TEAM_FGM - FGM))
-    # We need average TEAM_FGM & TEAM_MIN for games where player played. We'll compute team averages per player's games.
-    # Start by computing per-game team averages for each (PLAYER_ID, SEASON)
+    # Use team totals over the exact games each player appeared in.
+    # Mixing player season totals with team per-game means can distort rates.
     team_stats_for_player = df.groupby(["PLAYER_ID","SEASON"]).agg({
-        "TEAM_FGM": "mean",
-        "TEAM_MIN": "mean",
-        "TEAM_FGA": "mean",
-        "TEAM_FTA": "mean",
-        "TEAM_TOV": "mean",
-        "TEAM_OREB": "mean",
-        "TEAM_DREB": "mean"
+        "TEAM_FGM": "sum",
+        "TEAM_MIN": "sum",
+        "TEAM_FGA": "sum",
+        "TEAM_FTA": "sum",
+        "TEAM_TOV": "sum",
+        "TEAM_OREB": "sum",
+        "TEAM_DREB": "sum"
     }).reset_index()
     # Prefix aggregated team columns with TEAM_ to match downstream names (e.g., TEAM_TEAM_MIN)
     agg_cols = ["TEAM_FGM","TEAM_MIN","TEAM_FGA","TEAM_FTA","TEAM_TOV","TEAM_OREB","TEAM_DREB"]

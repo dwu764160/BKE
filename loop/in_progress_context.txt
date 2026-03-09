@@ -1,3 +1,59 @@
+2026-03-09 — In-progress: remaining deep audit pass (data_compute/modeling/simulation)
+===============================================================================
+
+Completed in this pass:
+  - `src/data_compute/compute_linear_metrics.py`
+    - Fixed DWS normalization target logic so total season WS now matches 1230 target after OWS.
+    - Fixed helper net proxy bug (`PLUS_MINUS_PER_GAME` was incorrectly divided by `GAMES`).
+    - Replaced deprecated `groupby.apply` usage in `L_PPP` computation with explicit aggregation.
+  - `readme.md`
+    - Synced Compute Stage command annotation to document DWS target-normalization behavior.
+  - `loop/context_summary.txt`
+    - Added this pass summary + before/after WS totals.
+
+Validation completed:
+  - `python3 src/data_compute/compute_linear_metrics.py`
+  - Confirmed per-season WS target alignment:
+    - 2022-23: `1301.6 -> 1230.0`
+    - 2023-24: `1307.7 -> 1230.0`
+    - 2024-25: `1309.9 -> 1230.0`
+
+Next checks queued:
+  1. Finish residual logic triage in remaining `src/data_compute` files (non-patched candidates) and confirm no additional high-confidence defects.
+  2. Deliver consolidated user-facing audit report across all edited folders plus full agents setup guidance requested by user.
+
+2026-03-09 — Added skills: self_improvement + basketball_knowledge
+--------------------------------------------------------------------------------
+- Added `/.github/skills/self_improvement.skill.md` — run at session end to evaluate which skills were used, collect evaluation signals (user feedback, `get_errors` output, test results), and append concise `## Learnings` bullets to each used skill file; also writes a timestamped entry to `loop/self_improvement_log.md`.
+- Added `/.github/skills/basketball_knowledge.skill.md` — canonical basketball philosophies (role vs impact separation, position-band policy, archetype gating principles, validation practices); populated from `readme.md` and `reference/bke_repo_context_summary_for_ai.md`.
+- Action: Skills created and registered under `/.github/skills/`. See the new skill files for usage and invocation examples.
+2026-03-09 — In-progress: deep logic audit continuation (core compute/model/sim/player_eval)
+===============================================================================
+
+Completed in this pass:
+  - `src/player_eval/project_next_season.py`
+    - Relaxed minutes carry-model fallback cutoff from `corr < 0.80` to `corr < 0.75`.
+    - Verified with controlled A/B (old threshold vs new threshold) on identical backtest setup.
+    - Impact: average MPG MAE improved `4.1058 -> 4.0280` (delta `-0.0778`).
+  - `src/simulation/validate_sim.py`
+    - Fixed margin metric serialization guard so zero-valued RMSE/MAE do not collapse to `null`.
+  - `readme.md`
+    - Synced Forecast Stage 1 description with new carry-anchor acceptance threshold.
+  - `loop/context_summary.txt`
+    - Added this pass summary + measured before/after table.
+
+Validation completed:
+  - `python3 src/player_eval/project_next_season.py --output-path /tmp/projected_profiles_audit_after.parquet --validation-output-path /tmp/forecast_validation_audit_after.json`
+  - `python3 src/simulation/validate_sim.py`
+  - `get_errors` clean for:
+    - `src/player_eval/project_next_season.py`
+    - `src/simulation/validate_sim.py`
+    - `readme.md`
+
+Next checks queued:
+  1. Continue residual logic review pass for remaining edge-case branches in `src/data_compute/*` and `src/modeling/*` (focus: silent fallback paths and season-join assumptions).
+  2. If more fixes are applied, regenerate a consolidated before/after impact table for all patched defects in this audit cycle.
+
 2026-03-08 — In-progress: summarize_team_logs mixed TEAM_ID crash fix
 ===============================================================================
 

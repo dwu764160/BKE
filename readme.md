@@ -65,7 +65,7 @@ python3 src/features/compute_rest_home_back2back.py       # Compute rest/home/ba
 ```bash
 python3 src/data_compute/compute_clean_possessions.py         # Clean/validate possessions
 python3 src/data_compute/compute_local_metrics.py            # Compute local metrics
-python3 src/data_compute/compute_linear_metrics.py           # Compute linear metrics (WS, BPM, VORP)
+python3 src/data_compute/compute_linear_metrics.py           # Compute linear metrics (WS, BPM, VORP; DWS is normalized so season total WS targets 1230 after OWS)
 python3 src/data_compute/compute_advanced_metrics.py         # Compute advanced metrics
 python3 src/data_compute/compute_player_profiles.py          # Compute player profiles
 python3 src/data_compute/compute_player_archetypes.py        # Compute offensive archetypes
@@ -117,7 +117,7 @@ python3 src/simulation/run_forecast.py --skip-preseason-fetch                   
 python3 src/player_eval/project_next_season.py --team-mapping-mode preseason_snapshot # Standalone scenario projection (Option B)
 ```
 Pipeline stages:
-1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), scenario team mapping (`end_of_season` or `preseason_snapshot`; preseason fallback uses carry-forward teams when snapshots are unavailable), draft-aware rookie generation (no CSV dependency by default), and minutes projection via minute-share contextual multipliers (`age + impact + salary + draft`) blended with a fitted carry anchor and roster-adaptive team normalization (default target scale derived from `team_mpg_target=350`); synthetic replacement-pool rows are excluded from final forecast outputs
+1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), scenario team mapping (`end_of_season` or `preseason_snapshot`; preseason fallback uses carry-forward teams when snapshots are unavailable), draft-aware rookie generation (no CSV dependency by default), and minutes projection via minute-share contextual multipliers (`age + impact + salary + draft`) blended with a fitted carry anchor (accepted when in-sample fit correlation is at least `0.75`) and roster-adaptive team normalization (default target scale derived from `team_mpg_target=350`); synthetic replacement-pool rows are excluded from final forecast outputs
 2. **team_feature_aggregation.py** (`src/profile_aggregate/`, forecast_mode=True) — Team net ratings from projected profiles, no calibration against actual data
 3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule (fixed games per team and no truncation bias) with parallel `margin` + `ppp` model outputs; PPP branch uses minute-weighted team OBKE/DBKE with season-level empirical impact→net scaling, offense/defense blend control, PPP clipping, and possessions-aware sigma scaling; pace is estimated from prior-season team pace + stronger regression-to-mean (no player pace input)
 4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups with backtest-equivalent validation targets when observed historical data exists (Q1 PBP starters + top-5 clutch minutes + rotation lineups >=50 poss and <=2 starters)

@@ -24,3 +24,10 @@ reports/
 
 #zip files
 *.zip
+
+#temporary files
+*.log
+*.out
+
+#.vscode settings
+.vscode/
