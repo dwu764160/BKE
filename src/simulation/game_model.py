@@ -29,7 +29,7 @@ import json
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -220,6 +220,123 @@ def load_team_params(
     return result
 
 
+def _build_extra_pairings(
+    teams: List[str],
+    extra_games_per_team: int,
+    rng: np.random.RandomState,
+    max_attempts: int = 400,
+) -> Set[frozenset]:
+    """Construct simple undirected extra pairings with fixed per-team degree."""
+    if extra_games_per_team == 0:
+        return set()
+
+    if extra_games_per_team < 0 or extra_games_per_team >= len(teams):
+        raise ValueError(
+            f"Invalid extra_games_per_team={extra_games_per_team} for n_teams={len(teams)}"
+        )
+
+    for _ in range(max_attempts):
+        remaining = {team: int(extra_games_per_team) for team in teams}
+        edges: Set[frozenset] = set()
+        ok = True
+
+        while True:
+            active = [t for t, d in remaining.items() if d > 0]
+            if not active:
+                break
+
+            # Highest unmet degree first, randomized tie-break.
+            active.sort(key=lambda t: (-remaining[t], rng.rand()))
+            team = active[0]
+            need = remaining[team]
+
+            candidates = [
+                opp
+                for opp in active[1:]
+                if remaining[opp] > 0 and frozenset((team, opp)) not in edges
+            ]
+            if len(candidates) < need:
+                ok = False
+                break
+
+            candidates.sort(key=lambda t: (-remaining[t], rng.rand()))
+            opponents = candidates[:need]
+
+            for opp in opponents:
+                edges.add(frozenset((team, opp)))
+                remaining[team] -= 1
+                remaining[opp] -= 1
+                if remaining[opp] < 0:
+                    ok = False
+                    break
+            if not ok or remaining[team] != 0:
+                ok = False
+                break
+
+        if ok and all(v == 0 for v in remaining.values()):
+            return edges
+
+    raise RuntimeError(
+        "Unable to construct balanced extra pairings for synthetic forecast schedule"
+    )
+
+
+def _orient_extra_pairings(
+    extra_edges: Set[frozenset],
+    extra_home_need: Dict[str, int],
+    rng: np.random.RandomState,
+    max_attempts: int = 600,
+) -> List[Tuple[str, str]]:
+    """Assign home/away for extra edges to satisfy per-team home needs."""
+    edge_list = [tuple(e) for e in extra_edges]
+    for _ in range(max_attempts):
+        need = {k: int(v) for k, v in extra_home_need.items()}
+        order = edge_list.copy()
+        rng.shuffle(order)
+        oriented: List[Tuple[str, str]] = []
+        feasible = True
+
+        for a, b in order:
+            na = need.get(a, 0)
+            nb = need.get(b, 0)
+
+            if na < 0 or nb < 0:
+                feasible = False
+                break
+            if na == 0 and nb == 0:
+                feasible = False
+                break
+
+            if na == 0:
+                home, away = b, a
+            elif nb == 0:
+                home, away = a, b
+            elif na > nb:
+                home, away = a, b
+            elif nb > na:
+                home, away = b, a
+            else:
+                home, away = (a, b) if rng.rand() < 0.5 else (b, a)
+
+            need[home] -= 1
+            oriented.append((home, away))
+
+        if feasible and all(v == 0 for v in need.values()):
+            return oriented
+
+    # Fallback: orient greedily by current need even if exact home targets are missed.
+    need = {k: int(v) for k, v in extra_home_need.items()}
+    oriented = []
+    for a, b in edge_list:
+        if need.get(a, 0) >= need.get(b, 0):
+            home, away = a, b
+        else:
+            home, away = b, a
+        need[home] = need.get(home, 0) - 1
+        oriented.append((home, away))
+    return oriented
+
+
 def generate_balanced_schedule(
     season: str,
     teams: List[str],
@@ -232,48 +349,78 @@ def generate_balanced_schedule(
     Total games = (n_teams * games_per_team) / 2.
     """
     rng = np.random.RandomState(seed)
+    teams = sorted([str(t).upper() for t in teams if str(t).strip()])
     n = len(teams)
-    games_total = n * games_per_team // 2  # each game has two participants
+    if n < 2:
+        return []
 
-    # Build round-robin matchups
-    matchups = []
+    # Base double round-robin gives each team 2*(n-1) games (home+away vs each opponent).
+    base_games_per_team = 2 * (n - 1)
+    if games_per_team < base_games_per_team:
+        raise ValueError(
+            f"games_per_team={games_per_team} is too small for n_teams={n}; "
+            f"minimum is {base_games_per_team}"
+        )
+
+    extra_games_per_team = games_per_team - base_games_per_team
+    if (n * extra_games_per_team) % 2 != 0:
+        raise ValueError(
+            f"n_teams*extra_games_per_team must be even; got {n}*{extra_games_per_team}"
+        )
+
+    # Base home counts are exactly n-1 for each team.
+    target_home = {t: games_per_team // 2 for t in teams}
+    if games_per_team % 2 == 1:
+        # Distribute one extra home game to half the teams for odd schedules.
+        bump = teams.copy()
+        rng.shuffle(bump)
+        for t in bump[: n // 2]:
+            target_home[t] += 1
+    extra_home_need = {t: target_home[t] - (n - 1) for t in teams}
+
+    extra_edges = _build_extra_pairings(teams, extra_games_per_team, rng)
+    oriented_extra = _orient_extra_pairings(extra_edges, extra_home_need, rng)
+
+    games: List[Game] = []
+    game_num = 0
+
+    # Base schedule: exactly 2 games per pair, one at each venue.
     for i in range(n):
         for j in range(i + 1, n):
-            matchups.append((teams[i], teams[j]))
-    rng.shuffle(matchups)
-
-    # Each pair should play ~games_per_team / (n-1) times
-    games_per_pair = games_per_team / (n - 1)
-    home_per_pair = int(np.ceil(games_per_pair / 2))
-    away_per_pair = int(np.floor(games_per_pair / 2))
-
-    games = []
-    game_num = 0
-    for t1, t2 in matchups:
-        # Home games for t1 vs t2
-        for _ in range(home_per_pair):
-            games.append(Game(
-                game_id=f"FORECAST_{season}_{game_num:05d}",
-                date=f"{season[:4]}-10-01",
-                home_team=t1,
-                away_team=t2,
-                season=season,
-            ))
+            home, away = teams[i], teams[j]
+            games.append(
+                Game(
+                    game_id=f"FORECAST_{season}_{game_num:05d}",
+                    date=f"{season[:4]}-10-01",
+                    home_team=home,
+                    away_team=away,
+                    season=season,
+                )
+            )
             game_num += 1
-        # Home games for t2 vs t1
-        for _ in range(away_per_pair):
-            games.append(Game(
-                game_id=f"FORECAST_{season}_{game_num:05d}",
-                date=f"{season[:4]}-10-01",
-                home_team=t2,
-                away_team=t1,
-                season=season,
-            ))
+            games.append(
+                Game(
+                    game_id=f"FORECAST_{season}_{game_num:05d}",
+                    date=f"{season[:4]}-10-02",
+                    home_team=away,
+                    away_team=home,
+                    season=season,
+                )
+            )
             game_num += 1
 
-    # Trim to exact target (1230 games for 30 teams × 82 games)
-    if len(games) > games_total:
-        games = games[:games_total]
+    # Extra schedule: one additional game for selected pairs.
+    for home, away in oriented_extra:
+        games.append(
+            Game(
+                game_id=f"FORECAST_{season}_{game_num:05d}",
+                date=f"{season[:4]}-10-03",
+                home_team=home,
+                away_team=away,
+                season=season,
+            )
+        )
+        game_num += 1
 
     return games
 

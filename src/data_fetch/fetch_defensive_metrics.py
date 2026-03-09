@@ -25,6 +25,23 @@ CACHE_DIR = Path("data/tracking_cache")
 SEASONS = ["2022-23", "2023-24", "2024-25"]
 
 
+def _extract_result_payload(json_data):
+    """Return the first NBA stats result payload across known response shapes."""
+    if not isinstance(json_data, dict):
+        return None
+
+    result_sets = json_data.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        payload = result_sets[0]
+        return payload if isinstance(payload, dict) else None
+
+    result_set = json_data.get("resultSet")
+    if isinstance(result_set, dict):
+        return result_set
+
+    return None
+
+
 def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -42,7 +59,7 @@ def fetch_url_cached(url, params, cache_name, referer="https://www.nba.com/stats
         try:
             with open(cache_path, "r") as f:
                 json_data = json.load(f)
-                if 'resultSets' in json_data:
+                if _extract_result_payload(json_data):
                     return parse_json(json_data)
         except Exception:
             pass
@@ -82,11 +99,14 @@ def fetch_url_cached(url, params, cache_name, referer="https://www.nba.com/stats
 def parse_json(json_data):
     """Parse NBA API JSON response into DataFrame."""
     try:
-        result_sets = json_data.get('resultSets', [])
-        if not result_sets:
+        payload = _extract_result_payload(json_data)
+        if not payload:
             return pd.DataFrame()
-        headers = result_sets[0]['headers']
-        row_set = result_sets[0]['rowSet']
+
+        headers = payload.get("headers", [])
+        row_set = payload.get("rowSet", [])
+        if not headers:
+            return pd.DataFrame(row_set)
         return pd.DataFrame(row_set, columns=headers)
     except Exception:
         return pd.DataFrame()

@@ -595,3 +595,74 @@ Updated `app/simulation_viewer.py`:
 - `readme.md` updated to document:
 	- split forecast tabs (`Step 1 Forecast`, `Step 2 Forecast`),
 	- forecast Step 2 validation parity with backtest target definitions.
+
+---
+
+## Entry: 2026-03-08 — Forecast Scenario Integrity + Replacement Exclusion + Minutes Carry Stabilization
+
+### Why this update was made
+
+The forecast pass needed three correctness fixes plus one UX parity pass:
+- scenario toggle behavior had leakage-like contamination in preseason mode,
+- replacement-pool rows needed to be hard-excluded from downstream calculations,
+- minutes projection needed stronger carry stability,
+- Step 2 Forecast UI needed backtest-style validation detail visibility.
+
+### Backend updates
+
+Updated `src/player_eval/project_next_season.py`:
+- Added robust replacement-row detection and exclusion helper paths.
+- Kept replacement-buffer row creation logic compatibility, but excluded replacement rows from final projected outputs.
+- Added lightweight minutes carry-model fitting from adjacent historical seasons (`fit_minutes_carry_model`) with guardrails.
+- Added strong fallback path to stable coefficients when fit quality is weak (`fit_corr < 0.80` or insufficient sample).
+- Reworked `project_minutes(...)` to blend carry-anchor estimates with contextual adjustments.
+- Reduced depth-competition over-penalization by requiring stronger same-role peer superiority.
+- Removed preseason salary-team fallback behavior; when preseason snapshot is unavailable, mapping now falls back to carry-forward teams only.
+- Disabled rookie salary-team fallback for preseason scenario path.
+
+Updated constants and downstream consumers:
+- `src/player_eval/constants.py`: set `ENABLE_FORECAST_REPLACEMENT_BUFFER = False` (default off).
+- `src/profile_aggregate/team_feature_aggregation.py`: filters replacement rows before team aggregation.
+- `src/simulation/season_sim.py`: filters replacement rows before PPP component aggregation.
+- `src/simulation/lineup_projection.py`: filters replacement rows when loading Step 2 player pool.
+
+### Frontend updates
+
+Updated `app/simulation_viewer.py`:
+- Hardened scenario payload merge to avoid mixing stale scenario-suffixed files when combined `scenarios` payload is present.
+- Added scenario-lineup suffixed fallback support only when needed.
+- Made forecast scenario ordering deterministic (`end_of_season`, `preseason_snapshot`, then others).
+- Expanded Step 2 Forecast modal details to mirror backtest-style validation context:
+	- starter/clutch overlap,
+	- predicted vs observed rotation,
+	- observed starter/clutch names,
+	- starter target source and verified-game coverage.
+- Added starter-set integrity cards (`Starter Exact-5`, `Starter Set Size`) in Step 2 Forecast summary cards.
+
+### Validation snapshot after this pass
+
+Projection carry validation (latest rerun):
+- `end_of_season`:
+	- 2022-23 -> 2023-24: BKE `r=0.4301`, MPG `r=0.7833`
+	- 2023-24 -> 2024-25: BKE `r=0.4919`, MPG `r=0.7932`
+- `preseason_snapshot`:
+	- 2022-23 -> 2023-24: BKE `r=0.4211`, MPG `r=0.7342`
+	- 2023-24 -> 2024-25: BKE `r=0.4765`, MPG `r=0.7301`
+
+Scenario integrity check (2024-25):
+- Jimmy Butler III mapping now differs by scenario as expected:
+	- `end_of_season` -> `GSW`
+	- `preseason_snapshot` -> `MIA` (`team_mapping_source=carry_forward_fallback`)
+- GSW projected wins now diverge by scenario:
+	- `end_of_season`: `63.5`
+	- `preseason_snapshot`: `49.7`
+
+Step 2 forecast validation overall (latest rerun):
+- `end_of_season`: starter overlap `0.64`, clutch overlap `0.67`, rotation corr `0.4344`
+- `preseason_snapshot`: starter overlap `0.6033`, clutch overlap `0.5267`, rotation corr `0.3025`
+
+### Output refresh completed
+
+- `python3 src/simulation/run_forecast.py --skip-preseason-fetch`
+- `python3 app/simulation_viewer.py`
+- Scenario outputs and combined forecast payloads regenerated successfully.

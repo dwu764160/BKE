@@ -66,7 +66,9 @@ def fetch_url_cached(url, params, referer_suffix, cache_name):
         try:
             with open(cache_path, "r") as f:
                 json_data = json.load(f)
-                if 'resultSets' in json_data:
+                if isinstance(json_data, dict) and (
+                    "resultSets" in json_data or "resultSet" in json_data
+                ):
                     return parse_json(json_data)
         except:
             pass 
@@ -104,10 +106,23 @@ def fetch_url_cached(url, params, referer_suffix, cache_name):
 
 def parse_json(json_data):
     try:
-        result_sets = json_data.get('resultSets', [])
-        if not result_sets: return pd.DataFrame()
-        headers = result_sets[0]['headers']
-        row_set = result_sets[0]['rowSet']
+        if not isinstance(json_data, dict):
+            return pd.DataFrame()
+
+        payload = None
+        result_sets = json_data.get("resultSets")
+        if isinstance(result_sets, list) and result_sets:
+            payload = result_sets[0]
+        elif isinstance(json_data.get("resultSet"), dict):
+            payload = json_data.get("resultSet")
+
+        if not isinstance(payload, dict):
+            return pd.DataFrame()
+
+        headers = payload.get("headers", [])
+        row_set = payload.get("rowSet", [])
+        if not headers:
+            return pd.DataFrame(row_set)
         return pd.DataFrame(row_set, columns=headers)
     except:
         return pd.DataFrame()

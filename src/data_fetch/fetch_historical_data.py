@@ -11,14 +11,71 @@ import requests
 import os
 import math
 import random
+from pathlib import Path
 from curl_cffi import requests as curl_requests
 
+HISTORICAL_DIR = Path("data/historical")
+
+
+def _player_map_candidates(season: str):
+    """Return player-map candidates with season-specific files first."""
+    season = str(season)
+    candidates = [
+        HISTORICAL_DIR / f"player_id_name_map_{season}.csv",
+        HISTORICAL_DIR / "player_id_name_map_all.csv",
+        HISTORICAL_DIR / "player_id_name_map_['2022-23', '2023-24', '2024-25'].csv",
+    ]
+    candidates.extend(sorted(HISTORICAL_DIR.glob("player_id_name_map_*.csv")))
+
+    seen = set()
+    ordered = []
+    for path in candidates:
+        norm = str(path)
+        if norm not in seen:
+            seen.add(norm)
+            ordered.append(path)
+    return ordered
+
+
+def _load_player_id_name_map(season: str):
+    import csv
+
+    id_to_name = {}
+    for map_path in _player_map_candidates(season):
+        if not map_path.exists():
+            continue
+        try:
+            with open(map_path, newline="", encoding="utf-8") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    person_id = row.get("PERSON_ID")
+                    display_name = row.get("DISPLAY_FIRST_LAST")
+                    if person_id is None or display_name is None:
+                        continue
+                    try:
+                        id_to_name[int(float(person_id))] = display_name
+                    except (TypeError, ValueError):
+                        continue
+            if id_to_name:
+                print(f"Loaded {len(id_to_name)} player-name mappings from {map_path}")
+                return id_to_name
+        except Exception as e:
+            print(f"Warning: Could not load player map {map_path}: {e}")
+
+    return id_to_name
+
 def save_player_id_name_mapping(season):
+    # Accept a single season or a list/tuple of seasons.
+    if isinstance(season, (list, tuple, set)):
+        for s in season:
+            save_player_id_name_mapping(str(s))
+        return
+
     import os
     os.makedirs("data/historical", exist_ok=True)
     players_df = commonallplayers.CommonAllPlayers(is_only_current_season=0, season=season).get_data_frames()[0]
     mapping_df = players_df[["PERSON_ID", "DISPLAY_FIRST_LAST"]].drop_duplicates()
-    mapping_df.to_csv(f"data/historical/player_id_name_map_{season}.csv", index=False)
+    mapping_df.to_csv(HISTORICAL_DIR / f"player_id_name_map_{season}.csv", index=False)
     print(f"Saved player ID-name mapping for {season} season.")
 
 def fetch_ten_players_game_logs(season):
@@ -154,7 +211,6 @@ def fetch_team_game_logs(seasons):
         return pd.DataFrame()
 
 def fetch_player_game_logs(seasons):
-    import csv
     all_seasons_players = []
     for season in seasons:
         print(f"Fetching player game logs for {season} season...")
@@ -163,14 +219,9 @@ def fetch_player_game_logs(seasons):
         player_ids = active_players["PERSON_ID"].tolist()
 
         # Load player_id to name mapping for this season
-        id_to_name = {}
-        try:
-            with open(f"data/historical/player_id_name_map_['2022-23', '2023-24', '2024-25'].csv", newline='', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
-                    id_to_name[int(row["PERSON_ID"])] = row["DISPLAY_FIRST_LAST"]
-        except Exception as e:
-            print(f"Warning: Could not load player_id_name_map for {season}: {e}")
+        id_to_name = _load_player_id_name_map(season)
+        if not id_to_name:
+            print(f"Warning: Could not load any player_id_name_map for {season}")
 
         all_players = []
         failed_count = 0

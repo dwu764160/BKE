@@ -134,8 +134,12 @@ def summarize(path: str | None = None) -> pd.DataFrame:
         # Normalize TEAM_ID to string to avoid float-vs-string comparison issues
         if 'TEAM_ID' in df.columns:
             df = df.copy()
-            df['TEAM_ID'] = df['TEAM_ID'].dropna().astype(float).astype(int).astype(str)
-            df['TEAM_ID'] = df['TEAM_ID'].where(df['TEAM_ID'] != '<NA>', other=None)
+            raw = df['TEAM_ID'].astype(str).str.strip()
+            numeric = pd.to_numeric(raw, errors='coerce')
+            normalized = raw.copy()
+            normalized.loc[numeric.notna()] = numeric.loc[numeric.notna()].astype(int).astype(str)
+            normalized = normalized.replace({'': None, 'nan': None, 'None': None, '<NA>': None})
+            df['TEAM_ID'] = normalized
 
         # determine seasons
         if 'SEASON' in df.columns and not df['SEASON'].dropna().empty:
@@ -476,7 +480,58 @@ def main():
         "1610612762": "Utah Jazz",
         "1610612764": "Washington Wizards"
     }
-    summary['TEAM_NAME'] = summary['TEAM_ID'].apply(lambda tid: TEAM_ID_TO_NAME.get(str(int(float(tid))) if pd.notnull(tid) else None, None))
+
+    TEAM_ABBR_TO_NAME = {
+        "ATL": "Atlanta Hawks",
+        "BOS": "Boston Celtics",
+        "BKN": "Brooklyn Nets",
+        "CHA": "Charlotte Hornets",
+        "CHI": "Chicago Bulls",
+        "CLE": "Cleveland Cavaliers",
+        "DAL": "Dallas Mavericks",
+        "DEN": "Denver Nuggets",
+        "DET": "Detroit Pistons",
+        "GSW": "Golden State Warriors",
+        "HOU": "Houston Rockets",
+        "IND": "Indiana Pacers",
+        "LAC": "LA Clippers",
+        "LAL": "Los Angeles Lakers",
+        "MEM": "Memphis Grizzlies",
+        "MIA": "Miami Heat",
+        "MIL": "Milwaukee Bucks",
+        "MIN": "Minnesota Timberwolves",
+        "NOP": "New Orleans Pelicans",
+        "NYK": "New York Knicks",
+        "OKC": "Oklahoma City Thunder",
+        "ORL": "Orlando Magic",
+        "PHI": "Philadelphia 76ers",
+        "PHX": "Phoenix Suns",
+        "POR": "Portland Trail Blazers",
+        "SAC": "Sacramento Kings",
+        "SAS": "San Antonio Spurs",
+        "TOR": "Toronto Raptors",
+        "UTA": "Utah Jazz",
+        "WAS": "Washington Wizards",
+    }
+
+    def resolve_team_name(tid):
+        if pd.isna(tid):
+            return None
+        token = str(tid).strip()
+        if not token:
+            return None
+
+        abbr = token.upper()
+        if abbr in TEAM_ABBR_TO_NAME:
+            return TEAM_ABBR_TO_NAME[abbr]
+
+        try:
+            numeric_id = str(int(float(token)))
+        except (TypeError, ValueError):
+            return None
+        return TEAM_ID_TO_NAME.get(numeric_id)
+
+    summary['TEAM_NAME'] = summary['TEAM_ID'].apply(resolve_team_name)
     p_parquet = os.path.join(out_dir, 'team_summaries.parquet')
     p_csv = os.path.join(out_dir, 'team_summaries.csv')
     summary.to_parquet(p_parquet, index=False)

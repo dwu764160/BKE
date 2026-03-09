@@ -1,3 +1,146 @@
+2026-03-08 — Team summary crash fix (mixed TEAM_ID types)
+-------------------------------------------------------------------------------------------------------------
+- Continued deep review identified a deterministic crash path in `src/data_fetch/summarize_team_logs.py`:
+	- `main()` resolved team names via `str(int(float(tid)))`, which raises `ValueError` when padded/team-derived `TEAM_ID` values are abbreviations (e.g., `ATL`).
+	- `build_padded_team_games(...)` also used strict float casting for `TEAM_ID`, which could fail on non-numeric identifiers.
+- Fixes implemented:
+	- Robust `TEAM_ID` normalization in `build_padded_team_games(...)` (numeric IDs normalized when possible; abbreviation tokens preserved).
+	- Added safe `resolve_team_name(...)` in `main()` supporting both numeric team IDs and team abbreviations.
+	- Added explicit abbreviation-to-name mapping for canonical 30 teams.
+- Validation:
+	- `get_errors` clean for `summarize_team_logs.py`.
+	- Runtime smoke test passed:
+		- `python3 src/data_fetch/summarize_team_logs.py`
+		- Wrote `team_game_details` and `team_summaries` outputs successfully (no TEAM_ID conversion crash).
+- Documentation synced:
+	- `readme.md` summarize command annotation updated for mixed TEAM_ID handling.
+
+2026-03-08 — Fetch parser payload-shape hardening sweep (remaining ingest scripts)
+-------------------------------------------------------------------------------------------------------------
+- Continued file-by-file logic audit and fixed remaining deterministic parser fragility in fetch stage.
+- Root issue pattern: several scripts still directly indexed `json_data['resultSets'][0]` or only accepted one payload shape.
+- Updated scripts:
+	- `src/data_fetch/fetch_box_scores_complete.py`
+		- Added payload extractor and fallback parsing for both `resultSets` and `resultSet`.
+	- `src/data_fetch/fetch_official_stats.py`
+		- Added payload extractor for both shapes.
+		- Corrected request param key casing from `PorRound` -> `PORound` for consistency with endpoint conventions.
+	- `src/data_fetch/fetch_defensive_metrics.py`
+		- Cache validation + parser now accept both payload shapes.
+	- `src/data_fetch/fetch_shot_zones.py`
+		- Cache validation + parser selection now accept both payload shapes.
+	- `src/data_fetch/fetch_player_draft_history.py`
+		- Direct HTTP DraftHistory path now accepts both payload shapes before fallback to `nba_api` wrapper.
+	- `src/data_fetch/fetch_pbp/fetch_play_by_play.py`
+		- `__NEXT_DATA__` parser now accepts `resultSets`/`resultSet` and avoids empty-list indexing failure.
+- Documentation synced:
+	- `readme.md` fetch-stage command notes updated for the above payload compatibility behavior.
+- Validation:
+	- `get_errors` clean for all edited scripts.
+	- Synthetic payload-shape smoke tests passed for box/offical/defensive/shot-zones/draft-history helpers.
+	- PBP synthetic import test could not run in this environment because `playwright` is not installed; static diagnostics for file are clean.
+
+2026-03-08 — Fetch-stage logic hardening: player ID-name map resolution
+-------------------------------------------------------------------------------------------------------------
+- Continued user-requested logic audit (function-level, not runtime-only) and found deterministic mapping bugs in fetch stage:
+	- `src/data_fetch/fetch_historical_data.py` loaded player-name map from a hardcoded malformed filename (`player_id_name_map_['2022-23', '2023-24', '2024-25'].csv`) during player game-log fetch.
+	- `src/data_fetch/fetch_player_salaries.py` used the same malformed hardcoded filename for ID/name matching.
+- Fixes implemented:
+	- Added robust season-aware map resolver in `fetch_historical_data.py` with ordered fallback:
+		1) `player_id_name_map_<season>.csv`
+		2) `player_id_name_map_all.csv`
+		3) legacy malformed filename
+		4) any `player_id_name_map_*.csv`
+	- Added `_load_player_id_name_map()` in `fetch_player_salaries.py` that aggregates all available map files (season-first, legacy-compatible), dedupes by `PERSON_ID`, and fails fast with actionable message when missing.
+	- Hardened `save_player_id_name_mapping(...)` to accept iterable seasons safely (writes per-season files instead of producing malformed list-literal filename).
+	- Hardened JSON response parsing in `fetch_tracking_data.py` and `fetch_matchup_data.py` to accept both `resultSets` and `resultSet` payload shapes (including cached responses), preventing silent empty DataFrames when endpoint response format varies.
+	- Hardened `fetch_players.py` with `try/finally` connection lifecycle so early exits (missing parquet / missing `PLAYER_ID`) always close SQLite cleanly.
+- Documentation updated in `readme.md`:
+	- Fetch-stage comments now describe season map generation/consumption.
+	- Data layout now explicitly documents `player_id_name_map_<season>.csv` and optional compatibility map files.
+	- Tracking/matchup command notes now include payload-format compatibility behavior.
+	- `fetch_players.py` command note now reflects safe DB close behavior.
+
+2026-03-08 — Pipeline logic-audit pass (function-level) + high-impact fixes
+-------------------------------------------------------------------------------------------------------------
+- User request shifted from runtime checks to logic-error audit across pipeline scripts.
+- Confirmed and fixed multiple logic defects discovered by direct function inspection:
+	- `src/player_eval/project_next_season.py`
+		- `fit_minutes_carry_model(...)` output was computed but never used in `project_minutes(...)`.
+		- Fix: added carry-anchor blend inside `project_minutes(...)` and passed `minutes_carry_model` from `project_season(...)`.
+	- `src/simulation/game_model.py`
+		- `generate_balanced_schedule(...)` was not truly balanced: created 1305 games then truncated to 1230, yielding team totals 66-87 and home splits 26-58.
+		- Fix: replaced with exact construction (double round-robin base + balanced extra-pair graph + home/away orientation), no truncation.
+	- `src/profile_aggregate/team_feature_aggregation.py`
+		- Backtest aggregation merged minute predictions but still used profile actual minutes/MPG (Step 2 output effectively ignored).
+		- Fix: backtest now uses Step 2 `pred_mpg_raw` (fallbacks preserved), recomputes minutes from predicted MPG*games, and merges with stable keys.
+	- `src/simulation/lineup_projection.py`
+		- Forecast mode used global constant mutation to redirect profile path.
+		- Fix: added explicit `source_path` parameter to `load_player_pool(...)`; removed global mutation hack.
+		- Updated Step 2 report `validation_targets.rotation` text to match implemented bench-player impact methodology.
+	- `src/simulation/season_sim.py`
+		- PPP summary `ppp_net_rating`/`mu` used inconsistent raw `off-def` display vs calibrated simulation math.
+		- Fix: summary net now uses calibrated PPP-equivalent net-rating transform aligned with model blend/scale.
+	- `src/player_eval/train_minute_model.py`
+		- Added compatibility wrapper to preserve documented pipeline command path (canonical implementation remains in `src/simulation/train_minute_model.py`).
+	- `app/simulation_viewer.py`
+		- Updated modal labels from "bench-heavy" to "bench-player impact" to match backend validation target.
+- `readme.md` updated for this pass:
+	- Step 3 minute-source behavior note (backtest uses Step 2 predicted MPG fallback chain).
+	- Forecast Step 1 minute-normalization wording updated (roster-adaptive target derived from team_mpg_target=350).
+	- Forecast schedule note updated to reflect fixed no-truncation balanced construction.
+
+2026-03-XX — MPG forecast fix + rotation correlation improvement
+-------------------------------------------------------------------------------------------------------------
+- MAJOR FIX: MPG projection compression resolved.
+  ROOT CAUSE: normalization target was 240 (physical on-court limit) but actual data
+  uses per-stint MPG values that sum to ~350 per team. This 30-35% scale mismatch
+  was compressing all projected minutes, making stars project at 25-28 MPG instead of 33-37.
+- Solution: replaced additive-delta + carry-model with multiplicative minute-share approach.
+  Normalization target changed from fixed 240 to roster-size-adaptive (n_players * 18.5).
+- Results:
+  - MPG correlation: 0.783/0.793 → 0.846/0.834
+  - MPG MAE: 8.3+/9.1+ → 4.02/4.25
+  - Players >30 MPG: 14/10 → 105/98 (actual: 98/100)
+  - Mean projected MPG: 12.6 → 18.5 (actual: 18.7/19.3)
+- Rotation correlation improved: 0.448 → 0.684 by changing actual target from noisy
+  lineup-level NET_RTG (<=2 starters, >=50 poss) to player-level impact_total_impact
+  of non-starter players from game-log-derived profiles.
+  Per-season: 2023-24=0.531, 2024-25=0.808.
+- Draft position bonus added to minute projection (top-5: 1.06x, top-14: 1.04x, 1st round: 1.02x).
+- Frontend labels updated for new rotation methodology.
+- Full pipeline regenerated: project_next_season → run_forecast → simulation_viewer.
+
+2026-03-08 — Forecast scenario integrity fix + replacement exclusion hardening + minutes carry stabilization
+-------------------------------------------------------------------------------------------------------------
+- User-requested follow-up completed across backend + frontend + docs.
+- Core forecast integrity fixes in `src/player_eval/project_next_season.py`:
+	- Removed preseason salary-team fallback path; when preseason snapshots are missing, mapping now explicitly falls back to carry-forward teams.
+	- Added minutes carry-model fitting (`fit_minutes_carry_model`) and blended carry-anchor minutes projection with guardrails (fallback coefficients when fit is weak).
+	- Added robust replacement-pool row detection and exclusion before final projected outputs.
+- Replacement exclusion now hardened across downstream forecast consumers:
+	- `src/profile_aggregate/team_feature_aggregation.py`
+	- `src/simulation/season_sim.py`
+	- `src/simulation/lineup_projection.py`
+- Forecast frontend parity/integrity updates in `app/simulation_viewer.py`:
+	- Hardened scenario merge logic to avoid stale mixed payloads.
+	- Added deterministic scenario ordering (`end_of_season`, `preseason_snapshot`).
+	- Expanded Step 2 Forecast modal/cards with backtest-style validation detail (overlaps, rotation predicted/actual, observed starter/clutch names, starter-target source coverage).
+- Config update:
+	- `src/player_eval/constants.py`: `ENABLE_FORECAST_REPLACEMENT_BUFFER=False`.
+- Validation + regeneration completed:
+	- `python3 src/simulation/run_forecast.py --skip-preseason-fetch`
+	- `python3 app/simulation_viewer.py`
+	- `get_errors` clean for all modified source files.
+- Confirmed case-study behavior (2024-25 GSW/Jimmy):
+	- End-of-season scenario: Jimmy Butler III -> GSW, GSW projected wins `63.5`.
+	- Preseason snapshot scenario: Jimmy Butler III -> MIA (`team_mapping_source=carry_forward_fallback`), GSW projected wins `49.7`.
+	- Scenario toggle now reflects real divergence instead of prior near-identical outputs.
+- Latest carry validation snapshot:
+	- End-of-season MPG r: `0.7833`, `0.7932`.
+	- Preseason MPG r: `0.7342`, `0.7301`.
+- NOTE: This entry supersedes earlier same-day notes that described active preseason salary-team fallback and active replacement-buffer contribution in final forecast calculations.
+
 2026-03-08 — Step 2 archetype-gate removal + forecast Step 2 split + validation parity
 --------------------------------------------------------------------------------------
 - Implemented user-requested removal of Step 2 archetype gate filtering in both backtest and forecast:

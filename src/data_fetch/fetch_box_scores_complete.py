@@ -26,6 +26,23 @@ DATA_DIR = Path("data/historical")
 OUTPUT_DIR = Path("data/historical")
 SEASONS = ["2022-23", "2023-24", "2024-25"]
 
+
+def _extract_result_payload(json_data):
+    """Return the first NBA stats result payload across known response shapes."""
+    if not isinstance(json_data, dict):
+        return None
+
+    result_sets = json_data.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        payload = result_sets[0]
+        return payload if isinstance(payload, dict) else None
+
+    result_set = json_data.get("resultSet")
+    if isinstance(result_set, dict):
+        return result_set
+
+    return None
+
 def fetch_league_player_stats(season, measure_type="Base"):
     """
     Fetch ALL player stats for a season using leaguedashplayerstats endpoint.
@@ -95,8 +112,20 @@ def fetch_league_player_stats(season, measure_type="Base"):
             return None
         
         json_data = resp.json()
-        cols = json_data['resultSets'][0]['headers']
-        rows = json_data['resultSets'][0]['rowSet']
+        payload = _extract_result_payload(json_data)
+        if not payload:
+            print("❌ Unexpected payload shape")
+            return None
+
+        cols = payload.get("headers", [])
+        rows = payload.get("rowSet", [])
+        if not rows:
+            print("❌ Empty rowSet")
+            return None
+        if not cols:
+            df = pd.DataFrame(rows)
+            print(f"✅ {len(df)} players")
+            return df
         
         df = pd.DataFrame(rows, columns=cols)
         print(f"✅ {len(df)} players")

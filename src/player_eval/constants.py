@@ -298,7 +298,7 @@ FORECAST_AVAIL_PRIOR_GP_DISCOUNT_SLOPE = 0.003  # per game below threshold
 # Reserve a fraction of team minutes for replacement-level contributors
 # (injury replacements, G-League callups, 10-day contracts, etc.).
 # These players contribute near-zero or negative impact.
-ENABLE_FORECAST_REPLACEMENT_BUFFER = True
+ENABLE_FORECAST_REPLACEMENT_BUFFER = False
 FORECAST_REPLACEMENT_BUFFER_FRACTION = 0.12  # 12% of team minutes to replacement
 FORECAST_REPLACEMENT_IMPACT_BKE = -0.20      # replacement player BKE (~bottom 25%)
 FORECAST_REPLACEMENT_IMPACT_OBKE = -0.10

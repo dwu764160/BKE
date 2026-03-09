@@ -29,28 +29,29 @@ Pipeline (order matters)
 ```bash
 python3 src/data_fetch/fetch_pbp/bootstrap_nba_session.py        # Init NBA session (cookies, headers)
 python3 src/data_fetch/fetch_pbp/capture_nba_headers.py          # Save NBA API headers
-python3 src/data_fetch/fetch_historical_data.py                  # Fetch authoritative team game logs (nba_api TeamGameLog) + historical data
-python3 src/data_fetch/fetch_players.py                          # Fetch player metadata
+python3 src/data_fetch/fetch_historical_data.py                  # Fetch authoritative team game logs (nba_api TeamGameLog) + historical data; writes season player ID-name maps
+python3 src/data_fetch/fetch_players.py                          # Fetch player metadata (player-map aware and safe DB close on early exits)
 python3 src/data_fetch/fetch_teams.py                            # Fetch team metadata
 python3 src/data_fetch/fetch_preseason_rosters.py --season 2025-26 # Fetch preseason roster snapshots (Option B forecast scenario source)
 python3 src/data_fetch/fetch_profiles.py                         # Fetch player profiles
-python3 src/data_fetch/fetch_player_salaries.py                  # Fetch player salary data (per season, ESPN)
-python3 src/data_fetch/fetch_player_draft_history.py             # Fetch player draft history (draft class year, round, overall pick)
+python3 src/data_fetch/fetch_player_salaries.py                  # Fetch player salary data (per season, ESPN) using available player_id_name_map_*.csv (season-first, legacy-compatible)
+python3 src/data_fetch/fetch_player_draft_history.py             # Fetch player draft history (draft class year, round, overall pick; supports resultSets/resultSet DraftHistory payloads)
 python3 src/data_fetch/fetch_pbp/CDN_pbp_fetch.py                # Fetch play-by-play (CDN)
-python3 src/data_fetch/fetch_pbp/fetch_play_by_play.py           # Fetch play-by-play (DOM fallback)
-python3 src/data_fetch/fetch_official_stats.py                   # Fetch official NBA stats
+python3 src/data_fetch/fetch_pbp/fetch_play_by_play.py           # Fetch play-by-play (DOM fallback; handles resultSets/resultSet in __NEXT_DATA__ payloads)
+python3 src/data_fetch/fetch_official_stats.py                   # Fetch official NBA stats (handles both resultSets/resultSet API payload formats)
 python3 src/data_fetch/fetch_player_clutch_stats.py              # Fetch player clutch stats (Last 5 Minutes, point differential <= 7)
-python3 src/data_fetch/fetch_tracking_data.py                    # Fetch NBA tracking data
-python3 src/data_fetch/fetch_box_scores_complete.py              # Fetch full box scores
-python3 src/data_fetch/fetch_matchup_data.py                     # Fetch matchup data
-python3 src/data_fetch/fetch_shot_zones.py                       # Fetch shot zone data
+python3 src/data_fetch/fetch_tracking_data.py                    # Fetch NBA tracking data (handles both resultSets/resultSet API payload formats)
+python3 src/data_fetch/fetch_box_scores_complete.py              # Fetch full box scores (handles both resultSets/resultSet API payload formats)
+python3 src/data_fetch/fetch_matchup_data.py                     # Fetch matchup data (handles both resultSets/resultSet API payload formats)
+python3 src/data_fetch/fetch_shot_zones.py                       # Fetch shot zone data (handles both resultSets/resultSet API payload formats)
+python3 src/data_fetch/fetch_defensive_metrics.py                # Optional legacy hustle fetcher (handles both resultSets/resultSet API payload formats)
 python3 src/data_fetch/fetch_darko_manual.py --input <path_or_dir> # Stage manual DARKO CSV exports
 ```
 
 ## Derive / Normalize / Features
 ```bash
 python3 src/data_fetch/derive_team_game_logs.py           # Validate/repair team game logs with quality gates (API first, PBP fallback)
-python3 src/data_fetch/summarize_team_logs.py             # Summarize team logs (recovers PLUS_MINUS from PTS-OPP_PTS when needed)
+python3 src/data_fetch/summarize_team_logs.py             # Summarize team logs (recovers PLUS_MINUS from PTS-OPP_PTS, with robust TEAM_ID numeric/abbreviation handling)
 python3 src/utils/export_db_to_parquet.py                 # Export DB tables to parquet
 python3 src/data_normalize/run_normalization.py           # Normalize raw data
 python3 src/data_normalize/normalize_darko.py             # Normalize DARKO exports to canonical schema
@@ -95,7 +96,7 @@ python3 src/modeling/experiment2_production_tilt.py         # Run v3.1 Experimen
 python3 src/player_eval/build_player_impact_profiles.py     # PEC Step 1 + Step 4: build PlayerImpactProfile (47+ fields from 9 sources, canonical offensive/defensive archetype labels + embeddings, behavioral fingerprint, availability score)
 python3 src/profile_aggregate/build_profile_aggregate.py    # Profile Aggregate: merge all 19 pipeline sources into aggregate/player_profile_aggregate.parquet (single source of truth for downstream products; includes clutch + simulation step1 fields + draft metadata)
 python3 src/player_eval/train_minute_model.py               # PEC Step 2: train MPG prediction model (GBDT, 70 features, GroupKFold CV, temporal holdout; excludes volume stats)
-python3 src/profile_aggregate/team_feature_aggregation.py   # PEC Step 3: team aggregation — TEAM_SCALE=20 (BKE→NBA per-100-poss), talent-dominant architecture (modifiers <10% of talent), expanded rim detection, smart calibration skip, 6-stage ablation stack
+python3 src/profile_aggregate/team_feature_aggregation.py   # PEC Step 3: team aggregation — TEAM_SCALE=20 (BKE→NBA per-100-poss), talent-dominant architecture (modifiers <10% of talent), expanded rim detection, smart calibration skip, 6-stage ablation stack; backtest minute source uses Step 2 `pred_mpg_raw` (fallback: profile mpg)
 ```
 
 ## Simulation (Step 1-2)
@@ -116,13 +117,13 @@ python3 src/simulation/run_forecast.py --skip-preseason-fetch                   
 python3 src/player_eval/project_next_season.py --team-mapping-mode preseason_snapshot # Standalone scenario projection (Option B)
 ```
 Pipeline stages:
-1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), scenario team mapping (`end_of_season` or `preseason_snapshot`), draft-aware rookie generation (no CSV dependency by default), and minutes projection via `age + impact + salary + depth competition` then 240/team normalization
+1. **project_next_season.py** — Regression-to-mean + age-adjusted carry-forward of player impact profiles (BKE/RAPM/impact_total), scenario team mapping (`end_of_season` or `preseason_snapshot`; preseason fallback uses carry-forward teams when snapshots are unavailable), draft-aware rookie generation (no CSV dependency by default), and minutes projection via minute-share contextual multipliers (`age + impact + salary + draft`) blended with a fitted carry anchor and roster-adaptive team normalization (default target scale derived from `team_mpg_target=350`); synthetic replacement-pool rows are excluded from final forecast outputs
 2. **team_feature_aggregation.py** (`src/profile_aggregate/`, forecast_mode=True) — Team net ratings from projected profiles, no calibration against actual data
-3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule with parallel `margin` + `ppp` model outputs; PPP branch uses minute-weighted team OBKE/DBKE with season-level empirical impact→net scaling, offense/defense blend control, PPP clipping, and possessions-aware sigma scaling; pace is estimated from prior-season team pace + stronger regression-to-mean (no player pace input)
+3. **season_sim.py** (forecast_mode=True) — Monte Carlo simulation against synthetic balanced schedule (fixed games per team and no truncation bias) with parallel `margin` + `ppp` model outputs; PPP branch uses minute-weighted team OBKE/DBKE with season-level empirical impact→net scaling, offense/defense blend control, PPP clipping, and possessions-aware sigma scaling; pace is estimated from prior-season team pace + stronger regression-to-mean (no player pace input)
 4. **lineup_projection.py** (forecast_mode=True) — Projected starter/rotation/clutch lineups with backtest-equivalent validation targets when observed historical data exists (Q1 PBP starters + top-5 clutch minutes + rotation lineups >=50 poss and <=2 starters)
 5. **run_forecast.py** — Scenario orchestrator that writes both scenario-specific artifacts and combined frontend payloads (`default_scenario` + `scenarios` map)
 
-Backtest validation: BKE carry r≈0.42-0.49, MPG carry r≈0.79-0.82; forecast team-level win MAE/r: `margin` ≈ 8.20-9.02 / 0.64-0.67, `ppp` ≈ 8.46-8.75 / 0.63-0.66 (latest quick-fix calibration pass)
+Backtest validation: BKE carry r≈0.42-0.49, MPG carry r≈0.73-0.79 (scenario dependent); latest forecast-style team-level win MAE/r by scenario: `end_of_season margin` ≈ 7.96-8.92 / 0.67-0.68, `end_of_season ppp` ≈ 8.12-8.78 / 0.64-0.70, `preseason_snapshot margin` ≈ 8.72-9.64 / 0.53-0.66, `preseason_snapshot ppp` ≈ 7.70-9.50 / 0.53-0.70
 
 ### Position-Band Policy (Canonical)
 - Canonical player position bands are: `Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`.
@@ -156,7 +157,7 @@ dot -Tpng scheme_diagrams/flow_diagram_pre_possession.dot -o scheme_diagrams/flo
 ```
 
 # Data layout (locations used by scripts)
-- `data/historical/` — raw + normalized PBP, possessions, caches; per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary); draft files: `player_draft_history.parquet/.csv` (+ optional `player_draft_commonplayerinfo_cache.parquet`); clutch files: `player_clutch_stats_2022-23.parquet`, `player_clutch_stats_2023-24.parquet`, `player_clutch_stats_2024-25.parquet`, `player_clutch_stats_all.parquet`; preseason roster snapshots: `preseason_rosters.parquet` and `preseason_rosters/preseason_rosters_<season>.parquet`
+- `data/historical/` — raw + normalized PBP, possessions, caches; player ID/name maps: `player_id_name_map_<season>.csv` (and optional compatibility files such as `player_id_name_map_all.csv`); per-season salary files: `player_salaries_2022-23.parquet`, `player_salaries_2023-24.parquet`, etc. (columns: player_id, player_name, team, team_id, season, salary); draft files: `player_draft_history.parquet/.csv` (+ optional `player_draft_commonplayerinfo_cache.parquet`); clutch files: `player_clutch_stats_2022-23.parquet`, `player_clutch_stats_2023-24.parquet`, `player_clutch_stats_2024-25.parquet`, `player_clutch_stats_all.parquet`; preseason roster snapshots: `preseason_rosters.parquet` and `preseason_rosters/preseason_rosters_<season>.parquet`
 - `data/processed/` — core pipeline outputs: `player_rapm.parquet`, `player_rapm.csv`, `modeling_inputs_all.parquet/.csv`, `modeling_inputs_{season}.parquet`, `player_position_estimates_2022-23.parquet/.csv`, `player_position_estimates_2023-24.parquet/.csv`, `player_position_estimates_2024-25.parquet/.csv`, combined compatibility `player_position_estimates.parquet/.csv`, `defensive_archetypes_v2.parquet`, `defensive_archetypes_v2.csv`, `player_archetypes.parquet`, `archetype_embeddings.parquet`, `metrics_linear.parquet`, `metrics_win_shares.parquet`, `player_team_stints.parquet`, simulation artifacts under `data/processed/simulation/` including `simulation_step2_lineup_profiles.parquet`; forecast outputs under `data/processed/forecast/` including scenario-specific `projected_player_profiles_<scenario>.parquet`, `projected_team_features_<scenario>.parquet`
 - `data/processed/player_position_estimates*.parquet` — position share outputs where canonical `primary_position_estimate` should remain in the five-band label set (`Guard`, `Guard-Forward`, `Forward`, `Forward-Center`, `Center`).
 - `data/processed/player_eval/` — PEC Step outputs: `player_impact_profiles.parquet`, `player_profiles_season.pkl`, `minute_model_v2.pkl`, `minute_model_predictions_v2.parquet`, `team_feature_aggregation.parquet`

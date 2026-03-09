@@ -55,6 +55,23 @@ def _safe_read(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _extract_result_payload(payload: Dict) -> Optional[Dict]:
+    """Return first result payload across known NBA response shapes."""
+    if not isinstance(payload, dict):
+        return None
+
+    result_sets = payload.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        block = result_sets[0]
+        return block if isinstance(block, dict) else None
+
+    result_set = payload.get("resultSet")
+    if isinstance(result_set, dict):
+        return result_set
+
+    return None
+
+
 def _to_int_or_nan(value) -> float:
     if value is None:
         return np.nan
@@ -164,9 +181,9 @@ def _fetch_draft_history() -> pd.DataFrame:
             )
             if resp.status_code == 200:
                 payload = resp.json()
-                rs = payload.get("resultSets", [])
+                rs = _extract_result_payload(payload)
                 if rs:
-                    df = pd.DataFrame(rs[0].get("rowSet", []), columns=rs[0].get("headers", []))
+                    df = pd.DataFrame(rs.get("rowSet", []), columns=rs.get("headers", []))
                     if not df.empty:
                         return _normalize_draft_history_df(df)
         except Exception as exc:

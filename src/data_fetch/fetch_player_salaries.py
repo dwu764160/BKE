@@ -25,9 +25,53 @@ import re
 import unicodedata
 from bs4 import BeautifulSoup
 import os
+from pathlib import Path
 
-PLAYER_MAP_CSV = "data/historical/player_id_name_map_['2022-23', '2023-24', '2024-25'].csv"
 OUTPUT_PARQUET = "data/historical/player_salaries.parquet"
+
+
+def _load_player_id_name_map() -> pd.DataFrame:
+    """Load PERSON_ID + DISPLAY_FIRST_LAST from available player-id map files."""
+    hist_dir = Path("data/historical")
+    candidates = [
+        hist_dir / "player_id_name_map_all.csv",
+        hist_dir / "player_id_name_map_['2022-23', '2023-24', '2024-25'].csv",
+    ]
+    candidates.extend(sorted(hist_dir.glob("player_id_name_map_*.csv")))
+
+    seen = set()
+    ordered_candidates = []
+    for path in candidates:
+        norm = str(path)
+        if norm not in seen:
+            seen.add(norm)
+            ordered_candidates.append(path)
+
+    frames = []
+    for path in ordered_candidates:
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception as exc:
+            print(f"Warning: could not read player map {path}: {exc}")
+            continue
+
+        if {"PERSON_ID", "DISPLAY_FIRST_LAST"}.issubset(df.columns):
+            frames.append(df[["PERSON_ID", "DISPLAY_FIRST_LAST"]].copy())
+
+    if not frames:
+        raise FileNotFoundError(
+            "No usable player_id_name_map_*.csv found in data/historical. "
+            "Run src/data_fetch/fetch_historical_data.py first."
+        )
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged["PERSON_ID"] = pd.to_numeric(merged["PERSON_ID"], errors="coerce").astype("Int64")
+    merged = merged.dropna(subset=["PERSON_ID", "DISPLAY_FIRST_LAST"]).copy()
+    merged["PERSON_ID"] = merged["PERSON_ID"].astype(int)
+    merged = merged.drop_duplicates(subset=["PERSON_ID"], keep="first")
+    return merged
 
 
 def get_espn_player_salaries():
@@ -102,7 +146,7 @@ def normalize_name(name):
 
 def main():
     # Load player ID/name map
-    id_map = pd.read_csv(PLAYER_MAP_CSV)
+    id_map = _load_player_id_name_map()
     id_map["norm_name"] = id_map["DISPLAY_FIRST_LAST"].apply(normalize_name)
 
     print(f"Fetching all player salary data from ESPN for 2022-23 to 2025-26...")

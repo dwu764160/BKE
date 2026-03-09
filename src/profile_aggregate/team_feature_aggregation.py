@@ -104,6 +104,30 @@ from src.player_eval.constants import (
 )
 
 
+def _replacement_pool_mask(df: pd.DataFrame) -> pd.Series:
+    """Identify synthetic replacement-pool rows across old/new schemas."""
+    if df.empty:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    if "player_id" in df.columns:
+        pid = df["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    else:
+        pid = pd.Series("", index=df.index, dtype=str)
+    id_mask = pid.str.lower().str.startswith("repl_")
+
+    if "player_name" in df.columns:
+        names = df["player_name"].astype(str)
+    else:
+        names = pd.Series("", index=df.index, dtype=str)
+    name_mask = names.str.contains("replacement pool", case=False, na=False)
+
+    flag_mask = pd.Series(False, index=df.index, dtype=bool)
+    if "is_replacement_pool" in df.columns:
+        flag_mask = pd.to_numeric(df["is_replacement_pool"], errors="coerce").fillna(0).astype(int) == 1
+
+    return id_mask | name_mask | flag_mask
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Offensive Archetype Interaction Matrix
 # ═════════════════════════════════════════════════════════════════════
@@ -853,23 +877,57 @@ def main(
     profiles = pd.read_parquet(src_path)
     print(f"  Loaded {len(profiles)} player-season profiles from {src_path.name}")
 
+    profiles["player_id"] = profiles["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    profiles["season"] = profiles["season"].astype(str)
+    profiles["team_abbreviation"] = profiles["team_abbreviation"].astype(str).str.upper()
+
+    repl_mask = _replacement_pool_mask(profiles)
+    repl_count = int(repl_mask.sum())
+    if repl_count:
+        profiles = profiles.loc[~repl_mask].copy()
+        print(f"  Excluded {repl_count} replacement-pool rows before aggregation")
+
     # Load minute predictions (only in backtest mode — forecast profiles already have projected MPG)
     if not forecast_mode:
         predictions = pd.DataFrame()
         if MINUTE_PREDICTIONS_PATH.exists():
             predictions = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
-            predictions = predictions.rename(columns={
-                "team_abbreviation": "pred_team_abbreviation",
-                "team_id": "pred_team_id",
-            })
-            pred_cols = ["player_id", "season"]
-            for c in predictions.columns:
-                if c not in ["player_id", "season", "player_name"]:
-                    pred_cols.append(c)
-            profiles = profiles.merge(predictions[pred_cols], on=["player_id", "season"], how="left")
+            predictions["player_id"] = predictions["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+            predictions["season"] = predictions["season"].astype(str)
 
-    # Use actual MPG for team aggregation (we build from actuals, not predictions)
-    profiles["mpg"] = pd.to_numeric(profiles["mpg"], errors="coerce").fillna(0.0)
+            merge_keys = ["player_id", "season"]
+            if "team_abbreviation" in predictions.columns:
+                predictions["team_abbreviation"] = predictions["team_abbreviation"].astype(str).str.upper()
+                merge_keys.append("team_abbreviation")
+
+            pred_cols = [c for c in predictions.columns if c not in ["player_name"]]
+            predictions = predictions[pred_cols].drop_duplicates(subset=merge_keys, keep="first")
+            profiles = profiles.merge(predictions, on=merge_keys, how="left")
+
+            pred_mpg_col = None
+            for candidate in ["pred_mpg_raw", "pred_mpg_team_norm"]:
+                if candidate in profiles.columns:
+                    pred_mpg_col = candidate
+                    break
+
+            if pred_mpg_col:
+                base_mpg = pd.to_numeric(profiles.get("mpg"), errors="coerce")
+                pred_mpg = pd.to_numeric(profiles[pred_mpg_col], errors="coerce")
+                profiles["mpg"] = pred_mpg.fillna(base_mpg).fillna(0.0)
+
+                games = pd.to_numeric(profiles.get("games"), errors="coerce").fillna(72.0).clip(lower=10.0)
+                profiles["minutes"] = profiles["mpg"] * games
+                print(f"  Backtest minute source: {pred_mpg_col} (fallback=profile mpg)")
+            else:
+                profiles["mpg"] = pd.to_numeric(profiles.get("mpg"), errors="coerce").fillna(0.0)
+                print("  Backtest minute source: profile mpg (minute predictions missing columns)")
+        else:
+            profiles["mpg"] = pd.to_numeric(profiles.get("mpg"), errors="coerce").fillna(0.0)
+            print("  Backtest minute source: profile mpg (minute predictions file missing)")
+    else:
+        profiles["mpg"] = pd.to_numeric(profiles.get("mpg"), errors="coerce").fillna(0.0)
+
+    profiles["minutes"] = pd.to_numeric(profiles.get("minutes"), errors="coerce").fillna(0.0)
     profiles["impact_obke"] = pd.to_numeric(profiles["impact_obke"], errors="coerce").fillna(0.0)
     profiles["impact_dbke"] = pd.to_numeric(profiles["impact_dbke"], errors="coerce").fillna(0.0)
     profiles["behavioral_usage"] = pd.to_numeric(profiles["behavioral_usage"], errors="coerce").fillna(0.0)
@@ -1243,7 +1301,16 @@ def main(
             )
 
     # ── Validation ───────────────────────────────────────────────
-    validation = _validate(result_df, actual_team_data)
+    validation = _validate(
+        result_df,
+        actual_team_data,
+        model_flags={
+            "interaction": bool(use_interaction),
+            "structure": bool(use_structure),
+            "defense": bool(use_defense),
+            "volatility": bool(use_volatility),
+        },
+    )
     if not forecast_mode:
         validation["defense_sign_inference"] = {
             "defense_sign": defense_sign,
@@ -1274,14 +1341,18 @@ def main(
     return result_df
 
 
-def _validate(result_df: pd.DataFrame, actual_team_data: pd.DataFrame) -> dict:
+def _validate(
+    result_df: pd.DataFrame,
+    actual_team_data: pd.DataFrame,
+    model_flags: Optional[Dict[str, bool]] = None,
+) -> dict:
     """Validate team projections against actual data."""
     validation = {
         "step": "Step 3 — Team Feature Aggregation",
         "n_team_seasons": len(result_df),
         "seasons": sorted(result_df["season"].unique().tolist()),
         "summary": {},
-        "model_flags": {
+        "model_flags": model_flags or {
             "interaction": True,
             "structure": True,
             "defense": True,

@@ -22,6 +22,23 @@ DATA_DIR = Path("data/official_stats")
 CACHE_DIR = Path("data/tracking_cache") # Reuse cache logic
 SEASONS = ["2022-23", "2023-24", "2024-25"]
 
+
+def _extract_result_payload(json_data):
+    """Return the first NBA stats result payload across known response shapes."""
+    if not isinstance(json_data, dict):
+        return None
+
+    result_sets = json_data.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        payload = result_sets[0]
+        return payload if isinstance(payload, dict) else None
+
+    result_set = json_data.get("resultSet")
+    if isinstance(result_set, dict):
+        return result_set
+
+    return None
+
 def ensure_dirs():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,7 +56,7 @@ def fetch_official_advanced(season):
         "LeagueID": "00",
         "Season": season,
         "SeasonType": "Regular Season",
-        "PorRound": "0",
+        "PORound": "0",
         "Outcome": "",
         "Location": "",
         "Month": "0",
@@ -90,10 +107,20 @@ def fetch_official_advanced(season):
             return
             
         json_data = resp.json()
-        col_headers = json_data['resultSets'][0]['headers']
-        rows = json_data['resultSets'][0]['rowSet']
-        
-        df = pd.DataFrame(rows, columns=col_headers)
+        payload = _extract_result_payload(json_data)
+        if not payload:
+            print("❌ Unexpected payload shape")
+            return
+
+        col_headers = payload.get("headers", [])
+        rows = payload.get("rowSet", [])
+        if not rows:
+            print("❌ Empty rowSet")
+            return
+        if not col_headers:
+            df = pd.DataFrame(rows)
+        else:
+            df = pd.DataFrame(rows, columns=col_headers)
         
         # Save
         outfile = DATA_DIR / f"official_advanced_{season}.parquet"

@@ -181,6 +181,9 @@ def apply_replacement_buffer(df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     df = df.copy()
+    if "is_replacement_pool" not in df.columns:
+        df["is_replacement_pool"] = 0
+
     buffer_frac = FORECAST_REPLACEMENT_BUFFER_FRACTION
 
     replacement_rows = []
@@ -237,6 +240,7 @@ def apply_replacement_buffer(df: pd.DataFrame) -> pd.DataFrame:
             "def_role_confidence": 0.2,
             "salary": 1_500_000,
             "availability_score": 0.5,
+            "is_replacement_pool": 1,
         })
 
     if replacement_rows:
@@ -259,6 +263,40 @@ def apply_replacement_buffer(df: pd.DataFrame) -> pd.DataFrame:
         print(f"    Replacement buffer: {len(replacement_rows)} pools, "
               f"{buffer_frac:.0%} of minutes reserved")
 
+    return df
+
+
+def _replacement_pool_mask(df: pd.DataFrame) -> pd.Series:
+    """Identify synthetic replacement-pool rows robustly across old/new schemas."""
+    if df.empty:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    if "player_id" in df.columns:
+        pid = _norm_id(df["player_id"])
+    else:
+        pid = pd.Series("", index=df.index, dtype=str)
+    id_mask = pid.astype(str).str.lower().str.startswith("repl_")
+
+    if "player_name" in df.columns:
+        names = df["player_name"].astype(str)
+    else:
+        names = pd.Series("", index=df.index, dtype=str)
+    name_mask = names.str.contains("replacement pool", case=False, na=False)
+
+    flag_mask = pd.Series(False, index=df.index, dtype=bool)
+    if "is_replacement_pool" in df.columns:
+        flag_mask = pd.to_numeric(df["is_replacement_pool"], errors="coerce").fillna(0).astype(int) == 1
+
+    return id_mask | name_mask | flag_mask
+
+
+def _exclude_replacement_pool_rows(df: pd.DataFrame, context: str) -> pd.DataFrame:
+    """Drop synthetic replacement rows so downstream calculations use real players only."""
+    mask = _replacement_pool_mask(df)
+    removed = int(mask.sum())
+    if removed:
+        print(f"    Excluding {removed} replacement-pool rows from {context}")
+        return df.loc[~mask].copy()
     return df
 
 
@@ -546,16 +584,140 @@ def _mpg_age_delta(age: float) -> float:
         return -1.0
     return -2.0
 
+
+def _collect_minutes_training_rows(
+    all_profiles: pd.DataFrame,
+    max_base_season: Optional[str] = None,
+) -> pd.DataFrame:
+    """Build returning-player minute carry rows from adjacent historical seasons."""
+    seasons = sorted(all_profiles["season"].astype(str).unique())
+    if len(seasons) < 2:
+        return pd.DataFrame()
+
+    cutoff_year = season_start_year(max_base_season) if max_base_season else None
+    rows = []
+
+    for i in range(len(seasons) - 1):
+        base_season = seasons[i]
+        target_season = seasons[i + 1]
+        if cutoff_year is not None and season_start_year(base_season) > cutoff_year:
+            continue
+
+        base = collapse_profiles_for_projection(all_profiles[all_profiles["season"] == base_season].copy())
+        target = collapse_profiles_for_projection(all_profiles[all_profiles["season"] == target_season].copy())
+        if base.empty or target.empty:
+            continue
+
+        base = base[["player_id", "mpg", "impact_bke", "age", "salary"]].copy()
+        target = target[["player_id", "mpg"]].copy().rename(columns={"mpg": "target_mpg"})
+        base["player_id"] = _norm_id(base["player_id"])
+        target["player_id"] = _norm_id(target["player_id"])
+
+        merged = base.merge(target, on="player_id", how="inner")
+        if merged.empty:
+            continue
+
+        merged["base_mpg"] = pd.to_numeric(merged["mpg"], errors="coerce")
+        merged["base_impact"] = pd.to_numeric(merged["impact_bke"], errors="coerce")
+        merged["base_age"] = pd.to_numeric(merged["age"], errors="coerce")
+        merged["base_salary"] = pd.to_numeric(merged["salary"], errors="coerce")
+        merged["target_mpg"] = pd.to_numeric(merged["target_mpg"], errors="coerce")
+        merged = merged.dropna(subset=["base_mpg", "target_mpg"]).copy()
+        if merged.empty:
+            continue
+
+        rows.append(merged[["base_mpg", "base_impact", "base_age", "base_salary", "target_mpg"]])
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
+
+
+def fit_minutes_carry_model(
+    all_profiles: pd.DataFrame,
+    max_base_season: Optional[str] = None,
+) -> Dict[str, float]:
+    """Fit a lightweight linear carry model for MPG using only prior transitions."""
+    default_model = {
+        "intercept": 0.8,
+        "w_mpg": 0.90,
+        "w_impact": 0.15,
+        "w_age": -0.05,
+        "w_salary": 0.10,
+        "fitted": False,
+        "n_samples": 0,
+        "fit_corr": None,
+    }
+
+    train = _collect_minutes_training_rows(all_profiles, max_base_season=max_base_season)
+    if train.empty or len(train) < 150:
+        return default_model
+
+    base_mpg = train["base_mpg"].to_numpy(dtype=float)
+    base_impact = train["base_impact"].fillna(0.0).to_numpy(dtype=float)
+    base_age_excess = np.maximum(train["base_age"].fillna(27.0).to_numpy(dtype=float) - 27.0, 0.0)
+    salary_m = (train["base_salary"].fillna(8_000_000.0).to_numpy(dtype=float) / 1_000_000.0)
+    salary_signal = np.tanh((salary_m - 8.0) / 10.0)
+    y = train["target_mpg"].to_numpy(dtype=float)
+
+    X = np.column_stack([
+        np.ones(len(train), dtype=float),
+        base_mpg,
+        base_impact,
+        base_age_excess,
+        salary_signal,
+    ])
+
+    try:
+        beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    except np.linalg.LinAlgError:
+        return default_model
+
+    pred = X @ beta
+    corr = float(np.corrcoef(pred, y)[0, 1]) if len(y) > 1 else np.nan
+
+    model = {
+        "intercept": float(np.clip(beta[0], -2.0, 4.0)),
+        "w_mpg": float(np.clip(beta[1], 0.85, 0.98)),
+        "w_impact": float(np.clip(beta[2], -0.50, 0.50)),
+        "w_age": float(np.clip(beta[3], -0.20, 0.05)),
+        "w_salary": float(np.clip(beta[4], -0.30, 0.30)),
+        "fitted": True,
+        "n_samples": int(len(train)),
+        "fit_corr": float(round(corr, 4)) if np.isfinite(corr) else None,
+    }
+
+    # Guardrail: if fitted relationship is weak, prefer a stable high-carry default.
+    if not np.isfinite(corr) or corr < 0.80:
+        fallback = default_model.copy()
+        fallback["n_samples"] = int(len(train))
+        fallback["fit_corr"] = float(round(corr, 4)) if np.isfinite(corr) else None
+        return fallback
+
+    return model
+
 def project_minutes(
     players: pd.DataFrame,
     target_salary_map: Optional[Dict[str, float]] = None,
-    team_mpg_target: float = 240.0,
-    mpg_cap: float = 40.0,
+    draft_map: Optional[Dict[str, Dict[str, float]]] = None,
+    minutes_carry_model: Optional[Dict[str, float]] = None,
+    team_mpg_target: float = 350.0,
+    mpg_cap: float = 38.0,
 ) -> pd.DataFrame:
-    """Project MPG using age + impact + salary + team-depth competition.
+    """Project MPG using minute-share approach with multiplicative adjustments.
 
-    Formula (raw, pre-normalization):
-      MPG_proj = last_MPG + age_adj + impact_adj + salary_adj + competition_adj
+    The actual data has per-team MPG totals of ~350 (median) because player
+    MPG = minutes/games_played for each stint.  Normalizing to 240 (the
+    on-court physical limit) artificially compresses projections 30-35%
+    below actual scale.  We normalize to ~350 to match the same data format
+    that the actual profiles use.
+
+     Steps:
+        1. Apply multiplicative factors to prior-season MPG
+            (age, impact, salary, draft capital)
+        2. Blend with a lightweight carry-anchor model for temporal stability
+        3. Normalize within each team so totals match target
+        4. Cap individual MPG and redistribute excess
     """
     df = players.copy()
     df["player_id"] = _norm_id(df["player_id"])
@@ -565,97 +727,142 @@ def project_minutes(
     df["impact_bke"] = pd.to_numeric(df.get("impact_bke"), errors="coerce").fillna(0.0)
     df["salary"] = pd.to_numeric(df.get("salary"), errors="coerce")
 
-    df["age_adjustment"] = df["age"].map(_mpg_age_delta)
+    # ── Age multiplier (gentle curve) ──
+    # Young players trending up, prime stable, veterans declining.
+    age_mult = np.select(
+        [df["age"] < 22, df["age"] < 24, df["age"] < 27,
+         df["age"] < 30, df["age"] < 34],
+        [1.08, 1.04, 1.01, 1.00, 0.97],
+        default=0.93,
+    )
 
-    # Impact-driven minutes: stronger players tend to earn/keep minutes.
+    # ── Impact multiplier ──
+    # Better players earn/keep minutes; weaker players lose share.
     if ENABLE_MINUTES_IMPACT_ADJUSTMENT:
-        league_bke = float(df["impact_bke"].mean()) if len(df) else 0.0
-        df["impact_adjustment"] = (
-            (df["impact_bke"] - league_bke) * MINUTES_IMPACT_ADJUST_SLOPE
-        ).clip(lower=-MINUTES_IMPACT_ADJUST_CLIP, upper=MINUTES_IMPACT_ADJUST_CLIP)
+        qualifying = df.loc[df["mpg"] > 5.0, "impact_bke"]
+        league_mean = float(qualifying.mean()) if len(qualifying) > 0 else 0.0
+        impact_signal = df["impact_bke"] - league_mean
+        impact_mult = (1.0 + impact_signal * 0.12).clip(0.88, 1.12)
     else:
-        df["impact_adjustment"] = 0.0
+        impact_mult = np.ones(len(df))
 
-    # Salary adjustment (target-season salary when available).
+    # ── Salary multiplier ──
+    # Higher-paid players have protected minutes via organizational investment.
     if ENABLE_MINUTES_SALARY_ADJUSTMENT:
+        sal_fill = df["salary"].median()
+        if not np.isfinite(sal_fill):
+            sal_fill = 8_000_000
+        salary_vals = df["salary"].fillna(sal_fill)
+        salary_m = salary_vals / 1_000_000.0
+        salary_mult = (1.0 + np.tanh((salary_m - 8.0) / 12.0) * 0.06).clip(0.94, 1.06)
+
+        # Salary change signal (if target-season salary known).
         if target_salary_map:
-            df["salary_target"] = df["player_id"].map(target_salary_map)
-        else:
-            df["salary_target"] = np.nan
-
-        salary_for_adj = df["salary_target"].fillna(df["salary"])
-        salary_m = salary_for_adj / 1_000_000.0
-        salary_base_m = df["salary"] / 1_000_000.0
-
-        level_term = np.tanh((salary_m - 8.0) / max(MINUTES_SALARY_LEVEL_SCALE_M, 1e-6))
-        delta_term = np.tanh(
-            ((salary_m - salary_base_m).fillna(0.0)) / max(MINUTES_SALARY_CHANGE_SCALE_M, 1e-6)
-        )
-        df["salary_adjustment"] = (
-            MINUTES_SALARY_LEVEL_WEIGHT * level_term +
-            MINUTES_SALARY_CHANGE_WEIGHT * delta_term
-        ).clip(lower=-MINUTES_SALARY_ADJUST_CLIP, upper=MINUTES_SALARY_ADJUST_CLIP)
+            target_sal = df["player_id"].map(target_salary_map)
+            target_sal_m = target_sal / 1_000_000.0
+            change = (target_sal_m - salary_m).fillna(0.0)
+            change_mult = (1.0 + np.tanh(change / 10.0) * 0.04).clip(0.96, 1.04)
+            salary_mult = salary_mult * change_mult
     else:
-        df["salary_adjustment"] = 0.0
+        salary_mult = np.ones(len(df))
 
-    # Team-depth / position-competition adjustment.
-    df["competition_adjustment"] = 0.0
-    if ENABLE_MINUTES_TEAM_COMPETITION_ADJUSTMENT:
-        role_source = None
-        for col in ["position_proxy", "primary_position_estimate", "primary_position"]:
-            if col in df.columns:
-                role_source = col
-                break
-        if role_source is None:
-            df["role_group"] = "wing"
-        else:
-            df["role_group"] = df[role_source].map(_coarse_role)
+    # ── Draft position multiplier ──
+    # Young high-draft-capital players get organizational minutes investment.
+    draft_mult = np.ones(len(df))
+    if draft_map:
+        exp_col = df.get("experience_years", pd.Series(10.0, index=df.index))
+        exp_vals = pd.to_numeric(exp_col, errors="coerce").fillna(10.0)
+        for i in df.index:
+            pid = str(df.at[i, "player_id"])
+            exp = float(exp_vals.at[i])
+            if exp < 3:
+                info = draft_map.get(pid, {})
+                pick = info.get("draft_pick_overall", np.nan)
+                if pd.notna(pick):
+                    p = float(pick)
+                    if p <= 5:
+                        draft_mult[df.index.get_loc(i)] = 1.06
+                    elif p <= 14:
+                        draft_mult[df.index.get_loc(i)] = 1.04
+                    elif p <= 30:
+                        draft_mult[df.index.get_loc(i)] = 1.02
 
-        for (_, _, _), idx in df.groupby(["season", "team_abbreviation", "role_group"]).groups.items():
-            g = df.loc[idx, ["impact_bke", "mpg"]].copy()
-            impacts = g["impact_bke"].fillna(g["impact_bke"].median())
-            base_mpg = g["mpg"].fillna(0.0)
+    # ── Combined multiplicative factor ──
+    combined = age_mult * impact_mult * salary_mult * draft_mult
+    df["minute_share_multiplier"] = combined
+    share_signal = (df["mpg"] * combined).clip(lower=0.0)
 
-            for i in g.index:
-                peer_count = int(((impacts >= impacts.loc[i] - 0.05) & (base_mpg >= 8.0)).sum() - 1)
-                peer_count = max(0, peer_count)
-                penalty = min(MINUTES_COMPETITION_MAX_PENALTY, MINUTES_COMPETITION_PENALTY * peer_count)
-                df.at[i, "competition_adjustment"] = -penalty
+    # ── Carry-anchor blend (stability guardrail) ──
+    # The share model captures context shifts, while a low-weight carry anchor
+    # keeps projections stable for established minute roles.
+    carry_anchor = share_signal.copy()
+    anchor_weight = 0.0
+    if minutes_carry_model:
+        intercept = float(minutes_carry_model.get("intercept", 0.8))
+        w_mpg = float(minutes_carry_model.get("w_mpg", 0.90))
+        w_impact = float(minutes_carry_model.get("w_impact", 0.15))
+        w_age = float(minutes_carry_model.get("w_age", -0.05))
+        w_salary = float(minutes_carry_model.get("w_salary", 0.10))
 
-    df["projected_mpg"] = (
-        df["mpg"] +
-        df["age_adjustment"] +
-        df["impact_adjustment"] +
-        df["salary_adjustment"] +
-        df["competition_adjustment"]
-    ).clip(lower=0.0, upper=mpg_cap)
+        salary_fill = df["salary"].median()
+        if not np.isfinite(salary_fill):
+            salary_fill = 8_000_000.0
+        salary_signal = np.tanh(((df["salary"].fillna(salary_fill) / 1_000_000.0) - 8.0) / 10.0)
+        age_excess = np.maximum(df["age"] - 27.0, 0.0)
 
-    # Team normalization: scale to 240 MPG per team.
+        carry_anchor = (
+            intercept
+            + w_mpg * df["mpg"]
+            + w_impact * df["impact_bke"]
+            + w_age * age_excess
+            + w_salary * salary_signal
+        ).clip(lower=0.0)
+
+        anchor_weight = 0.25 if bool(minutes_carry_model.get("fitted")) else 0.15
+
+    df["adjusted_mpg"] = (
+        (1.0 - anchor_weight) * share_signal + anchor_weight * carry_anchor
+    ).clip(lower=0.0)
+
+    # ── Team normalization: proportional scaling to roster-size-adaptive target ──
+    # The actual data has per-player average MPG of ~19 (because MPG =
+    # minutes/games_played for each stint, not prorated).  We scale each
+    # team's total to n_players * per_player_target so projections live on
+    # the same scale as actual values.
+    per_player_target = max(5.0, float(team_mpg_target) / 19.0)
+
     for (season, team), idx in df.groupby(["season", "team_abbreviation"]).groups.items():
-        vals = df.loc[idx, "projected_mpg"].copy()
+        vals = df.loc[idx, "adjusted_mpg"].copy()
         total = vals.sum()
-        if total > 0:
-            scale = team_mpg_target / total
-            vals = (vals * scale).clip(upper=mpg_cap)
-            # Iterative redistribution after capping.
-            for _ in range(3):
-                capped = vals.clip(upper=mpg_cap)
-                excess = vals.sum() - capped.sum()
-                if excess <= 0.1:
-                    vals = capped
-                    break
-                free_mask = capped < mpg_cap
-                if free_mask.sum() == 0:
-                    vals = capped
-                    break
-                free_vals = capped[free_mask]
-                denom = free_vals.sum()
-                if denom <= 0:
-                    vals = capped
-                    break
-                capped.loc[free_mask] = free_vals + excess * (free_vals / denom)
-                vals = capped
-            df.loc[idx, "projected_mpg"] = vals
+        n = len(idx)
+        adaptive_target = n * per_player_target
+
+        if total <= 0:
+            df.loc[idx, "projected_mpg"] = adaptive_target / max(n, 1)
+            continue
+
+        # Proportional scaling to roster-adaptive target
+        scale = adaptive_target / total
+        mpg_vals = vals * scale
+
+        # Cap and redistribute iteratively
+        for _ in range(5):
+            capped = mpg_vals.clip(upper=mpg_cap)
+            excess = mpg_vals.sum() - capped.sum()
+            if excess <= 0.1:
+                mpg_vals = capped
+                break
+            free_mask = capped < mpg_cap
+            if free_mask.sum() == 0:
+                mpg_vals = capped
+                break
+            free_total = capped[free_mask].sum()
+            if free_total <= 0:
+                mpg_vals = capped
+                break
+            capped.loc[free_mask] = capped[free_mask] + excess * (capped[free_mask] / free_total)
+            mpg_vals = capped
+        df.loc[idx, "projected_mpg"] = mpg_vals
 
     df["mpg"] = df["projected_mpg"]
     return df
@@ -984,6 +1191,7 @@ def build_rookie_profiles_from_draft(
     salary_map: Dict[str, float],
     salary_team_map: Dict[str, str],
     rookie_impact_scale: float,
+    allow_salary_team_fallback: bool = True,
 ) -> pd.DataFrame:
     """Build rookie profiles from fetched draft history (forecast mode)."""
     if draft_df.empty:
@@ -1033,12 +1241,11 @@ def build_rookie_profiles_from_draft(
         pick = pd.to_numeric(pd.Series([info.get("draft_pick_overall", r.get("draft_pick_overall"))]), errors="coerce").iloc[0]
         tier = str(info.get("draft_tier", _draft_tier(int(pick) if pd.notna(pick) else 999)))
 
-        team = (
-            roster_map.get(pid)
-            or salary_team_map.get(pid)
-            or str(info.get("draft_team_abbreviation", "")).upper()
-            or "FA"
-        )
+        team = roster_map.get(pid)
+        if not team and allow_salary_team_fallback:
+            team = salary_team_map.get(pid)
+        if not team:
+            team = str(info.get("draft_team_abbreviation", "")).upper() or "FA"
         if not team or team == "NAN":
             team = "FA"
 
@@ -1262,6 +1469,17 @@ def project_season(
 
     print(f"    Base season players: {len(base)}")
 
+    minutes_carry_model = fit_minutes_carry_model(all_profiles, max_base_season=base_season)
+    if minutes_carry_model.get("fitted"):
+        print(
+            "    Minutes carry model: "
+            f"n={minutes_carry_model.get('n_samples')} "
+            f"r={minutes_carry_model.get('fit_corr')} "
+            f"w_mpg={minutes_carry_model.get('w_mpg'):.3f}"
+        )
+    else:
+        print("    Minutes carry model: using fallback coefficients")
+
     # 2. Map players to new teams
     roster_override_map = _load_manual_roster_map(roster_path)
     preseason_team_map: Dict[str, str] = {}
@@ -1276,23 +1494,11 @@ def project_season(
             print(f"    Preseason snapshot rows mapped: {len(preseason_team_map)} players")
             mapping_source = "preseason_rosters"
         else:
-            # Local fallback: target-season salary feed often contains updated team assignments
-            # and avoids no-op scenario behavior when API snapshots are unavailable.
-            salary_team_map = target_salary_team_map or {}
-            salary_team_map = {
-                str(pid).strip(): str(team).strip().upper()
-                for pid, team in salary_team_map.items()
-                if str(pid).strip() and str(team).strip()
-            }
-            if salary_team_map:
-                preseason_team_map = salary_team_map
-                mapping_source = "target_salary_team_map"
-                print(
-                    "    WARNING: preseason snapshot unavailable; "
-                    f"using target-season salary team map ({len(preseason_team_map)} players)"
-                )
-            else:
-                print("    WARNING: preseason snapshot unavailable; falling back to carry-forward teams")
+            mapping_source = "carry_forward_fallback"
+            print(
+                "    WARNING: preseason snapshot unavailable; "
+                "falling back to carry-forward teams (salary-team fallback disabled)"
+            )
 
     if mode == "backtest":
         target = all_profiles[all_profiles["season"] == target_season].copy()
@@ -1352,17 +1558,7 @@ def project_season(
                 pd.to_numeric(projected["salary"], errors="coerce")
             )
 
-    # 5. Project minutes with conditional adjustments
-    projected = project_minutes(projected, target_salary_map=target_salary_map)
-
-    # 5a. Apply availability discount (expected missed games)
-    projected = apply_availability_discount(projected)
-
-    # Recompute derived minute fields
-    projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=10)
-    projected["possessions"] = projected["minutes"] * 2.0  # rough approximation
-
-    # 6. Add rookies
+    # 5. Add rookies BEFORE minute projection so normalization includes them.
     prior_ids = set(projected["player_id"].astype(str))
     if mode == "backtest":
         target = all_profiles[all_profiles["season"] == target_season].copy()
@@ -1384,6 +1580,7 @@ def project_season(
             salary_map=target_salary_map or {},
             salary_team_map=target_salary_team_map or {},
             rookie_impact_scale=rookie_impact_scale,
+            allow_salary_team_fallback=(team_mapping_mode != "preseason_snapshot"),
         )
 
         # Manual CSV fallback only if draft pipeline is unavailable.
@@ -1428,17 +1625,25 @@ def project_season(
 
     print(f"    Total projected roster: {len(projected)}")
 
-    # 7. Re-normalize team minutes after adding rookies
-    projected = project_minutes(projected, target_salary_map=target_salary_map)
+    # 6. Project minutes (single pass, after rookies are added).
+    # Uses minute-share approach: multiplicative adjustments + team normalization.
+    projected = project_minutes(
+        projected,
+        target_salary_map=target_salary_map,
+        draft_map=draft_map,
+        minutes_carry_model=minutes_carry_model,
+    )
 
-    # 7a. Apply availability discount again after re-normalization
+    # 6a. Apply availability discount (expected missed games — applied ONCE).
     projected = apply_availability_discount(projected)
 
+    # Recompute derived minute fields.
     projected["minutes"] = projected["mpg"] * projected["games"].clip(lower=10)
     projected["possessions"] = projected["minutes"] * 2.0
 
     # 8. Add replacement-level minutes buffer
     projected = apply_replacement_buffer(projected)
+    projected = _exclude_replacement_pool_rows(projected, context=f"{target_season} projected output")
 
     return projected
 

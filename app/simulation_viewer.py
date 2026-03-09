@@ -117,6 +117,7 @@ def generate_html(
 
     scenario_result_files = _discover_scenario_files(FORECAST_RESULTS)
     scenario_validation_files = _discover_scenario_files(FORECAST_VALIDATION)
+    scenario_lineup_files = _discover_scenario_files(FORECAST_LINEUP)
 
     # Forecast payload supports both legacy single-scenario and new multi-scenario formats.
     forecast_blob = {
@@ -141,8 +142,13 @@ def generate_html(
         scenario_keys.update(forecast_validation["scenarios"].keys())
     if isinstance(forecast_lineup.get("scenarios"), dict):
         scenario_keys.update(forecast_lineup["scenarios"].keys())
-    scenario_keys.update(scenario_result_files.keys())
-    scenario_keys.update(scenario_validation_files.keys())
+
+    # Only fall back to per-scenario files when combined scenario payloads are absent.
+    # This avoids mixing stale files with fresh combined outputs.
+    if not scenario_keys:
+      scenario_keys.update(scenario_result_files.keys())
+      scenario_keys.update(scenario_validation_files.keys())
+      scenario_keys.update(scenario_lineup_files.keys())
 
     if scenario_keys:
         scenarios_blob = {}
@@ -164,6 +170,8 @@ def generate_html(
             scenario_lineup = {}
             if isinstance(forecast_lineup.get("scenarios"), dict):
                 scenario_lineup = forecast_lineup.get("scenarios", {}).get(scenario_key, {}) or {}
+            if not scenario_lineup and scenario_key in scenario_lineup_files:
+              scenario_lineup = _load_json_if_exists(scenario_lineup_files[scenario_key])
 
             label = (
                 scenario_payload.get("label")
@@ -645,6 +653,7 @@ let forecastLineupConferenceFilter = "all";
 let currentSimulatedGame = null;
 let activeView = "step1View";
 const STEP2_SEASON_PLAYER_MAP = {};
+const FORECAST_STEP2_SEASON_PLAYER_MAP = {};
 
 function normalizeConference(conf) {
   const text = String(conf || "").trim().toLowerCase();
@@ -672,7 +681,17 @@ function getStep1Seasons() {
 function getForecastScenarioKeys() {
   const scenarioMap = (FORECAST && FORECAST.scenarios) || {};
   const keys = Object.keys(scenarioMap || {});
-  if (keys.length) return keys;
+  if (keys.length) {
+    const preferred = ["end_of_season", "preseason_snapshot"];
+    const ordered = [];
+    preferred.forEach(k => {
+      if (keys.includes(k)) ordered.push(k);
+    });
+    keys.sort().forEach(k => {
+      if (!ordered.includes(k)) ordered.push(k);
+    });
+    return ordered;
+  }
   return ["default"];
 }
 
@@ -1634,7 +1653,7 @@ function renderStep2Stats(seasonData) {
       label: "Rotation Corr",
       value: s.rotation_corr != null ? Number(s.rotation_corr).toFixed(3) : "-",
       cls: (s.rotation_target_met ? "val-green" : "val-purple"),
-      detail: "Predicted rotation vs lineups >=50 poss and <=2 starters"
+      detail: "Predicted rotation vs actual bench-player impact from game logs"
     },
     {
       label: "Teams",
@@ -1780,6 +1799,82 @@ function resolveObservedNames(season, ids, names) {
   return out;
 }
 
+function getForecastSeasonPlayerNameMap(season) {
+  const cacheKey = `${forecastScenario || "default"}::${season}`;
+  if (FORECAST_STEP2_SEASON_PLAYER_MAP[cacheKey]) {
+    return FORECAST_STEP2_SEASON_PLAYER_MAP[cacheKey];
+  }
+
+  const lineupData = getForecastLineupData();
+  const seasonData = ((lineupData && lineupData.seasons) || {})[season] || {};
+  const teams = seasonData.teams || [];
+  const map = {};
+
+  const addPlayerRows = (rows) => {
+    (rows || []).forEach((p) => {
+      const id = cleanText(p && p.player_id);
+      const name = cleanNameLabel(p && p.player_name);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+  };
+
+  teams.forEach((team) => {
+    addPlayerRows(team.pool_players);
+    addPlayerRows(team.starter_players);
+    addPlayerRows(team.clutch_players);
+
+    const v = team.validation || {};
+    const starterIds = v.actual_starter_ids || [];
+    const starterNames = v.actual_starter_names || [];
+    starterIds.forEach((idRaw, idx) => {
+      const id = cleanText(idRaw);
+      const name = cleanNameLabel(starterNames[idx]);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+
+    const clutchIds = v.actual_clutch_ids || [];
+    const clutchNames = v.actual_clutch_names || [];
+    clutchIds.forEach((idRaw, idx) => {
+      const id = cleanText(idRaw);
+      const name = cleanNameLabel(clutchNames[idx]);
+      if (!id || !name || isIdPlaceholder(name)) return;
+      if (!map[id]) map[id] = name;
+    });
+  });
+
+  FORECAST_STEP2_SEASON_PLAYER_MAP[cacheKey] = map;
+  return map;
+}
+
+function resolveForecastObservedNames(season, ids, names) {
+  const idList = (ids || []).map(v => cleanText(v));
+  const nameList = names || [];
+  const idToName = getForecastSeasonPlayerNameMap(season);
+
+  const seen = new Set();
+  const out = [];
+  const n = Math.max(idList.length, nameList.length);
+  for (let i = 0; i < n; i += 1) {
+    const id = idList[i];
+    let name = cleanNameLabel(nameList[i]);
+
+    if (!name || isIdPlaceholder(name)) {
+      if (id && idToName[id]) {
+        name = idToName[id];
+      }
+    }
+
+    if (!name || isIdPlaceholder(name) || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 function renderPlayerList(players) {
   const cleanPlayers = (players || []).filter(p => !!cleanNameLabel(p.player_name));
   if (!cleanPlayers.length) {
@@ -1835,7 +1930,7 @@ function openLineupModal(season, teamAbbr) {
           <div class="k">Starter Overlap</div><div class="v">${v.starter_overlap != null ? v.starter_overlap + "/5" : "-"}</div>
           <div class="k">Clutch Overlap</div><div class="v">${v.clutch_overlap != null ? v.clutch_overlap + "/5" : "-"}</div>
           <div class="k">Rotation Predicted</div><div class="v">${fmt(v.rotation_predicted,2)}</div>
-          <div class="k">Rotation Actual (bench-heavy)</div><div class="v">${fmt(v.rotation_actual_net,2)}</div>
+          <div class="k">Rotation Actual (bench-player impact)</div><div class="v">${fmt(v.rotation_actual_net,2)}</div>
           <div class="k">Observed Starter Players</div><div class="v">${actualStarterNames.length || 0}</div>
           <div class="k">Observed Clutch Players</div><div class="v">${actualClutchNames.length || 0}</div>
         </div>
@@ -2270,7 +2365,23 @@ function renderForecastLineupStats(seasonData, season) {
       label: "Rotation Corr",
       value: s.rotation_corr != null ? Number(s.rotation_corr).toFixed(3) : "-",
       cls: (s.rotation_target_met ? "val-green" : "val-purple"),
-      detail: "Predicted rotation vs lineups >=50 poss and <=2 starters"
+      detail: "Predicted rotation vs actual bench-player impact from game logs"
+    },
+    {
+      label: "Starter Exact-5",
+      value: (s.observed_starter_exact5_count != null && s.n_teams != null)
+        ? `${s.observed_starter_exact5_count}/${s.n_teams}`
+        : "-",
+      cls: (s.observed_starter_exact5_rate != null && Number(s.observed_starter_exact5_rate) >= 0.999)
+        ? "val-green"
+        : "val-orange",
+      detail: "Observed starter-set size integrity"
+    },
+    {
+      label: "Starter Set Size",
+      value: s.observed_starter_size_mean != null ? Number(s.observed_starter_size_mean).toFixed(2) : "-",
+      cls: "val-accent",
+      detail: "Mean observed starter pool size"
     },
   ];
 
@@ -2336,17 +2447,47 @@ function openForecastLineupModal(season, teamAbbr) {
   const team = findForecastLineupTeam(season, teamAbbr);
   if (!team) return;
 
+  const v = team.validation || {};
+  const actualStarterNames = resolveForecastObservedNames(
+    season,
+    v.actual_starter_ids || [],
+    v.actual_starter_names || []
+  );
+  const actualClutchNames = resolveForecastObservedNames(
+    season,
+    v.actual_clutch_ids || [],
+    v.actual_clutch_names || []
+  );
+  const starterSource = cleanText(v.starter_target_source) || "n/a";
+  const starterGamesTotal = v.starter_games_total != null ? v.starter_games_total : "-";
+  const starterGamesVerified = v.starter_games_verified != null ? v.starter_games_verified : "-";
+
   document.getElementById("lineupModalTitle").textContent = `${team.team_abbreviation} (${season}) — Forecast`;
 
   const html = `
     <div class="lineup-modal-grid">
       <div class="lineup-panel">
-        <h4>Phase Metrics (Forecast)</h4>
+        <h4>Phase Metrics</h4>
         <div class="kv">
           <div class="k">Starter Mu / Sigma</div><div class="v">${fmt(team.mu_start,2)} / ${fmt(team.sigma_start,2)}</div>
           <div class="k">Rotation Mu / Sigma</div><div class="v">${fmt(team.mu_rotation,2)} / ${fmt(team.sigma_rotation,2)}</div>
           <div class="k">Clutch Mu / Sigma</div><div class="v">${fmt(team.mu_clutch,2)} / ${fmt(team.sigma_clutch,2)}</div>
+          <div class="k">Team Clutch Minutes</div><div class="v">${fmt(team.team_clutch_minutes_total,1)}</div>
           <div class="k">Pool Size</div><div class="v">${team.n_players_pool || "-"}</div>
+        </div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Validation</h4>
+        <div class="kv">
+          <div class="k">Starter Overlap</div><div class="v">${v.starter_overlap != null ? v.starter_overlap + "/5" : "-"}</div>
+          <div class="k">Clutch Overlap</div><div class="v">${v.clutch_overlap != null ? v.clutch_overlap + "/5" : "-"}</div>
+          <div class="k">Rotation Predicted</div><div class="v">${fmt(v.rotation_predicted,2)}</div>
+          <div class="k">Rotation Actual (bench-player impact)</div><div class="v">${fmt(v.rotation_actual_net,2)}</div>
+          <div class="k">Observed Starter Players</div><div class="v">${actualStarterNames.length || 0}</div>
+          <div class="k">Observed Clutch Players</div><div class="v">${actualClutchNames.length || 0}</div>
+          <div class="k">Starter Target Source</div><div class="v">${starterSource}</div>
+          <div class="k">Starter Games (verified/total)</div><div class="v">${starterGamesVerified}/${starterGamesTotal}</div>
         </div>
       </div>
 
@@ -2367,6 +2508,16 @@ function openForecastLineupModal(season, teamAbbr) {
       <div class="lineup-panel">
         <h4>Predicted Clutch Lineup</h4>
         ${renderPlayerList(team.clutch_players || [])}
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Observed Starter Players (Proxy)</h4>
+        <div style="font-size:12px;color:var(--text-muted)">${actualStarterNames.length ? actualStarterNames.join(", ") : "No observed starter proxy"}</div>
+      </div>
+
+      <div class="lineup-panel">
+        <h4>Observed Clutch Players</h4>
+        <div style="font-size:12px;color:var(--text-muted)">${actualClutchNames.length ? actualClutchNames.join(", ") : "No observed clutch lineup"}</div>
       </div>
     </div>
   `;

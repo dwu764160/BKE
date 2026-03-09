@@ -194,6 +194,30 @@ def _lineup_from_value(value) -> List[str]:
     return ids
 
 
+def _replacement_pool_mask(df: pd.DataFrame) -> pd.Series:
+    """Identify synthetic replacement rows across forecast schema versions."""
+    if df.empty:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    if "player_id" in df.columns:
+        pid = _norm_id(df["player_id"])
+    else:
+        pid = pd.Series("", index=df.index, dtype=str)
+    id_mask = pid.astype(str).str.lower().str.startswith("repl_")
+
+    if "player_name" in df.columns:
+        names = df["player_name"].astype(str)
+    else:
+        names = pd.Series("", index=df.index, dtype=str)
+    name_mask = names.str.contains("replacement pool", case=False, na=False)
+
+    flag_mask = pd.Series(False, index=df.index, dtype=bool)
+    if "is_replacement_pool" in df.columns:
+        flag_mask = pd.to_numeric(df["is_replacement_pool"], errors="coerce").fillna(0).astype(int) == 1
+
+    return id_mask | name_mask | flag_mask
+
+
 def _is_valid_five_lineup(value) -> bool:
     return len(_lineup_from_value(value)) == LINEUP_SIZE
 
@@ -526,8 +550,13 @@ def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     return full_to_abbr, abbr_to_conf, team_id_to_abbr
 
 
-def load_player_pool(cfg: Step2Config) -> pd.DataFrame:
-    df = pd.read_parquet(PLAYER_PROFILES_PATH)
+def load_player_pool(cfg: Step2Config, source_path: Optional[Path] = None) -> pd.DataFrame:
+    src = source_path or PLAYER_PROFILES_PATH
+    df = pd.read_parquet(src)
+    repl_mask = _replacement_pool_mask(df)
+    if int(repl_mask.sum()) > 0:
+        df = df.loc[~repl_mask].copy()
+
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
     df["team_abbreviation"] = df["team_abbreviation"].astype(str).str.upper()
@@ -1013,26 +1042,61 @@ def build_actual_maps(
             if ids:
                 actual_clutch[(str(season), str(team))] = ids
 
-    # Rotation proxy: bench-heavy (<=2 starters) lineup NET_RTG weighted by possessions.
-    # Target definition: lineups with >=50 possessions and <=2 observed starters.
-    predicted_map = {(r["season"], r["team_abbreviation"]): r for r in predicted_rows}
-    for (season, team), g in lineups.groupby(["season", "team_abbreviation"], sort=False):
-        key = (str(season), str(team))
-        starters = actual_starters.get(key)
-        if starters is None:
-            pred = predicted_map.get(key, {})
-            starters = set(pred.get("starter_player_ids", []))
-        if not starters:
-            continue
+    # Rotation proxy: weighted average impact_total_impact of bench (non-starter)
+    # players from actual profiles.  This measures how good the teams' rotational
+    # minutes actually were, on the same BKE scale as the predicted mu_rotation.
+    # Using player-level profiles (deduced from game logs) rather than lineup-level
+    # NET_RTG avoids noise from specific 5-man combination sample sizes.
+    try:
+        actual_profiles = pd.read_parquet(
+            PLAYER_PROFILES_PATH,
+            columns=["player_id", "season", "team_abbreviation",
+                      "minutes", "impact_total_impact"],
+        )
+        actual_profiles["player_id"] = actual_profiles["player_id"].astype(str).str.strip()
+        actual_profiles["impact_total_impact"] = pd.to_numeric(
+            actual_profiles["impact_total_impact"], errors="coerce"
+        ).fillna(0.0)
+        actual_profiles["minutes"] = pd.to_numeric(
+            actual_profiles.get("minutes"), errors="coerce"
+        ).fillna(0.0)
 
-        tmp = g.copy()
-        tmp["overlap"] = tmp["lineup_ids"].apply(lambda ids: len(set(_to_id_list(ids)) & starters))
-        candidates = tmp[(tmp["overlap"] <= 2) & (tmp["total_poss"] >= 50)]
-        if candidates.empty:
-            continue
-
-        rating = _weighted_avg(candidates["NET_RTG"].to_numpy(dtype=float), candidates["total_poss"].to_numpy(dtype=float))
-        actual_rotation_net[key] = rating
+        for (season, team), g in actual_profiles.groupby(
+            ["season", "team_abbreviation"], sort=False
+        ):
+            key = (str(season), str(team))
+            starters = actual_starters.get(key)
+            if not starters:
+                continue
+            bench = g[~g["player_id"].isin(starters)].copy()
+            if bench.empty:
+                continue
+            mins = bench["minutes"].to_numpy(dtype=float)
+            if mins.sum() <= 0:
+                continue
+            rating = _weighted_avg(
+                bench["impact_total_impact"].to_numpy(dtype=float),
+                np.maximum(mins, 1e-3),
+            )
+            actual_rotation_net[key] = rating
+    except Exception:
+        # Fallback to lineup-based rotation if profiles unavailable
+        predicted_map = {(r["season"], r["team_abbreviation"]): r for r in predicted_rows}
+        for (season, team), g in lineups.groupby(["season", "team_abbreviation"], sort=False):
+            key = (str(season), str(team))
+            starters = actual_starters.get(key)
+            if starters is None:
+                pred = predicted_map.get(key, {})
+                starters = set(pred.get("starter_player_ids", []))
+            if not starters:
+                continue
+            tmp = g.copy()
+            tmp["overlap"] = tmp["lineup_ids"].apply(lambda ids: len(set(_to_id_list(ids)) & starters))
+            candidates = tmp[(tmp["overlap"] <= 2) & (tmp["total_poss"] >= 50)]
+            if candidates.empty:
+                continue
+            rating = _weighted_avg(candidates["NET_RTG"].to_numpy(dtype=float), candidates["total_poss"].to_numpy(dtype=float))
+            actual_rotation_net[key] = rating
 
     return actual_starters, actual_clutch, actual_rotation_net, starter_meta
 
@@ -1199,15 +1263,7 @@ def main(
         src = profiles_path or PROJECTED_PROFILES_PATH
         if not src.exists():
             raise FileNotFoundError(f"Projected profiles not found: {src}")
-        # Temporarily override the profile path for load_player_pool
-        import src.simulation.simulation_config as _scfg
-        _orig_path = _scfg.PLAYER_PROFILES_PATH
-        _scfg.PLAYER_PROFILES_PATH = src
-        # Reimport the constant used in load_player_pool
-        global PLAYER_PROFILES_PATH
-        PLAYER_PROFILES_PATH = src
-        players = load_player_pool(cfg)
-        _scfg.PLAYER_PROFILES_PATH = _orig_path
+        players = load_player_pool(cfg, source_path=src)
     else:
         players = load_player_pool(cfg)
 
@@ -1334,7 +1390,7 @@ def main(
         "config": asdict(cfg),
         "validation_targets": {
             "starter": "First-quarter starters from PBP (players on court at first valid Q1 event), verified with Q1 substitution cluster transitions.",
-            "rotation": "Lineups with >=50 possessions and <=2 observed starters; weighted average NET_RTG by total_poss.",
+            "rotation": "Minute-weighted impact_total_impact of non-starter players from profile data (lineup NET_RTG fallback only if profile source is unavailable).",
             "clutch": "Top-5 clutch-minute players per team-season.",
         },
         "seasons": seasons_blob,

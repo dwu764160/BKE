@@ -99,12 +99,19 @@ def extract_from_next_data(page):
             return None
 
         # NBA stats style
-        if isinstance(pbp, dict) and "resultSets" in pbp:
-            rs = pbp["resultSets"][0]
-            return pd.DataFrame(rs["rowSet"], columns=rs["headers"])
+        if isinstance(pbp, dict):
+            if isinstance(pbp.get("resultSets"), list) and pbp["resultSets"]:
+                rs = pbp["resultSets"][0]
+                if isinstance(rs, dict):
+                    return pd.DataFrame(rs.get("rowSet", []), columns=rs.get("headers", []))
+            if isinstance(pbp.get("resultSet"), dict):
+                rs = pbp["resultSet"]
+                return pd.DataFrame(rs.get("rowSet", []), columns=rs.get("headers", []))
+            if "rowSet" in pbp and "headers" in pbp:
+                return pd.DataFrame(pbp.get("rowSet", []), columns=pbp.get("headers", []))
 
         # List of dicts
-        if isinstance(pbp, list) and isinstance(pbp[0], dict):
+        if isinstance(pbp, list) and pbp and isinstance(pbp[0], dict):
             return pd.DataFrame(pbp)
 
     except Exception as e:

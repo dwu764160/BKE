@@ -81,6 +81,30 @@ def _season_start_year(season: str) -> int:
     return int(str(season)[:4])
 
 
+def _replacement_pool_mask(df: pd.DataFrame) -> pd.Series:
+    """Identify synthetic replacement-pool rows across forecast schema versions."""
+    if df.empty:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    if "player_id" in df.columns:
+        pid = df["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    else:
+        pid = pd.Series("", index=df.index, dtype=str)
+    id_mask = pid.str.lower().str.startswith("repl_")
+
+    if "player_name" in df.columns:
+        names = df["player_name"].astype(str)
+    else:
+        names = pd.Series("", index=df.index, dtype=str)
+    name_mask = names.str.contains("replacement pool", case=False, na=False)
+
+    flag_mask = pd.Series(False, index=df.index, dtype=bool)
+    if "is_replacement_pool" in df.columns:
+        flag_mask = pd.to_numeric(df["is_replacement_pool"], errors="coerce").fillna(0).astype(int) == 1
+
+    return id_mask | name_mask | flag_mask
+
+
 def _previous_season(season: str) -> str:
     start_year = _season_start_year(season) - 1
     end_suffix = str(_season_start_year(season))[-2:]
@@ -228,6 +252,10 @@ def _load_team_ppp_components(
     df = pd.read_parquet(profile_path)
     if df.empty:
         return {}
+
+    repl_mask = _replacement_pool_mask(df)
+    if int(repl_mask.sum()) > 0:
+        df = df.loc[~repl_mask].copy()
 
     df["season"] = df["season"].astype(str)
     df["team_abbreviation"] = df["team_abbreviation"].astype(str).str.upper()
@@ -377,6 +405,7 @@ def aggregate_results(
     model_key: str = SIM_MODEL_MARGIN,
     ppp_components: Dict[str, Dict[str, float]] = None,
     pace_map: Dict[str, float] = None,
+    impact_to_net_scale: float = 12.0,
 ) -> List[Dict]:
     """Aggregate simulation results into per-team summaries."""
     ppp_components = ppp_components or {}
@@ -441,7 +470,11 @@ def aggregate_results(
 
         ppp_off = float(ppp_components.get(team, {}).get("offense", np.nan))
         ppp_def = float(ppp_components.get(team, {}).get("defense", np.nan))
-        ppp_net = (ppp_off - ppp_def) if np.isfinite(ppp_off) and np.isfinite(ppp_def) else np.nan
+        ppp_net = (
+            PPP_OFF_DEF_BLEND_WEIGHT * impact_to_net_scale * (ppp_off + ppp_def)
+            if np.isfinite(ppp_off) and np.isfinite(ppp_def)
+            else np.nan
+        )
         pace_pred = float(pace_map.get(team, np.nan))
 
         mu_display = float(params.mu)
@@ -660,6 +693,7 @@ def main(
                 model_key=model_key,
                 ppp_components=season_ppp,
                 pace_map=season_pace,
+                impact_to_net_scale=impact_to_net_scale,
             )
             season_stats = _attach_actuals_and_stats(summaries, season_actual)
 

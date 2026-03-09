@@ -60,6 +60,25 @@ def smart_sleep():
     time.sleep(random.uniform(1.5, 3.0))
 
 
+def _extract_result_payload(json_data):
+    """Return result payload across known NBA stats response shapes."""
+    if not isinstance(json_data, dict):
+        return None
+
+    result_sets = json_data.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        payload = result_sets[0]
+        return payload if isinstance(payload, dict) else None
+    if isinstance(result_sets, dict):
+        return result_sets
+
+    result_set = json_data.get("resultSet")
+    if isinstance(result_set, dict):
+        return result_set
+
+    return None
+
+
 def fetch_shot_locations(season: str) -> pd.DataFrame:
     """
     Fetch LeagueDashPlayerShotLocations for a given season.
@@ -83,7 +102,7 @@ def fetch_shot_locations(season: str) -> pd.DataFrame:
         try:
             with open(cache_path, "r") as f:
                 json_data = json.load(f)
-                if 'resultSets' not in json_data:
+                if _extract_result_payload(json_data) is None:
                     json_data = None
         except Exception:
             json_data = None
@@ -169,18 +188,9 @@ def fetch_shot_locations(season: str) -> pd.DataFrame:
     # rowSet: [[...], ...]
     #
     # Actual columns: 6 base cols + 8 zones * 3 stats = 30 total
-    result_sets = json_data.get('resultSets', {})
-
-    # Handle both dict and list formats
-    if isinstance(result_sets, list):
-        if not result_sets:
-            print("   ⚠️ No resultSets in response")
-            return pd.DataFrame()
-        rs = result_sets[0]
-    elif isinstance(result_sets, dict):
-        rs = result_sets
-    else:
-        print("   ⚠️ Unexpected resultSets format")
+    rs = _extract_result_payload(json_data)
+    if rs is None:
+        print("   ⚠️ Unexpected result payload format")
         return pd.DataFrame()
 
     row_set = rs.get('rowSet', [])
