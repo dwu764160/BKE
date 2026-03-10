@@ -1,5 +1,5 @@
 ---
-name: "Player Eval Audit Skill"
+name: audit-eval
 description: |
   Audit suite for player evaluation (`src/player_eval/`) and minute-model
   pipeline components. Validates player impact profiles, minute-model fits,

@@ -1,5 +1,5 @@
 ---
-name: "Frontend Sync Skill"
+name: frontend-sync
 description: |
   This skill specializes in keeping frontend viewers and apps aligned to backend schema changes. It is designed to:
   - Detect and propagate backend schema changes to all frontend viewers (HTML, JS, Python viewers).

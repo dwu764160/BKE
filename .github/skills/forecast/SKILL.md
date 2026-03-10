@@ -1,5 +1,5 @@
 ---
-name: "Forecast Skill"
+name: forecast
 description: |
   This skill specializes in projection, scenario mapping, and minute model interactions for the analytics pipeline. It is designed to:
   - Run and audit projection scripts (e.g., lineup_projection.py, run_forecast.py).

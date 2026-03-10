@@ -1,5 +1,5 @@
 ---
-name: "Model Audit Skill"
+name: audit-model
 description: |
   Audit suite for modeling and impact estimation (`src/modeling/`). Runs
   model diagnostics, backtests, and checks for reproducibility and input

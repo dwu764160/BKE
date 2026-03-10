@@ -1491,6 +1491,28 @@ def project_season(
             target_season=target_season,
             preseason_rosters_path=preseason_rosters_path,
         )
+        # Build a name->team fallback map from the preseason snapshot when available.
+        name_map = {}
+        try:
+            roster_src = _resolve_preseason_roster_path(target_season, preseason_rosters_path)
+            if roster_src and roster_src.exists():
+                rdf = pd.read_parquet(roster_src)
+                if "player_name" in rdf.columns and ("team_abbreviation" in rdf.columns or "team" in rdf.columns):
+                    team_col = "team_abbreviation" if "team_abbreviation" in rdf.columns else "team"
+                    rdf = rdf.copy()
+                    rdf["player_name_clean"] = rdf["player_name"].astype(str).str.strip().str.lower()
+                    rdf[team_col] = rdf[team_col].astype(str).str.upper().str.strip()
+                    # Only keep unique name -> single team mappings to reduce false positive matches.
+                    counts = rdf.groupby("player_name_clean")[team_col].nunique()
+                    uniques = set(counts[counts == 1].index.tolist())
+                    if uniques:
+                        subset = rdf[rdf["player_name_clean"].isin(uniques)]
+                        name_map = (
+                            subset.drop_duplicates(subset=["player_name_clean"]).set_index("player_name_clean")
+                            [team_col].to_dict()
+                        )
+        except Exception:
+            name_map = {}
         if preseason_team_map:
             print(f"    Preseason snapshot rows mapped: {len(preseason_team_map)} players")
             mapping_source = "preseason_rosters"
@@ -1525,6 +1547,25 @@ def project_season(
             roster_override_map=roster_override_map,
         )
         print(f"    Players carried forward: {len(projected)}")
+
+    # Apply name-based team fallback for forecast/preseason scenario when player_id mapping
+    # left some players unmapped. This helps when IDs differ between sources but names
+    # match uniquely in the preseason snapshot.
+    if team_mapping_mode == "preseason_snapshot" and name_map:
+        try:
+            projected["player_name_clean"] = projected["player_name"].astype(str).str.strip().str.lower()
+            missing_mask = projected["team_abbreviation"].isna() | projected["team_abbreviation"].astype(str).str.strip().isin({"", "NAN", "NONE", "FA"})
+            if missing_mask.any():
+                before_missing = int(missing_mask.sum())
+                projected.loc[missing_mask, "team_abbreviation"] = (
+                    projected.loc[missing_mask, "player_name_clean"].map(name_map).fillna(projected.loc[missing_mask, "team_abbreviation"])  # type: ignore[arg-type]
+                )
+                after_missing = int(projected["team_abbreviation"].isna().sum())
+                mapped = before_missing - after_missing
+                if mapped > 0:
+                    print(f"    Name-based team mapping fallback matched {mapped} players from preseason snapshot")
+        except Exception:
+            pass
 
     if team_mapping_mode == "preseason_snapshot" and mapping_source != "none":
         projected["team_mapping_source"] = mapping_source

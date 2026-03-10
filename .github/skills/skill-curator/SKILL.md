@@ -1,5 +1,5 @@
 ---
-name: "Skill Curator"
+name: skill-curator
 description: |
   Curates the repository's skills: detects duplicates/overlap, runs
   validations, proposes merges, and maintains frontmatter and example

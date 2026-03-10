@@ -1,5 +1,5 @@
 ---
-name: "Basketball Knowledge Skill"
+name: basketball-knowledge
 description: |
   Canonical basketball domain knowledge for the BKE pipeline: role-vs-impact
   separation, position-band policy, archetype gating principles, validation

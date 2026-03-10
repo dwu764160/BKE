@@ -1,5 +1,5 @@
 ---
-name: "Docs Sync Skill"
+name: docs-sync
 description: |
   Keeps repository documentation and in-file headers in sync with code changes.
   Verifies `readme.md`, `loop/` notes, and viewer/docs references after edits and

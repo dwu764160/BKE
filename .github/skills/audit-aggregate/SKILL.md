@@ -1,5 +1,5 @@
 ---
-name: "Aggregate Audit Skill"
+name: audit-aggregate
 description: |
   Audit suite for profile aggregation (`src/profile_aggregate/`). Ensures all
   player-related stats are normalized and merged into the `player_profile_aggregate`.

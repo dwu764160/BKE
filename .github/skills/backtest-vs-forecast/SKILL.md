@@ -1,5 +1,5 @@
 ---
-name: "Backtest vs. Forecast Skill"
+name: backtest-vs-forecast
 description: |
   Ensures that every simulation or prediction phase has both a backtest and a
   forecast component where appropriate. Validates presence of backtest reports

@@ -1,5 +1,5 @@
 ---
-name: "Self-Improvement Skill"
+name: self-improvement
 description: |
   Runs at the end of an interactive session to evaluate which skills were used,
   collect simple evaluation signals (user feedback, test / lint results, runtime
@@ -68,3 +68,28 @@ Safety & governance
 
 Example invocation
  - "Run self-improvement and update skills used in the last session."
+
+## End-of-Response Skill Logging
+
+When this skill (or any "main" skill) is read by an agent during an interactive
+response, the agent should, at the end of its response, record which skill files
+were consulted for that reply. Preferred (reproducible) method:
+
+- For each skill file consulted, run the repository logging helper:
+
+```bash
+python3 scripts/log_read_file.py .github/skills/<skill-name>/SKILL.md --agent YOUR_AGENT_ID --no-print
+```
+
+This appends a consistent JSON-line entry to `loop/skill_usage.log` containing
+`timestamp`, `agent`, `path`, `size`, and `sha256`. The helper does not write
+file contents to the log.
+
+If the agent cannot execute shell commands, the agent should still include a
+brief machine-readable summary at the end of its response (JSON or YAML) that
+lists the skill paths consulted and the agent identifier so a human or an
+automated runner can replay the `log_read_file.py` calls later.
+
+Note: run this logging step only once at the end of the response (not per
+intermediate step) to avoid duplicate entries when the agent reads a skill
+multiple times while composing its answer.

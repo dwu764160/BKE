@@ -1,5 +1,5 @@
 ---
-name: "Data Audit Skill"
+name: data-audit
 description: |
   Repository-wide data audit: normalizes column names across processed artifacts,
   runs data validation tests, and ensures downstream consumers see consistent

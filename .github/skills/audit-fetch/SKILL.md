@@ -1,5 +1,5 @@
 ---
-name: "Fetch Audit Skill"
+name: audit-fetch
 description: |
   Audit suite for the fetch/ingest stage. Validates fetch scripts, cached
   headers/sessions, payload-shape robustness, and presence of required raw

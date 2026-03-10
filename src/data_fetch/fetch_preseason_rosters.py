@@ -32,6 +32,12 @@ from typing import Dict, List
 import pandas as pd
 from nba_api.stats.endpoints import commonteamroster
 
+import random
+try:
+    from curl_cffi import requests
+except Exception:
+    import requests
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.player_eval.constants import (  # noqa: E402
@@ -72,14 +78,30 @@ def _load_teams() -> pd.DataFrame:
 
 
 def _fetch_team_roster(team_id: str, season: str, retries: int = 3, timeout: int = 60) -> pd.DataFrame:
+    """Try nba_api CommonTeamRoster with retries; fall back to direct HTTP fetch if that fails.
+
+    The HTTP fallback uses `stats.nba.com` with browser-like headers and a simple
+    per-team JSON cache to improve resilience against transient network failures.
+    """
+    # Prefer HTTP fallback (browser headers + caching) — faster and more resilient
+    try:
+        df = _fetch_team_roster_http(team_id=team_id, season=season, timeout=timeout, retries=retries)
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        pass
+
+    # If HTTP fails, fall back to nba_api CommonTeamRoster with exponential backoff
     last_err = None
     for attempt in range(1, retries + 1):
         try:
+            # increase timeout slightly on each attempt
+            attempt_timeout = timeout + (attempt - 1) * 10
             endpoint = commonteamroster.CommonTeamRoster(
                 team_id=int(team_id),
                 season=season,
                 league_id_nullable="00",
-                timeout=timeout,
+                timeout=attempt_timeout,
             )
             frames = endpoint.get_data_frames()
             if not frames:
@@ -90,9 +112,97 @@ def _fetch_team_roster(team_id: str, season: str, retries: int = 3, timeout: int
             return roster
         except Exception as exc:
             last_err = exc
-            time.sleep(1.5 * attempt)
-    print(f"  [WARN] CommonTeamRoster failed for team_id={team_id}, season={season}: {last_err}")
+            wait = (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(wait)
+
+    print(f"  [WARN] Team roster fetch failed for team_id={team_id}, season={season}: {last_err}")
     return pd.DataFrame()
+
+
+def _parse_result_payload(json_data: dict) -> pd.DataFrame:
+    """Parse a stats.nba.com JSON payload into a DataFrame (robust to shapes)."""
+    if not isinstance(json_data, dict):
+        return pd.DataFrame()
+
+    # Prefer resultSets list
+    result_sets = json_data.get("resultSets")
+    if isinstance(result_sets, list) and result_sets:
+        for table in result_sets:
+            headers = table.get("headers") or []
+            rows = table.get("rowSet") or []
+            if headers and rows:
+                try:
+                    return pd.DataFrame(rows, columns=headers)
+                except Exception:
+                    return pd.DataFrame(rows)
+
+    # Fallback to resultSet dict
+    result_set = json_data.get("resultSet")
+    if isinstance(result_set, dict):
+        headers = result_set.get("headers") or []
+        rows = result_set.get("rowSet") or []
+        if headers and rows:
+            try:
+                return pd.DataFrame(rows, columns=headers)
+            except Exception:
+                return pd.DataFrame(rows)
+
+    return pd.DataFrame()
+
+
+def _fetch_team_roster_http(team_id: str, season: str, timeout: int = 30, retries: int = 3) -> pd.DataFrame:
+    """Fetch roster via direct stats.nba.com call with headers, caching, and retries."""
+    cache_dir = PRESEASON_ROSTERS_DIR / "_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"roster_{season}_{team_id}.json"
+
+    # Use cached response when available
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as fh:
+                js = json.load(fh)
+                return _parse_result_payload(js)
+        except Exception:
+            pass
+
+    url = "https://stats.nba.com/stats/commonteamroster"
+    params = {"TeamID": str(team_id), "Season": season, "LeagueID": "00"}
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Connection": "keep-alive",
+        "Origin": "https://www.nba.com",
+        "Referer": "https://www.nba.com",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "x-nba-stats-origin": "stats",
+        "x-nba-stats-token": "true",
+    }
+
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, params=params, headers=headers, impersonate="chrome110", timeout=timeout)
+            if getattr(resp, "status_code", None) and resp.status_code != 200:
+                last_err = Exception(f"Status {resp.status_code}")
+                wait = (2 ** attempt) + random.uniform(0, 1)
+                time.sleep(wait)
+                continue
+
+            js = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
+            # cache and return
+            try:
+                with open(cache_file, "w", encoding="utf-8") as fh:
+                    json.dump(js, fh)
+            except Exception:
+                pass
+
+            return _parse_result_payload(js)
+        except Exception as exc:
+            last_err = exc
+            wait = (2 ** attempt) + random.uniform(0, 1)
+            time.sleep(wait)
+
+    raise last_err if last_err is not None else Exception("Unknown HTTP error fetching roster")
 
 
 def _normalize_roster_df(roster_df: pd.DataFrame, season: str, team_id: str, team_abbreviation: str, team_name: str) -> pd.DataFrame:
@@ -115,16 +225,15 @@ def _normalize_roster_df(roster_df: pd.DataFrame, season: str, team_id: str, tea
             ]
         )
 
+    # Ensure integer 0..N-1 index for proper broadcasting of scalar columns
+    roster_df = roster_df.reset_index(drop=True)
     cols = {c.lower(): c for c in roster_df.columns}
     player_id_col = cols.get("player_id") or "PLAYER_ID"
     player_name_col = cols.get("player") or cols.get("player_name") or "PLAYER"
 
+    # Build output dataframe from roster rows first, then assign scalar/team columns
     out = pd.DataFrame()
-    out["season"] = season
-    out["team_id"] = str(team_id)
-    out["team_abbreviation"] = str(team_abbreviation).upper()
-    out["team_name"] = str(team_name)
-    out["player_id"] = _norm_id(roster_df[player_id_col])
+    out["player_id"] = _norm_id(roster_df[player_id_col]).astype(str)
     out["player_name"] = roster_df[player_name_col].astype(str)
     out["position"] = roster_df.get(cols.get("position"), "").astype(str)
     out["exp"] = roster_df.get(cols.get("exp"), "")
@@ -133,8 +242,17 @@ def _normalize_roster_df(roster_df: pd.DataFrame, season: str, team_id: str, tea
     out["weight"] = roster_df.get(cols.get("weight"), "")
     out["age"] = pd.to_numeric(roster_df.get(cols.get("age")), errors="coerce")
     out["school"] = roster_df.get(cols.get("school"), "").astype(str)
+
+    # Now set scalar/team columns (broadcast to rows)
+    out["season"] = str(season)
+    out["team_id"] = str(team_id)
+    out["team_abbreviation"] = str(team_abbreviation).upper() if team_abbreviation is not None else None
+    out["team_name"] = str(team_name) if team_name is not None else None
+
     out = out[out["player_id"].str.len() > 0].copy()
-    return out
+    # Reorder columns to canonical layout
+    cols_order = ["season", "team_id", "team_abbreviation", "team_name", "player_id", "player_name", "position", "exp", "num", "height", "weight", "age", "school"]
+    return out[[c for c in cols_order if c in out.columns]]
 
 
 def _load_existing_combined() -> pd.DataFrame:

@@ -604,6 +604,24 @@ def load_player_pool(cfg: Step2Config, source_path: Optional[Path] = None) -> pd
 
     out = out[(out["team_abbreviation"].notna()) & (out["team_abbreviation"] != "NAN")]
     out = out[out["minutes"] > 0]
+    # Forecast-mode heuristic: projected profiles may carry historic
+    # archetype labels like 'Insufficient Minutes' from prior seasons.
+    # If a player has a forecasted minute projection that places them
+    # in the Step-2 pool, treat the historic 'Insufficient Minutes'
+    # label as unknown so the lineup model can consider them normally.
+    try:
+        if getattr(cfg, "forecast_mode", False):
+            ins_mask = out["off_archetype"].fillna("").astype(str).str.strip() == "Insufficient Minutes"
+            override_mask = ins_mask & (out["minutes"] >= float(cfg.min_mpg_for_pool))
+            if override_mask.any():
+                out.loc[override_mask, "off_archetype"] = None
+            dins_mask = out["def_archetype"].fillna("").astype(str).str.strip() == "Insufficient Minutes"
+            doverride_mask = dins_mask & (out["minutes"] >= float(cfg.min_mpg_for_pool))
+            if doverride_mask.any():
+                out.loc[doverride_mask, "def_archetype"] = None
+    except Exception:
+        # Be conservative: don't fail load on unexpected schema
+        pass
     out = out.sort_values("minutes", ascending=False).drop_duplicates(
         subset=["season", "team_abbreviation", "player_id"], keep="first"
     )
@@ -1057,9 +1075,28 @@ def build_actual_maps(
         actual_profiles["impact_total_impact"] = pd.to_numeric(
             actual_profiles["impact_total_impact"], errors="coerce"
         ).fillna(0.0)
+        # Normalize actual minutes into MPG for consistent weighting with
+        # forecasted profiles (which use MPG). If the parquet contains a
+        # season-total minutes column, convert to MPG using available games
+        # information or a safe heuristic divisor.
         actual_profiles["minutes"] = pd.to_numeric(
             actual_profiles.get("minutes"), errors="coerce"
         ).fillna(0.0)
+        if "mpg" in actual_profiles.columns:
+            actual_profiles["mpg"] = pd.to_numeric(actual_profiles.get("mpg"), errors="coerce").fillna(0.0)
+        else:
+            # Prefer an explicit games column if present; otherwise infer.
+            if "games" in actual_profiles.columns:
+                games = pd.to_numeric(actual_profiles.get("games"), errors="coerce").fillna(82.0)
+                # avoid division by zero
+                games = games.replace(0.0, 82.0)
+                actual_profiles["mpg"] = actual_profiles["minutes"] / games
+            else:
+                # Heuristic: values > 200 look like season-total minutes; convert
+                # to per-game by dividing by 82. Otherwise assume value already MPG.
+                actual_profiles["mpg"] = actual_profiles["minutes"].where(
+                    actual_profiles["minutes"] <= 200, actual_profiles["minutes"] / 82.0
+                )
 
         for (season, team), g in actual_profiles.groupby(
             ["season", "team_abbreviation"], sort=False
@@ -1071,7 +1108,8 @@ def build_actual_maps(
             bench = g[~g["player_id"].isin(starters)].copy()
             if bench.empty:
                 continue
-            mins = bench["minutes"].to_numpy(dtype=float)
+            # Use MPG for weighting so predicted and actual are unit-consistent.
+            mins = bench.get("mpg", bench["minutes"]).to_numpy(dtype=float)
             if mins.sum() <= 0:
                 continue
             rating = _weighted_avg(

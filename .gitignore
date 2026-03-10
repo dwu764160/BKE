@@ -31,3 +31,6 @@ reports/
 
 #.vscode settings
 .vscode/
+
+#aggregate
+aggregate/

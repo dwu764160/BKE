@@ -1,5 +1,5 @@
 ---
-name: "Compute Audit Skill"
+name: audit-compute
 description: |
   Audit suite for the compute stage and pipeline formula integrity. Detects
   silent logic bugs in normalization, aggregation, denominator usage, and

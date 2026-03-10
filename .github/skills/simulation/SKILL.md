@@ -1,5 +1,5 @@
 ---
-name: "Simulation Skill"
+name: simulation
 description: |
   Operations and audit skill for the simulation pipeline. Combines schedule
   generation, game-model execution, and validation/report integrity checks.
