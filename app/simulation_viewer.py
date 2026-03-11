@@ -431,6 +431,21 @@ svg text { fill:var(--text); font-family:inherit; }
 .sg-contrib-item .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sg-contrib-item .val { font-variant-numeric:tabular-nums; }
 
+/* Chart Tooltip (hover popup for scatter plot) */
+.chart-tooltip {
+  position:fixed; pointer-events:none; z-index:9999;
+  background:var(--surface); border:1px solid var(--accent); border-radius:8px;
+  padding:8px 12px; font-size:12px; color:var(--text);
+  box-shadow:0 4px 16px rgba(0,0,0,0.5);
+  max-width:280px; display:none;
+  line-height:1.5;
+}
+.chart-tooltip .tt-name { font-weight:700; color:var(--accent); font-size:13px; margin-bottom:2px; }
+.chart-tooltip .tt-team { color:var(--text-muted); font-size:11px; }
+.chart-tooltip .tt-row { display:flex; justify-content:space-between; gap:12px; }
+.chart-tooltip .tt-label { color:var(--text-muted); }
+.chart-tooltip .tt-val { font-weight:600; font-variant-numeric:tabular-nums; }
+
 /* Table */
 .table-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .table-scroll { max-height:72vh; overflow-y:auto; }
@@ -556,6 +571,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
 </style>
 </head>
 <body>
+<div class="chart-tooltip" id="chartTooltip"></div>
 <div class="container">
   <h1>BKE Simulation Core</h1>
   <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Player Stat Sim + Single Game + Forecast</div>
@@ -2751,11 +2767,37 @@ function renderPssCharts(payload) {
     const y = pad + plotH - (p.sim_pts / maxPts) * plotH;
     const delta = Math.abs(p.sim_pts - p.actual_pts);
     const color = delta <= 2 ? "var(--green)" : delta <= 5 ? "var(--orange)" : "var(--red)";
-    svg += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" opacity="0.7"><title>${p.player_name}: sim=${p.sim_pts?.toFixed(1)} actual=${p.actual_pts?.toFixed(1)}</title></circle>`;
+    const safeName = (p.player_name || "").replace(/"/g, '&quot;');
+    const safeTeam = (p.team || "").replace(/"/g, '&quot;');
+    const safeSeason = (p.season || "").replace(/"/g, '&quot;');
+    svg += `<circle cx="${x}" cy="${y}" r="4.5" fill="${color}" opacity="0.75" style="cursor:pointer" data-name="${safeName}" data-team="${safeTeam}" data-season="${safeSeason}" data-sim="${(p.sim_pts || 0).toFixed(1)}" data-actual="${(p.actual_pts || 0).toFixed(1)}" data-delta="${delta.toFixed(1)}"/>`;
   });
 
   svg += "</svg>";
   chartEl.innerHTML = svg;
+
+  // Attach hover tooltip to scatter circles
+  const tooltip = document.getElementById("chartTooltip");
+  chartEl.querySelectorAll("circle[data-name]").forEach(circle => {
+    circle.addEventListener("mouseenter", (e) => {
+      const d = circle.dataset;
+      tooltip.innerHTML = `<div class="tt-name">${d.name}</div>`
+        + `<div class="tt-team">${d.team} | ${d.season}</div>`
+        + `<div class="tt-row"><span class="tt-label">Simulated PPG</span><span class="tt-val">${d.sim}</span></div>`
+        + `<div class="tt-row"><span class="tt-label">Actual PPG</span><span class="tt-val">${d.actual}</span></div>`
+        + `<div class="tt-row"><span class="tt-label">Delta</span><span class="tt-val" style="color:${parseFloat(d.delta) <= 2 ? 'var(--green)' : parseFloat(d.delta) <= 5 ? 'var(--orange)' : 'var(--red)'}">${d.delta > 0 ? '+' : ''}${d.delta}</span></div>`;
+      tooltip.style.display = "block";
+      tooltip.style.left = (e.clientX + 14) + "px";
+      tooltip.style.top  = (e.clientY - 10) + "px";
+    });
+    circle.addEventListener("mousemove", (e) => {
+      tooltip.style.left = (e.clientX + 14) + "px";
+      tooltip.style.top  = (e.clientY - 10) + "px";
+    });
+    circle.addEventListener("mouseleave", () => {
+      tooltip.style.display = "none";
+    });
+  });
 
   // Accuracy bar chart
   const accEl = document.getElementById("pssAccChart");
@@ -2858,49 +2900,95 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
   const players = [];
   if (!teamStep2) return players;
 
-  const allPlayers = [
-    ...(teamStep2.starter_players || []).map(p => ({...p, phase: "Starter"})),
-    ...(teamStep2.clutch_players || []).filter(p => {
-      const starters = (teamStep2.starter_players || []).map(s => s.player_id);
-      return !starters.includes(p.player_id);
-    }).map(p => ({...p, phase: "Clutch"})),
-  ];
-
-  // Build pool from starter + clutch, dedup by player_id
+  // ── 1. Build full roster pool (deduped by player_id) ──
+  const starterIds = new Set((teamStep2.starter_players || []).map(p => String(p.player_id)));
+  const clutchIds  = new Set((teamStep2.clutch_players  || []).map(p => String(p.player_id)));
   const seen = new Set();
-  const rosterPool = [];
-  (teamStep2.pool_players || teamStep2.starter_players || []).forEach(p => {
-    if (!seen.has(p.player_id)) { seen.add(p.player_id); rosterPool.push({...p, phase: "Pool"}); }
+  const fullPool = [];
+  const addToPool = (arr) => (arr || []).forEach(p => {
+    const pid = String(p.player_id);
+    if (!seen.has(pid)) { seen.add(pid); fullPool.push(p); }
   });
-  allPlayers.forEach(p => {
-    if (!seen.has(p.player_id)) { seen.add(p.player_id); rosterPool.push(p); }
+  addToPool(teamStep2.starter_players);
+  addToPool(teamStep2.clutch_players);
+  addToPool(teamStep2.pool_players);
+
+  if (!fullPool.length) return players;
+
+  // ── 2. Rotation selection: limit to 10 players ──
+  const ROTATION_SIZE = 10;
+  const rotSize = Math.min(ROTATION_SIZE, fullPool.length);
+
+  // Compute importance for selection (starters always included)
+  const importance = fullPool.map(p => {
+    const base = Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 1);
+    const pid = String(p.player_id);
+    let imp = base;
+    if (starterIds.has(pid)) imp *= 1.20;
+    if (clutchIds.has(pid)) imp *= 1.10;
+    return imp;
   });
 
-  // Allocate minutes across pool
-  const totalMinutes = 240;
-  let weights = rosterPool.map(p => Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 4));
-  const starterIds = new Set((teamStep2.starter_players || []).map(p => p.player_id));
-  const clutchIds = new Set((teamStep2.clutch_players || []).map(p => p.player_id));
+  // Select rotation: starters first, then fill by importance
+  const selectedIdxs = new Set();
+  fullPool.forEach((p, i) => { if (starterIds.has(String(p.player_id))) selectedIdxs.add(i); });
+  const sortedByImp = [...fullPool.keys()].sort((a, b) => importance[b] - importance[a]);
+  for (const idx of sortedByImp) {
+    if (selectedIdxs.size >= rotSize) break;
+    selectedIdxs.add(idx);
+  }
+  const rotation = [...selectedIdxs].map(i => fullPool[i]);
 
-  weights = weights.map((w, i) => {
-    let m = w;
-    if (starterIds.has(rosterPool[i].player_id)) m *= 1.14;
-    if (clutchIds.has(rosterPool[i].player_id)) m *= 1.05;
-    if (!starterIds.has(rosterPool[i].player_id)) m *= 0.92;
-    return Math.max(m, 2);
+  // ── 3. Anchored minute allocation (matches backend logic) ──
+  const TOTAL_MINUTES = 240;
+  const baseMpgs = rotation.map(p => Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 6));
+  const allocBase = baseMpgs.map((bm, i) => {
+    const pid = String(rotation[i].player_id);
+    let m = bm;
+    if (starterIds.has(pid))       m += 1.4;   // starter bonus (+0.14 * 10)
+    if (clutchIds.has(pid))        m += 0.5;   // clutch bonus (+0.05 * 10)
+    if (!starterIds.has(pid))      m -= 0.8;   // bench penalty (-0.08 * 10)
+    return Math.max(m, 4);
   });
-  const wSum = weights.reduce((a, b) => a + b, 0);
-  const minutes = weights.map(w => Math.min(40, Math.max(4, totalMinutes * w / wSum)));
-  const mSum = minutes.reduce((a, b) => a + b, 0);
-  const minutesFinal = minutes.map(m => totalMinutes * m / mSum);
+  const allocSum = allocBase.reduce((a, b) => a + b, 0);
+  let mins = allocBase.map(b => TOTAL_MINUTES * b / Math.max(allocSum, 1));
 
-  // Compute opponent descriptors for matchup
+  // Cap: no player plays more than base_mpg + 4
+  const caps = baseMpgs.map(bm => Math.min(bm + 4, 40));
+  let excess = 0;
+  mins = mins.map((m, i) => {
+    if (m > caps[i]) { excess += m - caps[i]; return caps[i]; }
+    return m;
+  });
+  if (excess > 0.5) {
+    const headroom = mins.map((m, i) => caps[i] - m);
+    const hrTotal = headroom.reduce((a, b) => a + b, 0);
+    if (hrTotal > 0.5) {
+      mins = mins.map((m, i) => Math.min(m + headroom[i] * (excess / hrTotal), caps[i]));
+    }
+  }
+  mins = mins.map(m => Math.max(4, Math.min(40, m)));
+  const mTotal = mins.reduce((a, b) => a + b, 0);
+  mins = mins.map(m => TOTAL_MINUTES * m / Math.max(mTotal, 1));
+
+  // ── 4. Opponent style for matchup adjustments ──
   const oppStyle = summarizeTeamStyle(opponentStep2);
 
-  // Simulate stats for each player
-  let totalPts = 0;
-  rosterPool.forEach((p, i) => {
-    const min = minutesFinal[i];
+  // ── 5. Simulate physically-consistent stats for each player ──
+  // Helper: binomial-ish draw (clamp a percentage to make/attempt)
+  const binomDraw = (n, p) => {
+    if (n <= 0) return 0;
+    let made = 0;
+    for (let i = 0; i < n; i++) { if (Math.random() < p) made++; }
+    return made;
+  };
+
+  let rawTotalPts = 0;
+  const rawPlayers = [];
+
+  rotation.forEach((p, i) => {
+    const min = mins[i];
+    const pid = String(p.player_id);
     const off = (cleanText(p.off_archetype) || "Unknown").toLowerCase();
     const def = (cleanText(p.def_archetype) || "Unknown").toLowerCase();
     const impact = numOrZero(p.impact) || numOrZero(p.score) || 0;
@@ -2934,23 +3022,34 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
       rebMult += 0.05;
     }
 
-    // Base rates (estimated from impact/minutes/archetype)
+    // Base rates scaled by minutes and archetype
     const baseUsage = 0.15 + 0.25 * Math.min(1, Math.max(0, impact / 60));
-    const baseFga = Math.max(4, 12 * baseUsage * 2.5) * (min / 36);
-    const baseFta = Math.max(1, 3 * baseUsage * 2.5) * (min / 36);
+    const baseFga = Math.max(2, 12 * baseUsage * 2.5) * (min / 36);
+    const baseFta = Math.max(0.5, 3 * baseUsage * 2.5) * (min / 36);
+
+    // Shot distribution and efficiency by archetype
     const fg3Share = /(shooter|perimeter|popping)/.test(off) ? 0.45 : /(interior|rolling|finisher)/.test(off) ? 0.05 : 0.30;
-    const fg2Pct = /(interior|rolling|finisher)/.test(off) ? 0.58 : 0.48;
-    const fg3Pct = /(shooter)/.test(off) ? 0.38 : 0.34;
+    const fg2Pct = Math.min(0.70, (/(interior|rolling|finisher)/.test(off) ? 0.58 : 0.48) * scoringEff);
+    const fg3Pct = Math.min(0.50, (/(shooter)/.test(off) ? 0.38 : 0.34) * threeEff);
     const ftPct = 0.77;
 
-    const fga = Math.round(baseFga * scoringEff + (Math.random() - 0.5) * 3);
-    const fg3a = Math.round(Math.min(fga, fga * fg3Share) + (Math.random() - 0.5) * 1);
-    const fg2a = Math.max(0, fga - Math.max(0, fg3a));
-    const fg2m = Math.round(fg2a * fg2Pct * scoringEff);
-    const fg3m = Math.round(Math.max(0, fg3a) * fg3Pct * threeEff);
-    const fta = Math.max(0, Math.round(baseFta * scoringEff + (Math.random() - 0.5) * 2));
-    const ftm = Math.round(fta * ftPct);
+    // Shot attempts (with noise)
+    const fga = Math.max(1, Math.round(baseFga + (Math.random() - 0.5) * 3));
+    const fg3a = Math.max(0, Math.min(fga, Math.round(fga * fg3Share + (Math.random() - 0.5) * 1)));
+    const fg2a = fga - fg3a;
+
+    // Field goals made via binomial draws (physically consistent)
+    const fg2m = binomDraw(fg2a, fg2Pct);
+    const fg3m = binomDraw(fg3a, fg3Pct);
+
+    // Free throws
+    const fta = Math.max(0, Math.round(baseFta + (Math.random() - 0.5) * 2));
+    const ftm = binomDraw(fta, ftPct);
+
+    // PTS = 2*FG2M + 3*FG3M + FTM (always physically consistent)
     const pts = 2 * fg2m + 3 * fg3m + ftm;
+
+    // Other stats
     const ast = Math.max(0, Math.round((/(ball dominant|ballhandler|creator|playmaking)/.test(off) ? 6 : 2) * (min / 36) * astMult + (Math.random() - 0.5) * 2));
     const reb = Math.max(0, Math.round((/(interior|rolling|big|center)/.test(off) ? 8 : 4) * (min / 36) * rebMult + (Math.random() - 0.5) * 2));
     const stl = Math.max(0, Math.round(1.0 * (min / 36) * stocksMult + (Math.random() - 0.5) * 0.8));
@@ -2958,18 +3057,18 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
     const tov = Math.max(0, Math.round(1.5 * baseUsage * 5 * (min / 36) * tovMult + (Math.random() - 0.5) * 1));
     const pf = Math.max(0, Math.round(2.5 * (min / 36) + (Math.random() - 0.5) * 1));
 
-    totalPts += pts;
+    rawTotalPts += pts;
 
-    players.push({
+    rawPlayers.push({
       name: cleanNameLabel(p.player_name) || `ID ${cleanText(p.player_id) || "?"}`,
       player_id: p.player_id,
-      phase: starterIds.has(p.player_id) ? "Starter" : clutchIds.has(p.player_id) ? "Clutch" : "Bench",
+      phase: starterIds.has(pid) ? "Starter" : clutchIds.has(pid) ? "Clutch" : "Bench",
       off_archetype: cleanText(p.off_archetype) || "Unknown",
       def_archetype: cleanText(p.def_archetype) || "Unknown",
       role: cleanText(p.role) || cleanText(p.position_band) || "-",
       minutes: Math.round(min * 10) / 10,
       pts, ast, reb, stl, blk, tov, pf,
-      fga: Math.max(0, fga), fgm: fg2m + fg3m, fg3a: Math.max(0, fg3a), fg3m, fta, ftm,
+      fga, fgm: fg2m + fg3m, fg2a, fg2m, fg3a, fg3m, fta, ftm,
       impact: numOrZero(impact).toFixed(2),
       adjustments: {
         scoring_eff: Math.round(scoringEff * 1000) / 1000,
@@ -2982,15 +3081,42 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
     });
   });
 
-  // Reconcile to team score
-  if (totalPts > 0 && teamScore > 0) {
-    const scale = teamScore / totalPts;
-    players.forEach(p => {
-      p.pts = Math.round(p.pts * scale);
+  // ── 6. Reconcile points to team score (add/remove FTM one at a time) ──
+  if (rawTotalPts > 0 && teamScore > 0) {
+    // Sort by usage (descending) for reconciliation order
+    const sortedIdxs = [...rawPlayers.keys()].sort((a, b) => {
+      const ua = rawPlayers[a].fga + rawPlayers[a].fta;
+      const ub = rawPlayers[b].fga + rawPlayers[b].fta;
+      return ub - ua;
     });
+    let current = rawTotalPts;
+    let cursor = 0;
+    // Add points via FTM/FTA if under
+    while (current < teamScore && sortedIdxs.length) {
+      const idx = sortedIdxs[cursor % sortedIdxs.length];
+      rawPlayers[idx].ftm += 1;
+      rawPlayers[idx].fta += 1;
+      rawPlayers[idx].pts += 1;
+      current += 1;
+      cursor += 1;
+    }
+    // Remove points via FTM if over
+    cursor = 0;
+    let safety = 0;
+    while (current > teamScore && safety < 500) {
+      const idx = sortedIdxs[cursor % sortedIdxs.length];
+      if (rawPlayers[idx].ftm > 0) {
+        rawPlayers[idx].ftm -= 1;
+        rawPlayers[idx].fta = Math.max(rawPlayers[idx].fta, rawPlayers[idx].ftm);
+        rawPlayers[idx].pts -= 1;
+        current -= 1;
+      }
+      cursor += 1;
+      safety += 1;
+    }
   }
 
-  return players;
+  return rawPlayers;
 }
 
 function renderEnhancedSingleGameResult() {
@@ -3118,13 +3244,26 @@ function renderEnhancedSingleGameResult() {
     `;
   }
 
-  // Archetype interaction summary
-  const homeArchs = new Set(homePlayerStats.filter(p => p.phase === "Starter").map(p => p.off_archetype));
-  const awayArchs = new Set(awayPlayerStats.filter(p => p.phase === "Starter").map(p => p.off_archetype));
-  const homeDefArchs = new Set(homePlayerStats.filter(p => p.phase === "Starter").map(p => p.def_archetype));
-  const awayDefArchs = new Set(awayPlayerStats.filter(p => p.phase === "Starter").map(p => p.def_archetype));
+  // Archetype interaction summary — now includes player names
+  // Build maps: archetype → [player names] for starters
+  const homeStarters = homePlayerStats.filter(p => p.phase === "Starter");
+  const awayStarters = awayPlayerStats.filter(p => p.phase === "Starter");
 
-  function archInteraction(offArchs, defArchs, teamName) {
+  const buildArchMap = (players, key) => {
+    const m = new Map();
+    players.forEach(p => {
+      const arch = p[key] || "Unknown";
+      if (!m.has(arch)) m.set(arch, []);
+      m.get(arch).push(p.name);
+    });
+    return m;
+  };
+  const homeOffMap = buildArchMap(homeStarters, "off_archetype");
+  const awayOffMap = buildArchMap(awayStarters, "off_archetype");
+  const homeDefMap = buildArchMap(homeStarters, "def_archetype");
+  const awayDefMap = buildArchMap(awayStarters, "def_archetype");
+
+  function archInteraction(offMap, defMap) {
     const interactions = [];
     const creators = ["Ball Dominant Creator", "Ballhandler", "All-Around Scorer", "Perimeter Scorer"];
     const shooters = ["Off-Ball Movement Shooter", "Off-Ball Stationary Shooter", "PnR Popping Big"];
@@ -3132,30 +3271,38 @@ function renderEnhancedSingleGameResult() {
     const poaDef = ["POA Defender", "Wing Stopper", "Off-Ball Chaser"];
     const rimDef = ["Rim Protector", "Dropping Big", "Mobile Big"];
 
-    creators.forEach(a => { if (offArchs.has(a)) {
-      poaDef.forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "Scoring/AST penalized", type: "penalty"}); });
+    creators.forEach(a => { if (offMap.has(a)) {
+      poaDef.forEach(d => { if (defMap.has(d)) interactions.push({off: a, offPlayers: offMap.get(a), def: d, defPlayers: defMap.get(d), effect: "Scoring/AST penalized", type: "penalty"}); });
     }});
-    shooters.forEach(a => { if (offArchs.has(a)) {
-      ["Versatile Defender", "Wing Stopper"].forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "3PT efficiency reduced", type: "penalty"}); });
-      ["Dropping Big"].forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "3PT efficiency boosted", type: "bonus"}); });
+    shooters.forEach(a => { if (offMap.has(a)) {
+      ["Versatile Defender", "Wing Stopper"].forEach(d => { if (defMap.has(d)) interactions.push({off: a, offPlayers: offMap.get(a), def: d, defPlayers: defMap.get(d), effect: "3PT efficiency reduced", type: "penalty"}); });
+      ["Dropping Big"].forEach(d => { if (defMap.has(d)) interactions.push({off: a, offPlayers: offMap.get(a), def: d, defPlayers: defMap.get(d), effect: "3PT efficiency boosted", type: "bonus"}); });
     }});
-    rimOff.forEach(a => { if (offArchs.has(a)) {
-      rimDef.forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "Scoring efficiency reduced", type: "penalty"}); });
+    rimOff.forEach(a => { if (offMap.has(a)) {
+      rimDef.forEach(d => { if (defMap.has(d)) interactions.push({off: a, offPlayers: offMap.get(a), def: d, defPlayers: defMap.get(d), effect: "Scoring efficiency reduced", type: "penalty"}); });
     }});
     return interactions;
   }
 
-  const homeVsAwayInteractions = archInteraction(homeArchs, awayDefArchs, g.homeTeam);
-  const awayVsHomeInteractions = archInteraction(awayArchs, homeDefArchs, g.awayTeam);
+  const homeVsAwayInteractions = archInteraction(homeOffMap, awayDefMap);
+  const awayVsHomeInteractions = archInteraction(awayOffMap, homeDefMap);
 
   function renderInteractions(interactions, offTeam, defTeam) {
     if (!interactions.length) return `<div style="color:var(--text-muted);font-size:12px">No specific archetype interactions detected</div>`;
     return interactions.map(i => {
       const color = i.type === "penalty" ? "var(--red)" : "var(--green)";
       const icon = i.type === "penalty" ? "▼" : "▲";
-      return `<div style="font-size:12px;margin-bottom:4px;display:flex;gap:8px;align-items:center">
-        <span style="color:${color};font-weight:700">${icon}</span>
-        <span>${offTeam} <span style="color:var(--accent)">${i.off}</span> vs ${defTeam} <span style="color:var(--orange)">${i.def}</span>: <span style="color:${color}">${i.effect}</span></span>
+      const offNames = (i.offPlayers || []).join(", ");
+      const defNames = (i.defPlayers || []).join(", ");
+      return `<div style="font-size:12px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start">
+        <span style="color:${color};font-weight:700;margin-top:1px">${icon}</span>
+        <span>
+          ${offTeam} <span style="color:var(--accent)">${i.off}</span>
+          <span style="color:var(--text);font-weight:600"> (${offNames})</span>
+          vs ${defTeam} <span style="color:var(--orange)">${i.def}</span>
+          <span style="color:var(--text);font-weight:600"> (${defNames})</span>:
+          <span style="color:${color}">${i.effect}</span>
+        </span>
       </div>`;
     }).join("");
   }

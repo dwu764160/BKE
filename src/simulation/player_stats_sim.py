@@ -562,21 +562,72 @@ def _allocate_minutes(team_df: pd.DataFrame, lineup_context: Dict[str, float], a
 
     starter_ids = set(lineup_context.get("starter_ids", []))
     clutch_ids = set(lineup_context.get("clutch_ids", []))
-    weights = active["base_mpg"].clip(lower=6.0).to_numpy(dtype=float)
+
+    # Compute raw importance weights for rotation selection
+    raw_weights = active["base_mpg"].clip(lower=1.0).to_numpy(dtype=float)
     starter_boost = active["player_id"].astype(str).isin(starter_ids).astype(float).to_numpy(dtype=float)
     clutch_boost = active["player_id"].astype(str).isin(clutch_ids).astype(float).to_numpy(dtype=float)
-    weights = weights * (1.0 + PLAYER_GAME_MINUTES_STARTER_BONUS * starter_boost)
-    weights = weights * (1.0 + PLAYER_GAME_MINUTES_CLUTCH_BONUS * clutch_boost)
-    weights = weights * (
-        1.0 - PLAYER_GAME_MINUTES_BENCH_PENALTY * (~active["player_id"].astype(str).isin(starter_ids)).astype(float).to_numpy(dtype=float)
-    )
-    weights = np.maximum(weights, 1.0)
-    minutes = PLAYER_GAME_TOTAL_MINUTES * (weights / weights.sum())
+    importance = raw_weights * (1.0 + 0.20 * starter_boost) * (1.0 + 0.10 * clutch_boost)
+
+    # Limit rotation to PLAYER_GAME_ROTATION_SIZE (typically 10).
+    # Always include starters; fill remaining slots by importance.
+    rotation_size = min(PLAYER_GAME_ROTATION_SIZE, len(active))
+    order = np.argsort(-importance)
+    selected = set()
+    for i, pid in enumerate(active["player_id"].astype(str)):
+        if pid in starter_ids:
+            selected.add(i)
+    for idx in order:
+        if len(selected) >= rotation_size:
+            break
+        selected.add(int(idx))
+
+    rotation_mask = pd.Series(False, index=active.index)
+    for i, orig_idx in enumerate(active.index):
+        if i in selected:
+            rotation_mask.loc[orig_idx] = True
+    active = active.loc[rotation_mask].copy()
+    if active.empty:
+        return active
+
+    # Anchored minute allocation: start from base_mpg, apply small
+    # context bonuses, then redistribute surplus/deficit so total == 240.
+    base = active["base_mpg"].clip(lower=6.0).to_numpy(dtype=float).copy()
+    is_starter = active["player_id"].astype(str).isin(starter_ids).to_numpy(dtype=bool)
+    is_clutch = active["player_id"].astype(str).isin(clutch_ids).to_numpy(dtype=bool)
+
+    # Small context bonuses (additive, not multiplicative, to avoid inflation)
+    base[is_starter] += PLAYER_GAME_MINUTES_STARTER_BONUS * 10.0  # ~+1.4 min
+    base[is_clutch] += PLAYER_GAME_MINUTES_CLUTCH_BONUS * 10.0    # ~+0.5 min
+    base[~is_starter] -= PLAYER_GAME_MINUTES_BENCH_PENALTY * 10.0 # ~-0.8 min
+    base = np.maximum(base, 4.0)
+
+    # Enforce 240 total: proportionally scale, but cap individual at base_mpg + 4
+    total = float(base.sum())
+    if total > 1e-6:
+        minutes = PLAYER_GAME_TOTAL_MINUTES * (base / total)
+    else:
+        minutes = np.full(len(base), PLAYER_GAME_TOTAL_MINUTES / len(base))
+
+    # Cap: no player plays more than base_mpg + 4 in a single game
+    original_mpg = active["base_mpg"].clip(lower=6.0).to_numpy(dtype=float)
+    cap = np.minimum(original_mpg + 4.0, 40.0)
+    excess = np.maximum(minutes - cap, 0.0)
+    minutes = np.minimum(minutes, cap)
+    # Redistribute excess proportionally to players under their cap
+    headroom = cap - minutes
+    headroom_total = float(headroom.sum())
+    if float(excess.sum()) > 0.5 and headroom_total > 0.5:
+        minutes += headroom * (float(excess.sum()) / headroom_total)
+        minutes = np.minimum(minutes, cap)
+
     minutes = np.clip(minutes, 4.0, 40.0)
-    minutes = PLAYER_GAME_TOTAL_MINUTES * (minutes / minutes.sum())
+    # Final normalization pass to ensure exact 240
+    minutes = PLAYER_GAME_TOTAL_MINUTES * (minutes / max(float(minutes.sum()), 1.0))
+
     active["sim_minutes"] = minutes
-    active["is_starter"] = active["player_id"].astype(str).isin(starter_ids)
-    active["is_clutch_core"] = active["player_id"].astype(str).isin(clutch_ids)
+    active["is_starter"] = is_starter
+    active["is_clutch_core"] = is_clutch
     return active
 
 

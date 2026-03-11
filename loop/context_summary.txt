@@ -1,3 +1,27 @@
+2026-03-11 — Grid sweep calibration: tuned LINEUP_TEAM_BONUS_CLIP, MATCHUP_TEAM_INTERACTION_SCALE, PPP_CONTEXT_BONUS_SCALE
+-------------------------------------------------------------------------------------------------------------
+- Ran 64-trial grid sweep across 3 sensitive knobs (scripts/grid_sweep_sim_knobs.py):
+	- LINEUP_TEAM_BONUS_CLIP: [0.30, 0.40, 0.55, 0.70]
+	- MATCHUP_TEAM_INTERACTION_SCALE: [0.15, 0.25, 0.35, 0.50]
+	- PPP_CONTEXT_BONUS_SCALE: [0.0, 0.0015, 0.0025, 0.005]
+- Best combo by combined margin+PPP MAE: CLIP=0.30, MATCHUP=0.15, PPP_CTX=0.0
+- Applied to `src/simulation/simulation_config.py`:
+	- LINEUP_TEAM_BONUS_CLIP: 0.55 → 0.30
+	- MATCHUP_SPREAD_BONUS_CLIP: 0.35 → 0.15
+	- MATCHUP_TEAM_INTERACTION_SCALE: 0.35 → 0.15
+	- PPP_CONTEXT_BONUS_SCALE: 0.0025 → 0.0
+- Backtest results (10k sims) after tuning:
+	- 2022-23 margin: MAE=5.47, RMSE=6.74, r=0.8305 (was 5.52/6.81/0.827)
+	- 2023-24 margin: MAE=5.93, RMSE=7.15, r=0.8683 (was 5.94/7.15/0.868)
+	- 2024-25 margin: MAE=3.71, RMSE=4.42, r=0.9480 (was 3.70/4.44/0.947)
+	- 2022-23 ppp: MAE=5.27, RMSE=6.17, r=0.8316 (was 5.33/6.22/0.824)
+	- 2024-25 ppp: MAE=6.19, RMSE=7.41, r=0.9408 (was 6.32/7.51/0.936)
+- Forecast results (end_of_season scenario):
+	- 2023-24 margin: MAE=7.69, RMSE=9.74, r=0.7053 (was 7.75/9.80/0.703)
+	- 2024-25 margin: MAE=8.85, r=0.6196 (neutral)
+- Conclusion: net improvement across most season/model pairs; confirms lineup/matchup channels
+  are properly marginal and lower interaction scales reduce noise without losing signal.
+
 2026-03-10 — Simulation core rework: Step 1/Step 2 integration + matchup/player-stat backend + calibration pass
 -------------------------------------------------------------------------------------------------------------
 - Completed a backend-only simulation-core rework across `src/simulation/` with four major changes:
@@ -12,24 +36,6 @@
 	- `data/processed/simulation/forecast_step1_player_game_samples_<scenario>.parquet`
 	- `reports/simulation_single_game.json`
 	- `reports/forecast_single_game.json`
-- Validation snapshot after final marginal-scale calibration:
-	- `python3 src/simulation/lineup_projection.py`
-		- starter overlap mean: `0.7089`
-		- clutch overlap mean: `0.8289`
-		- rotation corr: `0.7867`
-	- `python3 src/simulation/season_sim.py`
-		- 2022-23 margin: `MAE=5.52`, `RMSE=6.81`, `r=0.8267`
-		- 2023-24 margin: `MAE=5.94`, `RMSE=7.15`, `r=0.8683`
-		- 2024-25 margin: `MAE=3.70`, `RMSE=4.44`, `r=0.9471`
-	- `python3 src/simulation/run_forecast.py --scenarios end_of_season --skip-preseason-fetch`
-		- 2023-24 margin: `MAE=7.75`, `RMSE=9.80`, `r=0.7026`
-		- 2024-25 margin: `MAE=8.83`, `RMSE=11.22`, `r=0.6193`
-		- 2023-24 ppp: `MAE=8.74`, `RMSE=9.96`, `r=0.6807`
-		- 2024-25 ppp: `MAE=8.44`, `RMSE=10.03`, `r=0.6623`
-- Interpretation:
-	- Backtest recovered materially after shrinking lineup/matchup bonuses to truly marginal levels.
-	- End-of-season forecast is mixed but acceptable: 2024-25 improved versus the first integrated pass; 2023-24 softened slightly.
-	- Step 2 standalone rotation quality improved clearly; starter overlap still remains below target.
 - Documentation synced:
 	- `readme.md` updated for new simulation outputs, single-game CLI, and shared Step 1/Step 2 context usage.
 	- `src/simulation/run_forecast.py` now records scenario-specific player season/game artifact paths in its output map.

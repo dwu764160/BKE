@@ -395,7 +395,8 @@ def main():
         "player_comparisons": player_rows,
     }
 
-    output_path = Path(args.output) if args.output else REPORT_OUTPUT
+    default_output = REPORT_OUTPUT if args.mode == "backtest" else ROOT / "reports" / "player_stat_sim_validation_forecast.json"
+    output_path = Path(args.output) if args.output else default_output
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\n  Saved validation report: {output_path}")

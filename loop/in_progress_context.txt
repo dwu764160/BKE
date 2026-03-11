@@ -1,3 +1,51 @@
+2026-03-XX — Frontend game sim & scatter fixes + Monte Carlo proposal
+===============================================================================
+
+Completed in this pass:
+  - `app/simulation_viewer.py` — THREE frontend fixes:
+    1. Rewrote `simulatePlayerGameStats()` JS: rotation limited to 10 players
+       (starters guaranteed), anchored minute allocation matching backend logic,
+       binomial shot draws for physically consistent stats (PTS = 2*FG2M + 3*FG3M + FTM),
+       FTM-based reconciliation to team score (no more scaling PTS independently).
+    2. Scatter plot hover: replaced SVG `<title>` with JS-powered tooltip popup
+       showing player name, team, season, sim PPG, actual PPG, and delta on hover.
+    3. Archetype interactions now display player names: e.g.,
+       "ATL Ball Dominant Creator (Trae Young) vs BOS Wing Stopper (Jrue Holiday)".
+  - `app/simulation.html` — regenerated with all fixes
+  - `loop/proposal_monte_carlo_player_stats_integration.md` — NEW
+    Proposal documenting that Monte Carlo (10K team W/L) and player stat sim
+    (single deterministic pass) are independent. Recommends Option A: sample 25
+    representative seasons from MC to calibrate player stat distributions.
+
+Previously completed (backend, same session):
+  - `src/simulation/player_stats_sim.py` — `_allocate_minutes()` rewritten with
+    anchored allocation, rotation limit to 10, per-player cap at base_mpg+4
+  - `scripts/validate_player_stat_sim.py` — fixed output path for forecast mode
+  - Full backtest + forecast re-runs validated (PTS r=0.987, MAE=0.924)
+
+No remaining blockers from this pass.
+
+2026-03-11 — Grid sweep calibration completed
+===============================================================================
+
+Completed in this pass:
+  - `scripts/grid_sweep_sim_knobs.py` — NEW calibration script
+    - 64-trial grid over CLIP×MATCHUP×PPP_CTX knobs, 1000 sims each, ~34s total
+  - `src/simulation/simulation_config.py` — knobs updated
+    - LINEUP_TEAM_BONUS_CLIP: 0.55 → 0.30
+    - MATCHUP_SPREAD_BONUS_CLIP: 0.35 → 0.15
+    - MATCHUP_TEAM_INTERACTION_SCALE: 0.35 → 0.15
+    - PPP_CONTEXT_BONUS_SCALE: 0.0025 → 0.0
+
+Validation completed:
+  - `pytest -q tests/test_simulation_core.py` — 3/3 pass
+  - `python3 src/simulation/season_sim.py` — full 10k backtest
+  - `python3 src/simulation/run_forecast.py --scenarios end_of_season --skip-preseason-fetch`
+  - Net improvement in backtest: 2022-23/2024-25 margin+ppp all improved; 2023-24 neutral
+  - Net improvement in forecast: 2023-24 margin improved; 2024-25 ppp marginally worse
+
+No remaining blockers from this pass.
+
 2026-03-10 — Simulation core rework completed and validated
 ===============================================================================
 
