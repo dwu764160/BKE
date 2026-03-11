@@ -31,6 +31,8 @@ when_to_use:
 example_prompts:
   - "What are the canonical position bands and how should hybrids be treated?"
   - "List archetype gating best practices for role assignment."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Basketball Knowledge — Canonical Philosophies
 

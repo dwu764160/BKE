@@ -1,0 +1,520 @@
+skills:
+- name: audit-aggregate
+  path: .github/skills/audit-aggregate/SKILL.md
+  description: 'Audit suite for profile aggregation (`src/profile_aggregate/`). Ensures
+    all
+
+    player-related stats are normalized and merged into the `player_profile_aggregate`.
+
+    '
+  tags: &id001
+  - audit
+  - aggregate
+  - profile
+  triggers: *id001
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Run `src/profile_aggregate/build_profile_aggregate.py` in smoke mode and validate
+    output schema.
+  - Check that new fields from compute/modeling stages appear in the aggregate.
+  - Validate counts (expected 1971 player-season rows) and column normalization rules.
+  when_to_use:
+  - On-demand, after changes to player-profile sources or when requested by the user.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: audit-compute
+  path: .github/skills/audit-compute/SKILL.md
+  description: 'Audit suite for the compute stage and pipeline formula integrity.
+    Detects
+
+    silent logic bugs in normalization, aggregation, denominator usage, and
+
+    formula correctness. Focuses on `src/data_compute/`, `src/features/`, and
+
+    any scripts that aggregate or normalize data.
+
+    '
+  tags:
+  - audit
+  - compute
+  - metrics
+  triggers:
+  - audit compute
+  - compute audit
+  - normalization
+  - aggregation
+  - formula
+  - archetype
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Run formula and merge integrity checks across `src/data_compute/`.
+  - Detect silent logic bugs in normalization, aggregation, and denominator usage.
+  - Validate that all merges and joins are correct and do not introduce data leakage
+    or row duplication.
+  - Ensure all formulas (especially for metrics, normalization, and derived fields)
+    are mathematically sound and match project conventions.
+  - Validate that archetype gating logic and centralized thresholds are present and
+    documented.
+  - Run `tests/validate_rapm.py` and any compute-specific validation scripts.
+  when_to_use:
+  - After any change to metric, normalization, or aggregation logic.
+  - Before major releases or after merging large PRs.
+  - When silent bugs or unexplained output anomalies are suspected.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: audit-eval
+  path: .github/skills/audit-eval/SKILL.md
+  description: 'Audit suite for player evaluation (`src/player_eval/`) and minute-model
+
+    pipeline components. Validates player impact profiles, minute-model fits,
+
+    and profile-aggregate integration.
+
+    '
+  tags: &id002
+  - audit
+  - player_eval
+  - minute_model
+  triggers: *id002
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Run `src/player_eval/build_player_impact_profiles.py` in smoke mode and validate
+    shape.
+  - Run minute-model training checks and cross-validate `minute_model_v2.pkl` behavior.
+  - Validate profile aggregate ingestion (profile_aggregate/build_profile_aggregate.py).
+  when_to_use:
+  - On-demand, after player-eval logic changes or when requested by the user.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: audit-fetch
+  path: .github/skills/audit-fetch/SKILL.md
+  description: 'Audit suite for the fetch/ingest stage. Validates fetch scripts, cached
+
+    headers/sessions, payload-shape robustness, and presence of required raw
+
+    artifacts in `data/historical/`.
+
+    '
+  tags: &id003
+  - audit
+  - fetch
+  - ingest
+  triggers: *id003
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Validate fetch scripts in `src/data_fetch/` for payload-shape guards (resultSets/resultSet)
+    and robust parsing.
+  - Check `data/nba_headers.json` and `data/nba_session.json` presence and freshness.
+  - Run smoke fetches where safe and compare output schemas to expected shapes.
+  - Run `tests/validate_data_integrity.py` or fetch-stage-specific checks when available.
+  when_to_use:
+  - On-demand, only when the user requests a fetch-stage audit or after major ingest
+    changes.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: audit-model
+  path: .github/skills/audit-model/SKILL.md
+  description: 'Audit suite for modeling and impact estimation (`src/modeling/`).
+    Runs
+
+    model diagnostics, backtests, and checks for reproducibility and input
+
+    sanity (modeling_inputs_* files and reports).
+
+    '
+  tags: &id004
+  - audit
+  - modeling
+  - backtest
+  triggers: *id004
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Run model diagnostic scripts (e.g., `src/modeling/model_rapm.py`) in smoke mode.
+  - Validate `modeling_inputs_{season}.parquet` shapes and distributions against `reports/modeling_inputs_report.json`.
+  - Run backtest harnesses and summarize core diagnostics (correlations, MAE/RMSE).
+  when_to_use:
+  - On-demand, after modeling changes or when requested by the user.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: backtest-vs-forecast
+  path: .github/skills/backtest-vs-forecast/SKILL.md
+  description: 'Ensures that every simulation or prediction phase has both a backtest
+    and a
+
+    forecast component where appropriate. Validates presence of backtest reports
+
+    and forecast artifacts and highlights missing coverage.
+
+    '
+  tags: &id005
+  - forecast
+  - backtest
+  - governance
+  triggers: *id005
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Scan `src/` and `reports/` to find simulation/prediction steps and check for both
+    backtest and forecast outputs.
+  - Run `src/simulation/run_forecast.py --skip-lineup` in smoke mode when safe (user
+    approval required for long runs).
+  - Validate that forecast artifacts live under `data/processed/forecast/` and that
+    corresponding backtest `reports/` exist.
+  - Summarize gaps and propose a remediation checklist (e.g., add forecast runner
+    or backtest harness).
+  when_to_use:
+  - On-demand, when preparing forecasts or validating that modeling changes have both
+    backtest and forecast coverage.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: basketball-knowledge
+  path: .github/skills/basketball-knowledge/SKILL.md
+  description: 'Canonical basketball domain knowledge for the BKE pipeline: role-vs-impact
+
+    separation, position-band policy, archetype gating principles, validation
+
+    practices, and forecast/simulation assumptions. Intended as the single
+
+    reference other skills and agents consult for consistent domain decisions.
+
+    '
+  tags: &id006
+  - domain
+  - basketball
+  - archetype
+  triggers: *id006
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Provide canonical guidance for archetype assignments and gating rules.
+  - Document position-band policy and hybrid handling for compute/model stages.
+  - Recommend validation metrics and where to find canonical reports.
+  - Be imported/queried by agents/skills when domain guidance is required.
+  when_to_use:
+  - When making decisions that affect archetype assignment, position-band handling,
+    or forecast/simulation assumptions.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: data-audit
+  path: .github/skills/data-audit/SKILL.md
+  description: 'Repository-wide data audit: normalizes column names across processed
+    artifacts,
+
+    runs data validation tests, and ensures downstream consumers see consistent
+
+    schemas.
+
+    '
+  tags: &id007
+  - data
+  - audit
+  - schema
+  triggers: *id007
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Scan `data/processed/` and `data/features/` for common column name variants and
+    report normalization actions.
+  - Run `tests/validate_data_integrity.py` and other data checks available in `tests/`.
+  - Produce a short remediation plan if columns are inconsistent (suggest `apply_patch`
+    patches to canonical readers or docs).
+  when_to_use:
+  - On-demand, before major exports or when schema drift is suspected.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: docs-sync
+  path: .github/skills/docs-sync/SKILL.md
+  description: 'Keeps repository documentation and in-file headers in sync with code
+    changes.
+
+    Verifies `readme.md`, `loop/` notes, and viewer/docs references after edits and
+
+    proposes minimal patches to update file paths and standardized file headers.
+
+    '
+  tags:
+  - docs
+  - sync
+  - headers
+  triggers:
+  - sync docs
+  - update readme
+  - docs sync
+  - headers
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - apply_patch
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Detect edits to pipeline scripts and update `readme.md` pipeline order and data
+    layout accordingly.
+  - Verify file headers exist and contain canonical path + separator lines; propose/apply
+    standardized header patches for edited files (user approval required for apply).
+  - Check viewer/docs references (app/, reference/) for broken or outdated paths after
+    changes and propose updates.
+  when_to_use:
+  - After code changes that add, remove, or rename pipeline steps or outputs.
+  - Before releases or when PRs touch many files.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: forecast
+  path: .github/skills/forecast/SKILL.md
+  description: 'This skill specializes in projection, scenario mapping, and minute
+    model interactions for the analytics pipeline. It is designed to:
+
+    - Run and audit projection scripts (e.g., lineup_projection.py, run_forecast.py).
+
+    - Map scenarios and ensure correct propagation of scenario parameters.
+
+    - Validate minute model logic and its impact on downstream projections.
+
+    - Focus on files in src/simulation/ and related scenario/model scripts.
+
+    '
+  tags: &id008
+  - forecast
+  - projection
+  triggers: *id008
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  - create_and_run_task
+  job_scope:
+  - Run and validate all projection and scenario mapping scripts.
+  - Audit minute model logic and its interactions.
+  - Ensure scenario parameters are correctly mapped and propagated.
+  when_to_use:
+  - After changes to projection, scenario, or minute model logic.
+  - Before major forecast runs or after merging scenario-related PRs.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: frontend-sync
+  path: .github/skills/frontend-sync/SKILL.md
+  description: 'This skill specializes in keeping frontend viewers and apps aligned
+    to backend schema changes. It is designed to:
+
+    - Detect and propagate backend schema changes to all frontend viewers (HTML, JS,
+    Python viewers).
+
+    - Audit viewer code for schema mismatches and outdated fields.
+
+    - Ensure all frontend displays are consistent with backend outputs and metadata.
+
+    - Focus on files in app/, src/, and any viewer or export scripts.
+
+    '
+  tags: &id009
+  - frontend
+  - schema
+  - sync
+  triggers: *id009
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - get_errors
+  avoid_tools:
+  - run_in_terminal
+  - create_new_workspace
+  - create_and_run_task
+  job_scope:
+  - Audit and sync all frontend viewers to backend schema.
+  - Detect and fix schema mismatches in viewers.
+  - Ensure all frontend displays are up to date with backend changes.
+  when_to_use:
+  - After backend schema or output changes.
+  - Before major frontend releases or after merging backend PRs.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: self-improvement
+  path: .github/skills/self-improvement/SKILL.md
+  description: 'Runs at the end of an interactive session to evaluate which skills
+    were used,
+
+    collect simple evaluation signals (user feedback, test / lint results, runtime
+
+    exit codes), and apply minimal, well-scoped updates to skill files to record
+
+    what was learned. Designed to keep skills current and reduce repeated mistakes.
+
+    '
+  tags: &id010
+  - meta
+  - self-improvement
+  triggers: *id010
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - get_errors
+  - apply_patch
+  - run_in_terminal
+  avoid_tools:
+  - create_new_workspace
+  - create_and_run_task
+  job_scope:
+  - Detect which skills were invoked during the session or which skill files were
+    edited.
+  - 'Collect evaluation signals: explicit user feedback, `get_errors` output, test
+    results, and command exit codes where available.'
+  - Summarize learnings into a short markdown note and append it to `loop/self_improvement_log.md`.
+  - 'Apply minimal, focused edits to skill files used in the session: add a `## Learnings`
+    section or append concise bullet(s) into the skill file.'
+  - If recurring gaps are found, propose (and optionally scaffold) new skills per
+    the skills-first workflow, but do not modify pipeline source code without explicit
+    user approval.
+  when_to_use:
+  - At the end of every interactive session (explicit `run self-improvement`), or
+    when requested by the user.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: simulation
+  path: .github/skills/simulation/SKILL.md
+  description: 'Operations and audit skill for the simulation pipeline. Combines schedule
+
+    generation, game-model execution, and validation/report integrity checks.
+
+    Use this skill to run simulations, validate schedule balance, and audit
+
+    Step1/Step2 outputs and constraints.
+
+    '
+  tags: &id011
+  - simulation
+  - audit
+  - schedule
+  triggers: *id011
+  preferred_tools:
+  - read_file
+  - grep_search
+  - semantic_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  - create_and_run_task
+  job_scope:
+  - Run and validate all simulation and schedule scripts (`src/simulation/`).
+  - Audit game model logic and ensure schedule integrity (balanced home/away, per-team
+    totals).
+  - Check simulation report outputs for consistency, completeness, and expected metrics.
+  - Run `src/simulation/validate_sim.py` and `src/simulation/season_sim.py` in smoke/validation
+    mode.
+  - Validate that Step2 lineup projection constraints (position bands, minutes eligibility,
+    true-big requirement) are enforced.
+  when_to_use:
+  - After changes to simulation, schedule, or report logic.
+  - Before major simulation runs or after merging game model PRs.
+  log_usage: true
+  usage_log: loop/skill_usage.log
+- name: skill-curator
+  path: .github/skills/skill-curator/SKILL.md
+  description: 'Curates the repository''s skills: detects duplicates/overlap, runs
+
+    validations, proposes merges, and maintains frontmatter and example
+
+    prompts. Acts as the human-approved gate for skill consolidation.
+
+    '
+  tags: &id012
+  - skill
+  - curation
+  - maintenance
+  triggers: *id012
+  preferred_tools:
+  - read_file
+  - file_search
+  - grep_search
+  - semantic_search
+  - get_errors
+  - run_in_terminal
+  - apply_patch
+  avoid_tools:
+  - create_new_workspace
+  - create_and_run_task
+  job_scope:
+  - Run `scripts/validate_skills.py` and surface missing or inconsistent frontmatter.
+  - Detect overlapping skills via semantic search + grep; propose merges and produce
+    suggested patches.
+  - Run `/.github/skills/self_improvement.skill.md` flow to gather session learnings
+    and apply small edits to skill files when safe.
+  - Prepare a short delta report (suggested merges, renames, added tags) and request
+    user approval before applying non-trivial patches.
+  when_to_use:
+  - Periodically (weekly) or when many new skills are added/edited.
+  - Before a skills-first automation rollout or CI integration.
+  log_usage: true
+  usage_log: loop/skill_usage.log

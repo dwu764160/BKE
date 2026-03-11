@@ -31,6 +31,8 @@ when_to_use:
 example_prompts:
   - "Verify that every simulation step has both backtest and forecast artifacts and list missing ones."
   - "Run a smoke forecast/backtest parity check for the forecast pipeline."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Backtest vs. Forecast Skill
 

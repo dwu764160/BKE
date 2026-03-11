@@ -31,6 +31,8 @@ when_to_use:
 example_prompts:
   - "Run a quick model diagnostics pass for RAPM and summarize key flags."
   - "Run the backtest harness for the last two seasons and produce a comparison report."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Model Audit Skill
 

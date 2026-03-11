@@ -9,6 +9,8 @@ description: |
 tags:
   - forecast
   - projection
+log_usage: true
+usage_log: loop/skill_usage.log
 version: "1.0"
 last_updated: "2026-03-09"
 persona:

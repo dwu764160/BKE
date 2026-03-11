@@ -9,6 +9,13 @@ tags:
   - audit
   - compute
   - metrics
+triggers:
+  - "audit compute"
+  - "compute audit"
+  - "normalization"
+  - "aggregation"
+  - "formula"
+  - "archetype"
 version: "1.0"
 last_updated: "2026-03-09"
 persona:
@@ -39,6 +46,8 @@ example_prompts:
   - "Check for merge bugs in src/data_compute scripts."
   - "Validate that all normalization steps match NBA conventions."
   - "Find silent logic bugs in metric aggregation."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Compute Audit Skill
 

@@ -1,3 +1,34 @@
+2026-03-10 — Simulation core rework completed and validated
+===============================================================================
+
+Completed in this pass:
+  - `src/simulation/season_sim.py`
+    - Integrated shared Step 2 lineup context into Step 1 game-strength construction.
+    - Added archetype interaction and detailed player stat outputs.
+    - Added single-game backend simulation mode.
+  - `src/simulation/player_stats_sim.py`
+    - Added roster descriptors, pairwise matchup map, availability planning, box-score simulation, and season aggregation.
+  - `src/simulation/lineup_projection.py`
+    - Added continuity priors, lineup-fit heuristics, and candidate-pool pruning.
+  - `src/simulation/run_forecast.py`
+    - Synced scenario artifact map to include detailed player season/game outputs.
+  - `tests/test_simulation_core.py`
+    - Added regression coverage for schedule balance, matchup directionality, and single-game stat reconciliation.
+  - `readme.md`
+    - Synced simulation command/docs/data-layout sections with the new backend outputs and single-game mode.
+
+Validation completed:
+  - `pytest -q tests/test_simulation_core.py`
+  - `python3 src/simulation/lineup_projection.py`
+  - `python3 src/simulation/season_sim.py`
+  - `python3 src/simulation/run_forecast.py --scenarios end_of_season --skip-preseason-fetch`
+  - static error sweep clean for touched simulation files
+
+Remaining known limitations:
+  1. End-of-season forecast improvement is mixed rather than uniformly better; 2024-25 improved after calibration, 2023-24 softened slightly.
+  2. Step 2 starter overlap remains below target even though rotation correlation improved materially.
+  3. Preseason-snapshot scenario was not rerun in this pass after the final marginal-scale calibration.
+
 2026-03-09 — In-progress: remaining deep audit pass (data_compute/modeling/simulation)
 ===============================================================================
 

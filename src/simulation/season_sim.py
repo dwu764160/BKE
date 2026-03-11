@@ -30,11 +30,13 @@ Usage:
 =============================================================================
 """
 
+import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -48,9 +50,19 @@ from src.simulation.game_model import (
     generate_balanced_schedule,
     load_team_params,
 )
+from src.simulation.lineup_projection import build_projected_lineup_rows
+from src.simulation.player_stats_sim import (
+    build_lineup_bonus_map,
+    build_pairwise_matchup_map,
+    load_player_stat_profiles,
+    simulate_detailed_season,
+)
 from src.simulation.simulation_config import (
+    CLUTCH_MARGIN_TRIGGER,
     DEFAULT_PACE_PER_48,
     DIRECT_PLAYOFF_RANK,
+    FORECAST_PLAYER_GAME_SAMPLES_PATH,
+    FORECAST_PLAYER_SEASON_STATS_PATH,
     FORECAST_SEASON_RESULTS_PATH,
     FORECAST_PLAYER_PROFILES_PATH,
     FORECAST_TEAM_FEATURES_PATH,
@@ -63,6 +75,7 @@ from src.simulation.simulation_config import (
     PPP_MAX,
     PPP_MIN,
     PPP_OFF_DEF_BLEND_WEIGHT,
+    PPP_CONTEXT_BONUS_SCALE,
     PPP_SIGMA_POSSESSION_EXPONENT,
     POSSESSION_FTA_WEIGHT,
     PLAY_IN_RANK,
@@ -70,6 +83,10 @@ from src.simulation.simulation_config import (
     SIM_MODEL_MARGIN,
     SIM_MODEL_PPP,
     SIM_MODELS,
+    STEP1_PLAYER_GAME_SAMPLES_PATH,
+    STEP1_PLAYER_SEASON_STATS_PATH,
+    STEP1_SINGLE_GAME_REPORT_PATH,
+    FORECAST_SINGLE_GAME_REPORT_PATH,
 )
 
 
@@ -109,6 +126,47 @@ def _previous_season(season: str) -> str:
     start_year = _season_start_year(season) - 1
     end_suffix = str(_season_start_year(season))[-2:]
     return f"{start_year}-{end_suffix}"
+
+
+def _normal_cdf(value: float) -> float:
+    return 0.5 * (1.0 + math.erf(value / math.sqrt(2.0)))
+
+
+def _close_game_probability(delta_mu: float, sigma_game: float, trigger: float = CLUTCH_MARGIN_TRIGGER) -> float:
+    sigma = max(float(sigma_game), 1e-6)
+    z_hi = (trigger - float(delta_mu)) / sigma
+    z_lo = (-trigger - float(delta_mu)) / sigma
+    return float(np.clip(_normal_cdf(z_hi) - _normal_cdf(z_lo), 0.0, 1.0))
+
+
+def _resolve_detailed_output_paths(
+    forecast_mode: bool,
+    output_path: Optional[Path],
+) -> Tuple[Path, Path]:
+    if forecast_mode and output_path is not None and output_path.stem.startswith("forecast_season_results_"):
+        suffix = output_path.stem.replace("forecast_season_results_", "")
+        return (
+            FORECAST_PLAYER_SEASON_STATS_PATH.with_name(f"forecast_step1_player_season_stats_{suffix}.parquet"),
+            FORECAST_PLAYER_GAME_SAMPLES_PATH.with_name(f"forecast_step1_player_game_samples_{suffix}.parquet"),
+        )
+    if forecast_mode:
+        return FORECAST_PLAYER_SEASON_STATS_PATH, FORECAST_PLAYER_GAME_SAMPLES_PATH
+    return STEP1_PLAYER_SEASON_STATS_PATH, STEP1_PLAYER_GAME_SAMPLES_PATH
+
+
+def _build_simulation_contexts(
+    forecast_mode: bool,
+    player_profiles_path: Optional[Path],
+) -> Tuple[List[Dict], Dict[str, Dict[str, Dict[str, float]]], pd.DataFrame, Dict[str, Dict[Tuple[str, str], Dict[str, float]]]]:
+    profile_path = player_profiles_path or (FORECAST_PLAYER_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PATH)
+    lineup_rows, _, _, _, _ = build_projected_lineup_rows(
+        forecast_mode=forecast_mode,
+        profiles_path=profile_path,
+    )
+    lineup_bonus_map = build_lineup_bonus_map(lineup_rows)
+    rosters = load_player_stat_profiles(profile_path, forecast_mode=forecast_mode)
+    matchup_map = build_pairwise_matchup_map(rosters)
+    return lineup_rows, lineup_bonus_map, rosters, matchup_map
 
 
 def _valid_games(schedule: List[Game], team_params: Dict) -> List[Game]:
@@ -155,7 +213,11 @@ def _build_margin_game_arrays(
     games: List[Game],
     team_params: Dict,
     config: SimConfig,
+    lineup_bonus_map: Optional[Dict[str, Dict[str, float]]] = None,
+    matchup_bonus_map: Optional[Dict[Tuple[str, str], Dict[str, float]]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
+    lineup_bonus_map = lineup_bonus_map or {}
+    matchup_bonus_map = matchup_bonus_map or {}
     n_games = len(games)
     delta_mus = np.zeros(n_games)
     sigma_games = np.zeros(n_games)
@@ -165,10 +227,25 @@ def _build_margin_game_arrays(
     for i, game in enumerate(games):
         home_p = team_params[game.home_team]
         away_p = team_params[game.away_team]
-        delta_mus[i] = (home_p.mu + config.home_court_advantage) - away_p.mu
         sigma_games[i] = np.sqrt(
             home_p.sigma ** 2 + away_p.sigma ** 2 + config.sigma_league ** 2
         )
+        home_lineup = lineup_bonus_map.get(game.home_team, {})
+        away_lineup = lineup_bonus_map.get(game.away_team, {})
+        matchup = matchup_bonus_map.get((game.home_team, game.away_team), {})
+
+        preclutch_delta = (
+            (home_p.mu + config.home_court_advantage) - away_p.mu
+            + float(home_lineup.get("team_bonus", 0.0))
+            - float(away_lineup.get("team_bonus", 0.0))
+            + float(matchup.get("spread_bonus", 0.0))
+        )
+        close_prob = _close_game_probability(preclutch_delta, sigma_games[i])
+        clutch_delta = close_prob * (
+            float(home_lineup.get("clutch_bonus", 0.0))
+            - float(away_lineup.get("clutch_bonus", 0.0))
+        )
+        delta_mus[i] = preclutch_delta + clutch_delta
         home_teams.append(game.home_team)
         away_teams.append(game.away_team)
 
@@ -293,7 +370,11 @@ def _build_ppp_game_arrays(
     season_ppp_components: Dict[str, Dict[str, float]],
     season_pace_map: Dict[str, float],
     impact_to_net_scale: float,
+    lineup_bonus_map: Optional[Dict[str, Dict[str, float]]] = None,
+    matchup_bonus_map: Optional[Dict[Tuple[str, str], Dict[str, float]]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
+    lineup_bonus_map = lineup_bonus_map or {}
+    matchup_bonus_map = matchup_bonus_map or {}
     n_games = len(games)
     delta_mus = np.zeros(n_games)
     sigma_games = np.zeros(n_games)
@@ -321,13 +402,29 @@ def _build_ppp_game_arrays(
         away_pace = float(season_pace_map.get(away_team, DEFAULT_PACE_PER_48))
         possessions = float(np.clip((home_pace + away_pace) / 2.0, 88.0, 112.0))
 
+        home_lineup = lineup_bonus_map.get(home_team, {})
+        away_lineup = lineup_bonus_map.get(away_team, {})
+        matchup = matchup_bonus_map.get((home_team, away_team), {})
+
         expected_ppp_home = LEAGUE_AVG_PPP + PPP_OFF_DEF_BLEND_WEIGHT * (home_off_ppp - away_def_ppp)
         expected_ppp_away = LEAGUE_AVG_PPP + PPP_OFF_DEF_BLEND_WEIGHT * (away_off_ppp - home_def_ppp)
+        expected_ppp_home += PPP_CONTEXT_BONUS_SCALE * (
+            float(home_lineup.get("team_bonus", 0.0)) + float(matchup.get("home_offense_bonus", 0.0))
+        )
+        expected_ppp_away += PPP_CONTEXT_BONUS_SCALE * (
+            float(away_lineup.get("team_bonus", 0.0)) + float(matchup.get("away_offense_bonus", 0.0))
+        )
         expected_ppp_home = float(np.clip(expected_ppp_home, PPP_MIN, PPP_MAX))
         expected_ppp_away = float(np.clip(expected_ppp_away, PPP_MIN, PPP_MAX))
 
-        delta_margin = (expected_ppp_home - expected_ppp_away) * possessions
-        delta_margin += config.home_court_advantage
+        preclutch_delta = (expected_ppp_home - expected_ppp_away) * possessions
+        preclutch_delta += config.home_court_advantage
+        preclutch_delta += float(matchup.get("spread_bonus", 0.0))
+        close_prob = _close_game_probability(preclutch_delta, max(1.0, possessions ** 0.5))
+        clutch_delta = close_prob * (
+            float(home_lineup.get("clutch_bonus", 0.0)) - float(away_lineup.get("clutch_bonus", 0.0))
+        )
+        delta_margin = preclutch_delta + clutch_delta
 
         sigma_base = np.sqrt(
             home_params.sigma ** 2 + away_params.sigma ** 2 + config.sigma_league ** 2
@@ -393,6 +490,101 @@ def simulate_season(
         n_sims=config.n_simulations,
         seed=config.random_seed,
     )
+
+
+def _sample_game_environment_rows(
+    games: List[Game],
+    team_params: Dict,
+    config: SimConfig,
+    season_ppp_components: Dict[str, Dict[str, float]],
+    season_pace_map: Dict[str, float],
+    impact_to_net_scale: float,
+    lineup_bonus_map: Dict[str, Dict[str, float]],
+    matchup_bonus_map: Dict[Tuple[str, str], Dict[str, float]],
+    model_key: str,
+    seed: int,
+) -> List[Dict[str, float]]:
+    rng = np.random.default_rng(seed)
+    rows: List[Dict[str, float]] = []
+
+    for game in games:
+        if game.home_team not in team_params or game.away_team not in team_params:
+            continue
+
+        home_team = game.home_team
+        away_team = game.away_team
+        home_params = team_params[home_team]
+        away_params = team_params[away_team]
+        home_lineup = lineup_bonus_map.get(home_team, {})
+        away_lineup = lineup_bonus_map.get(away_team, {})
+        matchup = matchup_bonus_map.get((home_team, away_team), {})
+
+        home_off = float(season_ppp_components.get(home_team, {}).get("offense", 0.0))
+        home_def = float(season_ppp_components.get(home_team, {}).get("defense", 0.0))
+        away_off = float(season_ppp_components.get(away_team, {}).get("offense", 0.0))
+        away_def = float(season_ppp_components.get(away_team, {}).get("defense", 0.0))
+
+        home_off_ppp = (home_off * impact_to_net_scale) / PPP_IMPACT_SCALE_PER100
+        home_def_ppp = (home_def * impact_to_net_scale) / PPP_IMPACT_SCALE_PER100
+        away_off_ppp = (away_off * impact_to_net_scale) / PPP_IMPACT_SCALE_PER100
+        away_def_ppp = (away_def * impact_to_net_scale) / PPP_IMPACT_SCALE_PER100
+
+        home_pace = float(season_pace_map.get(home_team, DEFAULT_PACE_PER_48))
+        away_pace = float(season_pace_map.get(away_team, DEFAULT_PACE_PER_48))
+        possessions = float(np.clip((home_pace + away_pace) / 2.0, 88.0, 112.0))
+
+        expected_ppp_home = LEAGUE_AVG_PPP + PPP_OFF_DEF_BLEND_WEIGHT * (home_off_ppp - away_def_ppp)
+        expected_ppp_away = LEAGUE_AVG_PPP + PPP_OFF_DEF_BLEND_WEIGHT * (away_off_ppp - home_def_ppp)
+        expected_ppp_home += PPP_CONTEXT_BONUS_SCALE * (
+            float(home_lineup.get("team_bonus", 0.0)) + float(matchup.get("home_offense_bonus", 0.0))
+        )
+        expected_ppp_away += PPP_CONTEXT_BONUS_SCALE * (
+            float(away_lineup.get("team_bonus", 0.0)) + float(matchup.get("away_offense_bonus", 0.0))
+        )
+        expected_ppp_home = float(np.clip(expected_ppp_home, PPP_MIN, PPP_MAX))
+        expected_ppp_away = float(np.clip(expected_ppp_away, PPP_MIN, PPP_MAX))
+
+        sigma_margin = float(np.sqrt(home_params.sigma ** 2 + away_params.sigma ** 2 + config.sigma_league ** 2))
+        base_margin = (home_params.mu + config.home_court_advantage) - away_params.mu
+        if model_key == SIM_MODEL_PPP:
+            base_margin = (expected_ppp_home - expected_ppp_away) * possessions + config.home_court_advantage
+
+        preclutch_margin = (
+            base_margin
+            + float(home_lineup.get("team_bonus", 0.0))
+            - float(away_lineup.get("team_bonus", 0.0))
+            + float(matchup.get("spread_bonus", 0.0))
+        )
+        sampled_margin = float(rng.normal(preclutch_margin, sigma_margin))
+        close_game = abs(sampled_margin) <= CLUTCH_MARGIN_TRIGGER
+        if close_game:
+            sampled_margin += float(home_lineup.get("clutch_bonus", 0.0)) - float(away_lineup.get("clutch_bonus", 0.0))
+
+        total_points_mean = possessions * (expected_ppp_home + expected_ppp_away)
+        total_points = float(rng.normal(total_points_mean, 11.0))
+        total_points = max(total_points, 168.0)
+        home_score = int(round((total_points + sampled_margin) / 2.0))
+        away_score = int(round(total_points - home_score))
+        home_score = max(home_score, 80)
+        away_score = max(away_score, 80)
+
+        rows.append(
+            {
+                "game_id": str(game.game_id),
+                "date": str(game.date),
+                "season": str(game.season),
+                "home_team": home_team,
+                "away_team": away_team,
+                "model": model_key,
+                "margin_mean": round(float(preclutch_margin), 4),
+                "preclutch_margin": round(float(preclutch_margin), 4),
+                "sampled_margin": round(float(sampled_margin), 4),
+                "possessions": round(possessions, 3),
+                "home_score": int(home_score),
+                "away_score": int(away_score),
+            }
+        )
+    return rows
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -597,6 +789,9 @@ def main(
     features_path: Path = None,
     player_profiles_path: Path = None,
     output_path: Path = None,
+    single_game_home: Optional[str] = None,
+    single_game_away: Optional[str] = None,
+    single_game_season: Optional[str] = None,
 ) -> None:
     mode_label = "FORECAST" if forecast_mode else "BACKTEST"
     print(f"Simulation Core — Step 1: Season Simulation (Layers 4-5) [{mode_label}]")
@@ -604,14 +799,69 @@ def main(
 
     src_path = features_path or (FORECAST_TEAM_FEATURES_PATH if forecast_mode else None)
     all_params = load_team_params(features_path=src_path)
+    profile_path = player_profiles_path or (FORECAST_PLAYER_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PATH)
 
     ppp_components_all = _load_team_ppp_components(
         forecast_mode=forecast_mode,
-        player_profiles_path=player_profiles_path,
+        player_profiles_path=profile_path,
     )
     pace_pred_all = _build_predicted_pace_map(all_params)
     impact_to_net_scale = _estimate_impact_to_net_scale(all_params, ppp_components_all)
+    lineup_rows, lineup_bonus_all, rosters, matchup_bonus_all = _build_simulation_contexts(
+        forecast_mode=forecast_mode,
+        player_profiles_path=profile_path,
+    )
     print(f"  PPP impact->net scale: {impact_to_net_scale:.4f}")
+    print(f"  Step 2 lineup contexts: {len(lineup_rows)} team-seasons")
+    print(f"  Player stat profiles: {len(rosters)} rows")
+
+    if single_game_home and single_game_away:
+        season = single_game_season or (sorted(all_params.keys())[-1] if all_params else None)
+        if not season or season not in all_params:
+            raise ValueError(f"Single-game season not available: {season}")
+        schedule = [
+            Game(
+                game_id=f"SINGLE_{season}_{single_game_home}_{single_game_away}",
+                date=f"{season[:4]}-10-01",
+                home_team=str(single_game_home).upper(),
+                away_team=str(single_game_away).upper(),
+                season=season,
+            )
+        ]
+        env_rows = _sample_game_environment_rows(
+            games=schedule,
+            team_params=all_params[season],
+            config=config,
+            season_ppp_components=ppp_components_all.get(season, {}),
+            season_pace_map=pace_pred_all.get(season, {}),
+            impact_to_net_scale=impact_to_net_scale,
+            lineup_bonus_map=lineup_bonus_all.get(season, {}),
+            matchup_bonus_map=matchup_bonus_all.get(season, {}),
+            model_key=SIM_MODEL_MARGIN,
+            seed=config.random_seed + 777,
+        )
+        season_rosters = rosters[rosters["season"] == season].copy()
+        season_df, game_df = simulate_detailed_season(
+            schedule=schedule,
+            rosters=season_rosters,
+            lineup_bonus_map={season: lineup_bonus_all.get(season, {})},
+            matchup_map={season: matchup_bonus_all.get(season, {})},
+            game_environment_rows=env_rows,
+            rng=np.random.default_rng(config.random_seed + 888),
+            model_key=SIM_MODEL_MARGIN,
+        )
+        report_path = FORECAST_SINGLE_GAME_REPORT_PATH if forecast_mode else STEP1_SINGLE_GAME_REPORT_PATH
+        report = {
+            "season": season,
+            "home_team": str(single_game_home).upper(),
+            "away_team": str(single_game_away).upper(),
+            "environment": env_rows[0] if env_rows else {},
+            "player_game_rows": game_df.to_dict(orient="records"),
+            "player_summary": season_df.to_dict(orient="records"),
+        }
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"\nSaved single-game simulation: {report_path}")
+        return
 
     full_results = {"config": {
         "sigma_league": config.sigma_league,
@@ -633,11 +883,15 @@ def main(
         "ppp_clip_max": PPP_MAX,
         "ppp_impact_to_net_scale": round(impact_to_net_scale, 6),
     }, "seasons": {}}
+    player_season_frames: List[pd.DataFrame] = []
+    player_game_frames: List[pd.DataFrame] = []
 
     for season in sorted(all_params.keys()):
         print(f"\n{'='*60}")
         print(f"  Season: {season}")
         params = all_params[season]
+        season_lineup_bonus = lineup_bonus_all.get(season, {})
+        season_matchup_bonus = matchup_bonus_all.get(season, {})
 
         # Build schedule: use actual games for backtest, synthetic for forecast.
         if forecast_mode:
@@ -668,6 +922,8 @@ def main(
                     season_ppp_components=season_ppp,
                     season_pace_map=season_pace,
                     impact_to_net_scale=impact_to_net_scale,
+                    lineup_bonus_map=season_lineup_bonus,
+                    matchup_bonus_map=season_matchup_bonus,
                 )
             else:
                 season_ppp = ppp_components_all.get(season, {})
@@ -676,6 +932,8 @@ def main(
                     games=games,
                     team_params=params,
                     config=config,
+                    lineup_bonus_map=season_lineup_bonus,
+                    matchup_bonus_map=season_matchup_bonus,
                 )
 
             win_dists = _simulate_from_game_arrays(
@@ -728,6 +986,33 @@ def main(
         default_model = SIM_MODEL_MARGIN if SIM_MODEL_MARGIN in season_team_results_by_model else list(season_team_results_by_model.keys())[0]
         default_summaries = season_team_results_by_model[default_model]
 
+        detailed_env_rows = _sample_game_environment_rows(
+            games=games,
+            team_params=params,
+            config=config,
+            season_ppp_components=ppp_components_all.get(season, {}),
+            season_pace_map=pace_pred_all.get(season, {}),
+            impact_to_net_scale=impact_to_net_scale,
+            lineup_bonus_map=season_lineup_bonus,
+            matchup_bonus_map=season_matchup_bonus,
+            model_key=default_model,
+            seed=config.random_seed + _season_start_year(season),
+        )
+        season_rosters = rosters[rosters["season"] == season].copy()
+        season_player_stats, season_game_stats = simulate_detailed_season(
+            schedule=games,
+            rosters=season_rosters,
+            lineup_bonus_map={season: season_lineup_bonus},
+            matchup_map={season: season_matchup_bonus},
+            game_environment_rows=detailed_env_rows,
+            rng=np.random.default_rng(config.random_seed + 1000 + _season_start_year(season)),
+            model_key=default_model,
+        )
+        if not season_player_stats.empty:
+            player_season_frames.append(season_player_stats)
+        if not season_game_stats.empty:
+            player_game_frames.append(season_game_stats)
+
         print(f"\n  Top 5 ({default_model}):")
         for s in default_summaries[:5]:
             act_str = f" (actual: {s.get('actual_wins', '?')})" if "actual_wins" in s else ""
@@ -750,14 +1035,44 @@ def main(
             "team_results": default_summaries,
             "team_results_by_model": season_team_results_by_model,
             "default_model": default_model,
+            "detailed_simulation": {
+                "player_rows": int(len(season_player_stats)),
+                "game_rows": int(len(season_game_stats)),
+                "sample_games": int(season_game_stats["game_id"].nunique()) if not season_game_stats.empty else 0,
+            },
         }
 
     # Save
     dst = output_path or (FORECAST_SEASON_RESULTS_PATH if forecast_mode else REPORTS_DIR / "simulation_step1_season_results.json")
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(full_results, indent=2), encoding="utf-8")
+    season_stats_path, game_samples_path = _resolve_detailed_output_paths(forecast_mode, dst)
+    if player_season_frames:
+        pd.concat(player_season_frames, ignore_index=True).to_parquet(season_stats_path, index=False)
+        print(f"Saved player season stats: {season_stats_path}")
+    if player_game_frames:
+        pd.concat(player_game_frames, ignore_index=True).to_parquet(game_samples_path, index=False)
+        print(f"Saved player game samples: {game_samples_path}")
     print(f"\nSaved: {dst}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run season simulation and detailed player stat simulation")
+    parser.add_argument("--forecast-mode", action="store_true", help="Use forecast artifacts instead of backtest artifacts")
+    parser.add_argument("--features-path", type=str, default=None, help="Optional team feature parquet override")
+    parser.add_argument("--player-profiles-path", type=str, default=None, help="Optional player profile parquet override")
+    parser.add_argument("--output-path", type=str, default=None, help="Optional season-results JSON output path override")
+    parser.add_argument("--single-game-home", type=str, default=None, help="Run a single detailed game simulation for the specified home team")
+    parser.add_argument("--single-game-away", type=str, default=None, help="Run a single detailed game simulation for the specified away team")
+    parser.add_argument("--single-game-season", type=str, default=None, help="Season for single-game mode (defaults to latest available)")
+    args = parser.parse_args()
+
+    main(
+        forecast_mode=args.forecast_mode,
+        features_path=Path(args.features_path) if args.features_path else None,
+        player_profiles_path=Path(args.player_profiles_path) if args.player_profiles_path else None,
+        output_path=Path(args.output_path) if args.output_path else None,
+        single_game_home=args.single_game_home,
+        single_game_away=args.single_game_away,
+        single_game_season=args.single_game_season,
+    )

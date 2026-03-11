@@ -8,6 +8,11 @@ tags:
   - docs
   - sync
   - headers
+triggers:
+  - "sync docs"
+  - "update readme"
+  - "docs sync"
+  - "headers"
 version: "1.0"
 last_updated: "2026-03-09"
 persona:
@@ -33,6 +38,8 @@ when_to_use:
 example_prompts:
   - "Sync docs after my last commit and patch missing headers."
   - "Check `readme.md` for pipeline order consistency with `src/` and update if needed."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Docs Sync Skill
 

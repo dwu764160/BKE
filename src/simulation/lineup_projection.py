@@ -74,8 +74,21 @@ from src.simulation.simulation_config import (
     STEP2_CLUTCH_CANDIDATE_SIZE,
     STEP2_CLUTCH_MAX_SWAPS,
     STEP2_CLUTCH_MIN_STARTERS,
+    STEP2_CANDIDATE_LIMIT,
+    STEP2_CANDIDATE_PER_BAND,
+    STEP2_CANDIDATE_PER_ROLE,
+    STEP2_CONTINUITY_DEFAULT_RETURNING,
+    STEP2_CONTINUITY_KAPPA,
+    STEP2_CONTINUITY_ROTATION_BONUS,
+    STEP2_CONTINUITY_STARTER_BONUS,
     STEP2_ENABLE_CLUTCH_CORE_CONSTRAINT,
+    STEP2_ENABLE_CONTINUITY_PRIOR,
     STEP2_ENABLE_ROTATION_REGIME_MODEL,
+    STEP2_FIT_CREATOR_BONUS,
+    STEP2_FIT_POA_BONUS,
+    STEP2_FIT_RIM_BONUS,
+    STEP2_FIT_SPACING_BONUS,
+    STEP2_FIT_STAGGER_BONUS,
     STEP2_IMPACT_COLUMN,
     STEP2_LINEUP_PROFILES_PATH,
     STEP2_LINEUP_REPORT_PATH,
@@ -513,6 +526,19 @@ class Step2Config:
     true_big_bands: Tuple[str, ...] = STEP2_STARTER_TRUE_BIG_BANDS
     low_minutes_threshold: float = STEP2_STARTER_LOW_MINUTES_THRESHOLD
     low_minutes_penalty: float = STEP2_STARTER_LOW_MINUTES_PENALTY
+    enable_continuity_prior: bool = STEP2_ENABLE_CONTINUITY_PRIOR
+    continuity_kappa: float = STEP2_CONTINUITY_KAPPA
+    continuity_default_returning: float = STEP2_CONTINUITY_DEFAULT_RETURNING
+    continuity_starter_bonus: float = STEP2_CONTINUITY_STARTER_BONUS
+    continuity_rotation_bonus: float = STEP2_CONTINUITY_ROTATION_BONUS
+    candidate_limit: int = STEP2_CANDIDATE_LIMIT
+    candidate_per_role: int = STEP2_CANDIDATE_PER_ROLE
+    candidate_per_band: int = STEP2_CANDIDATE_PER_BAND
+    fit_creator_bonus: float = STEP2_FIT_CREATOR_BONUS
+    fit_spacing_bonus: float = STEP2_FIT_SPACING_BONUS
+    fit_poa_bonus: float = STEP2_FIT_POA_BONUS
+    fit_rim_bonus: float = STEP2_FIT_RIM_BONUS
+    fit_stagger_bonus: float = STEP2_FIT_STAGGER_BONUS
 
 
 def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
@@ -685,6 +711,133 @@ def load_positions() -> pd.DataFrame:
     ]
 
 
+def _previous_season(season: str) -> str:
+    start_year = int(str(season)[:4]) - 1
+    end_suffix = str(int(str(season)[:4]))[-2:]
+    return f"{start_year}-{end_suffix}"
+
+
+def _load_returning_flags(players: pd.DataFrame) -> pd.DataFrame:
+    if players.empty or not PLAYER_PROFILES_PATH.exists():
+        players = players.copy()
+        players["is_returning_to_team"] = float(STEP2_CONTINUITY_DEFAULT_RETURNING)
+        players["continuity_factor"] = 1.0
+        return players
+
+    hist = pd.read_parquet(PLAYER_PROFILES_PATH, columns=["player_id", "season", "team_abbreviation"])
+    hist["player_id"] = _norm_id(hist["player_id"])
+    hist["season"] = hist["season"].astype(str)
+    hist["team_abbreviation"] = hist["team_abbreviation"].astype(str).str.upper()
+    prev_map = {
+        (str(row["player_id"]), str(row["season"])): str(row["team_abbreviation"])
+        for _, row in hist.iterrows()
+        if str(row["team_abbreviation"]).strip()
+    }
+
+    enriched = players.copy()
+    prev_teams = []
+    returning = []
+    for _, row in enriched[["player_id", "season", "team_abbreviation"]].iterrows():
+        prev_season = _previous_season(str(row["season"]))
+        prev_team = prev_map.get((str(row["player_id"]), prev_season))
+        prev_teams.append(prev_team)
+        returning.append(float(prev_team == str(row["team_abbreviation"])))
+
+    enriched["previous_team_abbreviation"] = prev_teams
+    enriched["is_returning_to_team"] = pd.Series(returning, index=enriched.index, dtype=float).fillna(
+        float(STEP2_CONTINUITY_DEFAULT_RETURNING)
+    )
+    enriched["continuity_factor"] = 1.0 - STEP2_CONTINUITY_KAPPA * (1.0 - enriched["is_returning_to_team"])
+    return enriched
+
+
+def _off_archetype_flags(frame: pd.DataFrame) -> Dict[str, pd.Series]:
+    off = frame.get("off_archetype", pd.Series("", index=frame.index)).fillna("").astype(str)
+    return {
+        "creator": off.isin({"Ball Dominant Creator", "Ballhandler", "All-Around Scorer", "Perimeter Scorer"}),
+        "spacer": off.isin({"Off-Ball Movement Shooter", "Off-Ball Stationary Shooter", "Perimeter Scorer", "PnR Popping Big"}),
+        "rim": off.isin({"Interior Scorer", "Off-Ball Finisher", "PnR Rolling Big"}),
+    }
+
+
+def _def_archetype_flags(frame: pd.DataFrame) -> Dict[str, pd.Series]:
+    deff = frame.get("def_archetype", pd.Series("", index=frame.index)).fillna("").astype(str)
+    return {
+        "poa": deff.isin({"POA Defender", "Wing Stopper", "Off-Ball Chaser"}),
+        "rim": deff.isin({"Rim Protector", "Dropping Big", "Mobile Big"}),
+    }
+
+
+def _lineup_fit_components(lineup_df: pd.DataFrame, cfg: Step2Config) -> Dict[str, float]:
+    if lineup_df.empty:
+        return {
+            "fit_score": 0.0,
+            "creator_share": 0.0,
+            "spacing_share": 0.0,
+            "poa_share": 0.0,
+            "rim_share": 0.0,
+            "continuity_share": 0.0,
+        }
+
+    minutes = np.maximum(lineup_df["minutes"].to_numpy(dtype=float), 1e-3)
+    weights = minutes / minutes.sum()
+    off_flags = _off_archetype_flags(lineup_df)
+    def_flags = _def_archetype_flags(lineup_df)
+
+    creator_share = float(np.dot(off_flags["creator"].astype(float).to_numpy(dtype=float), weights))
+    spacing_share = float(np.dot(off_flags["spacer"].astype(float).to_numpy(dtype=float), weights))
+    poa_share = float(np.dot(def_flags["poa"].astype(float).to_numpy(dtype=float), weights))
+    rim_share = float(np.dot(def_flags["rim"].astype(float).to_numpy(dtype=float), weights))
+    continuity_share = float(
+        np.dot(
+            pd.to_numeric(lineup_df.get("is_returning_to_team"), errors="coerce").fillna(0.0).to_numpy(dtype=float),
+            weights,
+        )
+    )
+    staggerable = float(np.mean(lineup_df["minutes"].to_numpy(dtype=float) >= cfg.stagger_minutes_threshold))
+
+    fit_score = (
+        cfg.fit_creator_bonus * creator_share
+        + cfg.fit_spacing_bonus * spacing_share
+        + cfg.fit_poa_bonus * poa_share
+        + cfg.fit_rim_bonus * rim_share
+        + cfg.fit_stagger_bonus * staggerable
+        + cfg.continuity_starter_bonus * continuity_share
+    )
+    return {
+        "fit_score": float(fit_score),
+        "creator_share": round(creator_share, 4),
+        "spacing_share": round(spacing_share, 4),
+        "poa_share": round(poa_share, 4),
+        "rim_share": round(rim_share, 4),
+        "continuity_share": round(continuity_share, 4),
+    }
+
+
+def _candidate_pool(
+    players: pd.DataFrame,
+    score_col: str,
+    cfg: Step2Config,
+    require_position_bands: Optional[Tuple[str, ...]] = None,
+) -> pd.DataFrame:
+    ranked = players.sort_values(score_col, ascending=False).reset_index(drop=True)
+    if len(ranked) <= cfg.candidate_limit:
+        return ranked.copy()
+
+    pieces = [ranked.head(cfg.candidate_limit)]
+    for _, role_frame in ranked.groupby("role", sort=False):
+        pieces.append(role_frame.head(cfg.candidate_per_role))
+
+    if require_position_bands:
+        band_mask = ranked["position_band"].astype(str).isin(set(require_position_bands))
+        if band_mask.any():
+            pieces.append(ranked.loc[band_mask].head(cfg.candidate_per_band))
+
+    combined = pd.concat(pieces, ignore_index=True)
+    combined = combined.drop_duplicates(subset=["player_id"], keep="first")
+    return combined.sort_values(score_col, ascending=False).reset_index(drop=True)
+
+
 def load_clutch_stats() -> pd.DataFrame:
     if not CLUTCH_STATS_ALL_PATH.exists():
         return pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
@@ -722,9 +875,10 @@ def _select_best_lineup(
     pool: pd.DataFrame,
     score_col: str,
     lineup_size: int,
+    cfg: Step2Config,
     require_position_bands: Optional[Tuple[str, ...]] = None,
 ) -> pd.DataFrame:
-    players = pool.sort_values(score_col, ascending=False).reset_index(drop=True)
+    players = _candidate_pool(pool, score_col, cfg, require_position_bands=require_position_bands)
     if len(players) <= lineup_size:
         return players.head(lineup_size).copy()
 
@@ -740,7 +894,8 @@ def _select_best_lineup(
             bands = set(chunk["position_band"].astype(str).tolist())
             if not bands.intersection(set(require_position_bands)):
                 continue
-        score = float(chunk[score_col].sum())
+        fit = _lineup_fit_components(chunk, cfg)
+        score = float(chunk[score_col].sum()) + float(fit["fit_score"])
         if score > best_score:
             best_score = score
             best_idx = combo
@@ -756,6 +911,7 @@ def _select_clutch_constrained(
     lineup_size: int,
     min_starters: int,
     max_swaps: int,
+    cfg: Step2Config,
 ) -> pd.DataFrame:
     """Select clutch lineup from candidates with starter carryover constraint.
 
@@ -763,7 +919,7 @@ def _select_clutch_constrained(
     `max_swaps` non-starters.  Falls back to best-score if no valid combo
     satisfies the G/W/B coverage requirement.
     """
-    players = candidates.sort_values("clutch_score", ascending=False).reset_index(drop=True)
+    players = _candidate_pool(candidates, "clutch_score", cfg)
     if len(players) <= lineup_size:
         return players.head(lineup_size).copy()
 
@@ -781,14 +937,15 @@ def _select_clutch_constrained(
         n_swaps = lineup_size - n_starters
         if n_swaps > max_swaps:
             continue
-        score = float(chunk["clutch_score"].sum())
+        fit = _lineup_fit_components(chunk, cfg)
+        score = float(chunk["clutch_score"].sum()) + float(fit["fit_score"])
         if score > best_score:
             best_score = score
             best_idx = combo
 
     if best_idx is None:
         # Fallback: relax constraint, just use best score with G/W/B coverage
-        return _select_best_lineup(candidates, "clutch_score", lineup_size)
+        return _select_best_lineup(candidates, "clutch_score", lineup_size, cfg)
     return players.iloc[list(best_idx)].copy()
 
 
@@ -819,6 +976,16 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
 
         lineup_pool["minutes_norm"] = lineup_pool["minutes"] / max(float(lineup_pool["minutes"].max()), 1e-6)
         lineup_pool["impact_norm"] = _minmax(lineup_pool["impact_value"])
+        team_mean_impact = _weighted_avg(
+            lineup_pool["impact_value"].to_numpy(dtype=float),
+            np.maximum(lineup_pool["minutes"].to_numpy(dtype=float), 1e-3),
+        )
+        lineup_pool["is_returning_to_team"] = pd.to_numeric(
+            lineup_pool.get("is_returning_to_team"), errors="coerce"
+        ).fillna(cfg.continuity_default_returning)
+        lineup_pool["continuity_factor"] = pd.to_numeric(
+            lineup_pool.get("continuity_factor"), errors="coerce"
+        ).fillna(1.0)
 
         team_clutch_total = float(lineup_pool["clutch_minutes"].sum())
         if team_clutch_total <= 1e-9:
@@ -863,6 +1030,14 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
                 + cfg.starter_weight_c * lineup_pool["clutch_share"]
             )
 
+        if cfg.enable_continuity_prior:
+            lineup_pool["starter_score"] = lineup_pool["starter_score"] + (
+                cfg.continuity_starter_bonus * lineup_pool["is_returning_to_team"]
+            )
+            lineup_pool["clutch_score"] = lineup_pool.get("clutch_score", pd.Series(0.0, index=lineup_pool.index)) + (
+                0.5 * cfg.continuity_starter_bonus * lineup_pool["is_returning_to_team"]
+            )
+
         # --- Constraint: penalize low-minutes starter candidates ---
         if cfg.low_minutes_penalty > 1.0:
             low_min_mask = lineup_pool["minutes"] < cfg.low_minutes_threshold
@@ -873,11 +1048,12 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
         # --- Select starters ---
         big_bands = cfg.true_big_bands if cfg.require_true_big else None
         starter_lineup = _select_best_lineup(
-            lineup_pool, "starter_score", cfg.lineup_size,
+            lineup_pool, "starter_score", cfg.lineup_size, cfg,
             require_position_bands=big_bands,
         )
         starter_mu, starter_sigma = _lineup_strength(starter_lineup)
         starter_ids = set(starter_lineup["player_id"].astype(str))
+        starter_fit = _lineup_fit_components(starter_lineup, cfg)
 
         # --- Select clutch lineup ---
         if cfg.forecast_mode:
@@ -889,7 +1065,11 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
                 + 0.20 * lineup_pool["minutes_norm"]
                 + 0.20 * lineup_pool["_is_starter"]
             )
-            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size)
+            if cfg.enable_continuity_prior:
+                lineup_pool["clutch_score"] = lineup_pool["clutch_score"] + (
+                    0.5 * cfg.continuity_starter_bonus * lineup_pool["is_returning_to_team"]
+                )
+            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size, cfg)
         elif cfg.enable_clutch_core and not cfg.forecast_mode:
             # v1 clutch core constraint: select from top-N candidates,
             # requiring >=min_starters from the starter lineup, with max swaps.
@@ -903,12 +1083,13 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
             candidates = candidates.drop_duplicates(subset=["player_id"], keep="first")
             clutch_lineup = _select_clutch_constrained(
                 candidates, starter_ids, cfg.lineup_size,
-                cfg.clutch_min_starters, cfg.clutch_max_swaps,
+                cfg.clutch_min_starters, cfg.clutch_max_swaps, cfg,
             )
         else:
-            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size)
+            clutch_lineup = _select_best_lineup(lineup_pool, "clutch_score", cfg.lineup_size, cfg)
 
         clutch_mu, clutch_sigma = _lineup_strength(clutch_lineup)
+        clutch_fit = _lineup_fit_components(clutch_lineup, cfg)
 
         # --- Rotation model ---
         bench = lineup_pool[~lineup_pool["player_id"].astype(str).isin(starter_ids)].copy()
@@ -956,6 +1137,15 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
         else:
             rotation_mu = cfg.rotation_alpha * stagger_mu + (1.0 - cfg.rotation_alpha) * bench_mu
             rotation_sigma = math.sqrt(max(bench_sigma_sq + 0.5 * stagger_sigma_sq, 0.0))
+
+        if cfg.enable_continuity_prior and not bench.empty:
+            bench_continuity = _weighted_avg(
+                pd.to_numeric(bench.get("is_returning_to_team"), errors="coerce").fillna(0.0).to_numpy(dtype=float),
+                np.maximum(bench["minutes"].to_numpy(dtype=float), 1e-3),
+            )
+            rotation_mu += cfg.continuity_rotation_bonus * bench_continuity
+        else:
+            bench_continuity = float(starter_fit["continuity_share"])
 
         def _pack_players(df: pd.DataFrame, score_col: str) -> List[Dict]:
             frame = df.sort_values(score_col, ascending=False)
@@ -1015,11 +1205,23 @@ def build_team_profiles(pool: pd.DataFrame, cfg: Step2Config, abbr_to_conf: Dict
                 "sigma_rotation": _safe_float(rotation_sigma),
                 "mu_clutch": _safe_float(clutch_mu),
                 "sigma_clutch": _safe_float(clutch_sigma),
+                "team_mean_impact": _safe_float(team_mean_impact),
+                "starter_delta_impact": _safe_float(starter_mu - team_mean_impact),
+                "rotation_delta_impact": _safe_float(rotation_mu - team_mean_impact),
+                "clutch_delta_impact": _safe_float(clutch_mu - starter_mu),
+                "starter_fit_score": _safe_float(starter_fit["fit_score"]),
+                "clutch_fit_score": _safe_float(clutch_fit["fit_score"]),
+                "continuity_score": _safe_float(starter_fit["continuity_share"]),
+                "bench_continuity_score": _safe_float(bench_continuity),
                 "starter_player_ids": [str(x) for x in starter_lineup["player_id"].tolist()],
                 "clutch_player_ids": [str(x) for x in clutch_lineup["player_id"].tolist()],
                 "starter_players": _pack_players(starter_lineup, "starter_score"),
                 "clutch_players": _pack_players(clutch_lineup, "clutch_score"),
                 "pool_players": _pack_pool(lineup_pool),
+                "fit_components": {
+                    "starter": starter_fit,
+                    "clutch": clutch_fit,
+                },
                 "rotation_breakdown": {
                     "bench_impact": _safe_float(bench_mu),
                     "stagger_impact": _safe_float(stagger_mu),
@@ -1276,6 +1478,48 @@ def attach_validation(
     }
 
 
+def build_projected_lineup_rows(
+    forecast_mode: bool = False,
+    profiles_path: Optional[Path] = None,
+) -> Tuple[List[Dict], pd.DataFrame, Dict[str, str], Dict[str, str], Dict[str, str]]:
+    cfg = Step2Config(forecast_mode=forecast_mode)
+    full_to_abbr, abbr_to_conf, team_id_to_abbr = _load_team_map()
+
+    from src.player_eval.constants import PROJECTED_PROFILES_PATH
+
+    if forecast_mode:
+        src = profiles_path or PROJECTED_PROFILES_PATH
+        if not src.exists():
+            raise FileNotFoundError(f"Projected profiles not found: {src}")
+        players = load_player_pool(cfg, source_path=src)
+    else:
+        players = load_player_pool(cfg)
+
+    positions = load_positions()
+    if forecast_mode:
+        clutch_model = pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
+    else:
+        clutch_model = load_clutch_stats()
+
+    players = players.merge(positions, on=["player_id", "season"], how="left")
+    players = players.merge(
+        clutch_model,
+        on=["player_id", "season", "team_abbreviation"],
+        how="left",
+    )
+    players["clutch_minutes"] = pd.to_numeric(players.get("clutch_minutes"), errors="coerce").fillna(0.0)
+    players["clutch_gp"] = pd.to_numeric(players.get("clutch_gp"), errors="coerce").fillna(0.0)
+    players = _load_returning_flags(players)
+
+    players["role"] = players["role_from_position"]
+    role_missing = players["role"].isna() | (players["role"].astype(str).str.strip() == "")
+    players.loc[role_missing, "role"] = players.loc[role_missing, "position_proxy"].map(_role_from_text)
+    players["role"] = players["role"].fillna("Wing")
+
+    predicted_rows = build_team_profiles(players, cfg, abbr_to_conf)
+    return predicted_rows, players, full_to_abbr, abbr_to_conf, team_id_to_abbr
+
+
 def main(
     forecast_mode: bool = False,
     profiles_path: Path = None,
@@ -1292,54 +1536,26 @@ def main(
         FORECAST_LINEUP_REPORT_PATH,
         FORECAST_VALIDATION_PATH,
     )
-    from src.player_eval.constants import PROJECTED_PROFILES_PATH
-
-    full_to_abbr, abbr_to_conf, team_id_to_abbr = _load_team_map()
-
-    # Load player pool from projected or actual profiles
-    if forecast_mode:
-        src = profiles_path or PROJECTED_PROFILES_PATH
-        if not src.exists():
-            raise FileNotFoundError(f"Projected profiles not found: {src}")
-        players = load_player_pool(cfg, source_path=src)
-    else:
-        players = load_player_pool(cfg)
-
-    positions = load_positions()
+    predicted_rows, players, full_to_abbr, abbr_to_conf, team_id_to_abbr = build_projected_lineup_rows(
+        forecast_mode=forecast_mode,
+        profiles_path=profiles_path,
+    )
 
     if forecast_mode:
-        # Keep forecast scoring leakage-safe: do not inject clutch minutes into the model pool.
-        clutch_model = pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
-        # Validation still uses the same observed targets as backtest when historical targets exist.
         clutch_validation = load_clutch_stats()
     else:
-        clutch_model = load_clutch_stats()
-        clutch_validation = clutch_model
+        clutch_validation = load_clutch_stats()
 
     lineups = load_metrics_lineups(full_to_abbr)
     starter_games = load_pbp_q1_starter_games(team_id_to_abbr)
 
     print(f"  Players loaded: {len(players)}")
-    print(f"  Positions loaded: {len(positions)}")
+    print(f"  Positions loaded: {players[['player_id', 'season']].drop_duplicates().shape[0]}")
     if forecast_mode:
         print("  Forecast scoring clutch source: disabled (leakage-safe)")
     print(f"  Clutch rows loaded for validation: {len(clutch_validation)}")
     print(f"  Lineup rows loaded for validation: {len(lineups)}")
     print(f"  Q1 starter game rows loaded for validation: {len(starter_games)}")
-
-    players = players.merge(positions, on=["player_id", "season"], how="left")
-    players = players.merge(
-        clutch_model,
-        on=["player_id", "season", "team_abbreviation"],
-        how="left",
-    )
-    players["clutch_minutes"] = pd.to_numeric(players.get("clutch_minutes"), errors="coerce").fillna(0.0)
-    players["clutch_gp"] = pd.to_numeric(players.get("clutch_gp"), errors="coerce").fillna(0.0)
-
-    players["role"] = players["role_from_position"]
-    role_missing = players["role"].isna() | (players["role"].astype(str).str.strip() == "")
-    players.loc[role_missing, "role"] = players.loc[role_missing, "position_proxy"].map(_role_from_text)
-    players["role"] = players["role"].fillna("Wing")
 
     player_name_lookup: Dict[Tuple[str, str, str], str] = {}
     for _, p in players[["season", "team_abbreviation", "player_id", "player_name"]].iterrows():
@@ -1352,7 +1568,6 @@ def main(
         key = (str(p.get("season", "")), str(p.get("team_abbreviation", "")).upper(), pid)
         player_name_lookup[key] = name
 
-    predicted_rows = build_team_profiles(players, cfg, abbr_to_conf)
     print(f"  Team-season profiles built: {len(predicted_rows)}")
 
     actual_starters, actual_clutch, actual_rotation_net, starter_meta = build_actual_maps(
@@ -1387,6 +1602,14 @@ def main(
                 "sigma_rotation": row["sigma_rotation"],
                 "mu_clutch": row["mu_clutch"],
                 "sigma_clutch": row["sigma_clutch"],
+                "team_mean_impact": row.get("team_mean_impact"),
+                "starter_delta_impact": row.get("starter_delta_impact"),
+                "rotation_delta_impact": row.get("rotation_delta_impact"),
+                "clutch_delta_impact": row.get("clutch_delta_impact"),
+                "starter_fit_score": row.get("starter_fit_score"),
+                "clutch_fit_score": row.get("clutch_fit_score"),
+                "continuity_score": row.get("continuity_score"),
+                "bench_continuity_score": row.get("bench_continuity_score"),
                 "starter_overlap": row.get("validation", {}).get("starter_overlap"),
                 "starter_overlap_rate": row.get("validation", {}).get("starter_overlap_rate"),
                 "clutch_overlap": row.get("validation", {}).get("clutch_overlap"),

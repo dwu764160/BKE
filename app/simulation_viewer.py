@@ -38,6 +38,8 @@ LINEUP_RESULTS = "reports/simulation_step2_lineup_profiles.json"
 FORECAST_RESULTS = "reports/forecast_season_results.json"
 FORECAST_VALIDATION = "reports/forecast_validation.json"
 FORECAST_LINEUP = "reports/forecast_lineup_profiles.json"
+PLAYER_STAT_VALIDATION = "reports/player_stat_sim_validation.json"
+PLAYER_STAT_VALIDATION_FORECAST = "reports/player_stat_sim_validation_forecast.json"
 OUTPUT_HTML = "app/simulation.html"
 
 
@@ -207,6 +209,14 @@ def generate_html(
         }
 
     data_blob["forecast"] = forecast_blob
+
+    # Load player stat sim validation data
+    player_stat_val = _load_json_if_exists(PLAYER_STAT_VALIDATION)
+    player_stat_val_forecast = _load_json_if_exists(PLAYER_STAT_VALIDATION_FORECAST)
+    data_blob["player_stat_sim"] = {
+        "backtest": player_stat_val,
+        "forecast": player_stat_val_forecast,
+    }
 
     data_json = json.dumps(data_blob, separators=(",", ":"))
     html = _build_html(data_json)
@@ -548,11 +558,13 @@ tr:hover { background:rgba(88,166,255,0.06); }
 <body>
 <div class="container">
   <h1>BKE Simulation Core</h1>
-  <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Step 1 Forecast + Step 2 Forecast</div>
+  <div class="subtitle">Step 1: Season Simulation + Step 2: Lineup Projection + Player Stat Sim + Single Game + Forecast</div>
 
   <div class="view-tabs" id="viewTabs">
-    <button class="view-tab active" data-view="step1View">Step 1: Season Simulation</button>
-    <button class="view-tab" data-view="step2View">Step 2: Lineup Projection</button>
+    <button class="view-tab active" data-view="step1View">Step 1: Season Sim</button>
+    <button class="view-tab" data-view="step2View">Step 2: Lineup</button>
+    <button class="view-tab" data-view="playerStatSimView">Player Stat Sim</button>
+    <button class="view-tab" data-view="singleGameView">Single Game Sim</button>
     <button class="view-tab" data-view="step1ForecastView">Step 1 Forecast</button>
     <button class="view-tab" data-view="step2ForecastView">Step 2 Forecast</button>
   </div>
@@ -567,6 +579,32 @@ tr:hover { background:rgba(88,166,255,0.06); }
       <div class="chart-box" style="flex:1"><h3>Calibration</h3><div id="calChart"></div></div>
     </div>
 
+    <div class="table-wrap"><div class="table-scroll" id="tableWrap"></div></div>
+  </div>
+
+  <div id="step2View" class="view-panel hidden">
+    <div class="season-tabs" id="lineupSeasonTabs"></div>
+    <div class="filter-tabs" id="step2ConferenceTabs"></div>
+    <div class="stats-row" id="lineupStatsRow"></div>
+    <div class="lineup-grid" id="lineupCardGrid"></div>
+  </div>
+
+  <div id="playerStatSimView" class="view-panel hidden">
+    <div class="model-tabs" id="pssModeTabs"></div>
+    <div class="season-tabs" id="pssSeasonTabs"></div>
+    <div class="filter-tabs" id="pssTeamTabs"></div>
+    <div class="stats-row" id="pssStatsRow"></div>
+    <div class="charts-row">
+      <div class="chart-box" style="flex:2"><h3>Simulated vs Actual PPG</h3><div id="pssPtsChart"></div></div>
+      <div class="chart-box" style="flex:1"><h3>Stat Accuracy Summary</h3><div id="pssAccChart"></div></div>
+    </div>
+    <div style="margin-bottom:10px">
+      <input type="text" id="pssSearch" placeholder="Search player name..." style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px 12px;width:300px;font-size:13px;">
+    </div>
+    <div class="table-wrap"><div class="table-scroll" id="pssTableWrap" style="max-height:80vh"></div></div>
+  </div>
+
+  <div id="singleGameView" class="view-panel hidden">
     <div class="single-game-box">
       <h3>Single Game Simulator</h3>
       <div class="sg-grid">
@@ -581,15 +619,6 @@ tr:hover { background:rgba(88,166,255,0.06); }
       </div>
       <div class="sg-result" id="sgResult">No game simulated yet.</div>
     </div>
-
-    <div class="table-wrap"><div class="table-scroll" id="tableWrap"></div></div>
-  </div>
-
-  <div id="step2View" class="view-panel hidden">
-    <div class="season-tabs" id="lineupSeasonTabs"></div>
-    <div class="filter-tabs" id="step2ConferenceTabs"></div>
-    <div class="stats-row" id="lineupStatsRow"></div>
-    <div class="lineup-grid" id="lineupCardGrid"></div>
   </div>
 
   <div id="step1ForecastView" class="view-panel hidden">
@@ -624,7 +653,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
   </div>
 
   <div class="footer">
-    BKE Simulation Core v1-v2 &mdash; Step 1 (season simulation), Step 2 (lineup projection), Step 1 Forecast, Step 2 Forecast.
+    BKE Simulation Core &mdash; Step 1 (season sim), Step 2 (lineup), Player Stat Sim, Single Game Sim, Forecast.
     &sigma;<sub>league</sub> = <span id="footSigma"></span>,
     HCA = <span id="footHCA"></span>,
     N = <span id="footN"></span>
@@ -635,6 +664,7 @@ tr:hover { background:rgba(88,166,255,0.06); }
 const DATA = __DATA_JSON__;
 const STEP2 = DATA.lineup_step2 || {};
 const FORECAST = DATA.forecast || {};
+const PSS_DATA = DATA.player_stat_sim || {};
 
 let currentSeason = null;
 let lineupSeason = null;
@@ -652,6 +682,12 @@ let forecastConferenceFilter = "all";
 let forecastLineupConferenceFilter = "all";
 let currentSimulatedGame = null;
 let activeView = "step1View";
+let pssMode = "backtest";
+let pssSeason = null;
+let pssTeamFilter = "all";
+let pssSortCol = "sim_pts";
+let pssSortDir = "desc";
+let pssSearchText = "";
 const STEP2_SEASON_PLAYER_MAP = {};
 const FORECAST_STEP2_SEASON_PLAYER_MAP = {};
 
@@ -985,6 +1021,11 @@ function initViewTabs() {
         renderStep1();
       } else if (activeView === "step2View") {
         renderStep2();
+      } else if (activeView === "playerStatSimView") {
+        initPlayerStatSimView();
+        renderPlayerStatSim();
+      } else if (activeView === "singleGameView") {
+        // already initialized
       } else if (activeView === "step1ForecastView") {
         renderForecast();
       } else if (activeView === "step2ForecastView") {
@@ -1506,7 +1547,7 @@ function runSingleGameSimulation() {
     context,
   };
 
-  renderSingleGameResult();
+  renderEnhancedSingleGameResult();
 }
 
 function renderSingleGameResult() {
@@ -2524,6 +2565,661 @@ function openForecastLineupModal(season, teamAbbr) {
 
   document.getElementById("lineupModalContent").innerHTML = html;
   document.getElementById("lineupModalOverlay").classList.add("open");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Player Stat Sim View
+// ═══════════════════════════════════════════════════════════════
+
+function getPssPayload() {
+  return (PSS_DATA && PSS_DATA[pssMode]) || {};
+}
+
+function getPssSeasons() {
+  const payload = getPssPayload();
+  return (payload && payload.seasons) || [];
+}
+
+function getPssPlayers() {
+  const payload = getPssPayload();
+  return (payload && payload.player_comparisons) || [];
+}
+
+function getPssTeams() {
+  const players = getPssPlayers();
+  const teams = new Set();
+  players.forEach(p => { if (p.team) teams.add(p.team); });
+  return Array.from(teams).sort();
+}
+
+function initPlayerStatSimView() {
+  // Mode tabs
+  const modeEl = document.getElementById("pssModeTabs");
+  const modes = [
+    { key: "backtest", label: "Backtest (Actual Seasons)" },
+    { key: "forecast", label: "Forecast" },
+  ];
+  modeEl.innerHTML = modes.map(m => `
+    <button class="model-tab${m.key === pssMode ? " active" : ""}" data-mode="${m.key}">${m.label}</button>
+  `).join("");
+  modeEl.querySelectorAll(".model-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      pssMode = btn.dataset.mode;
+      pssSeason = null;
+      pssTeamFilter = "all";
+      initPlayerStatSimView();
+      renderPlayerStatSim();
+    });
+  });
+
+  // Season tabs
+  const seasons = getPssSeasons();
+  const seasonEl = document.getElementById("pssSeasonTabs");
+  if (!pssSeason && seasons.length) pssSeason = seasons[seasons.length - 1];
+  if (pssSeason && !seasons.includes(pssSeason) && seasons.length) pssSeason = seasons[seasons.length - 1];
+  const allSeasons = ["all", ...seasons];
+  seasonEl.innerHTML = allSeasons.map(s => {
+    const label = s === "all" ? "All Seasons" : s;
+    return `<div class="season-tab${(pssSeason || "all") === s ? " active" : ""}" data-season="${s}">${label}</div>`;
+  }).join("");
+  seasonEl.querySelectorAll(".season-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      pssSeason = tab.dataset.season === "all" ? null : tab.dataset.season;
+      initPlayerStatSimView();
+      renderPlayerStatSim();
+    });
+  });
+
+  // Team filter
+  const teams = getPssTeams();
+  const teamEl = document.getElementById("pssTeamTabs");
+  const teamOptions = [{ key: "all", label: "All Teams" }, ...teams.map(t => ({ key: t, label: t }))];
+  teamEl.innerHTML = teamOptions.slice(0, 32).map(opt => `
+    <button class="filter-tab${opt.key === pssTeamFilter ? " active" : ""}" data-filter="${opt.key}">${opt.label}</button>
+  `).join("");
+  teamEl.querySelectorAll(".filter-tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      pssTeamFilter = btn.dataset.filter || "all";
+      renderPlayerStatSim();
+      // re-highlight
+      teamEl.querySelectorAll(".filter-tab").forEach(b => b.classList.toggle("active", b.dataset.filter === pssTeamFilter));
+    });
+  });
+
+  // Search
+  const searchEl = document.getElementById("pssSearch");
+  searchEl.value = pssSearchText;
+  searchEl.oninput = () => { pssSearchText = searchEl.value; renderPlayerStatSim(); };
+}
+
+function getFilteredPssPlayers() {
+  let players = getPssPlayers();
+  if (pssSeason) {
+    players = players.filter(p => p.season === pssSeason);
+  }
+  if (pssTeamFilter && pssTeamFilter !== "all") {
+    players = players.filter(p => p.team === pssTeamFilter);
+  }
+  if (pssSearchText) {
+    const q = pssSearchText.toLowerCase();
+    players = players.filter(p => (p.player_name || "").toLowerCase().includes(q));
+  }
+  return players;
+}
+
+function renderPlayerStatSim() {
+  const payload = getPssPayload();
+  if (!payload || !payload.stat_accuracy) {
+    document.getElementById("pssStatsRow").innerHTML = `
+      <div class="stat-card"><div class="label">Player Stat Sim</div><div class="value val-orange">No Data</div>
+      <div class="detail">Run: python3 scripts/validate_player_stat_sim.py</div></div>
+    `;
+    document.getElementById("pssPtsChart").innerHTML = "";
+    document.getElementById("pssAccChart").innerHTML = "";
+    document.getElementById("pssTableWrap").innerHTML = "";
+    return;
+  }
+
+  renderPssStats(payload);
+  renderPssCharts(payload);
+  renderPssTable();
+}
+
+function renderPssStats(payload) {
+  const acc = payload.stat_accuracy || {};
+  const pts = acc.pts || {};
+  const ast = acc.ast || {};
+  const reb = acc.reb || {};
+  const stl = acc.stl || {};
+  const blk = acc.blk || {};
+
+  const cards = [
+    { label: "Mode", value: (payload.mode || pssMode).toUpperCase(), cls: "val-purple", detail: payload.scenario || "default" },
+    { label: "Players", value: payload.n_compared || 0, cls: "val-accent", detail: `Matched comparisons` },
+    { label: "PTS r", value: pts.correlation != null ? pts.correlation.toFixed(3) : "-", cls: "val-green", detail: `MAE: ${pts.mae != null ? pts.mae.toFixed(2) : "-"}` },
+    { label: "PTS Bias", value: pts.bias != null ? (pts.bias >= 0 ? "+" : "") + pts.bias.toFixed(2) : "-", cls: pts.bias > 0.5 ? "val-orange" : "val-green", detail: `RMSE: ${pts.rmse != null ? pts.rmse.toFixed(2) : "-"}` },
+    { label: "AST r", value: ast.correlation != null ? ast.correlation.toFixed(3) : "-", cls: "val-green", detail: `MAE: ${ast.mae != null ? ast.mae.toFixed(2) : "-"}` },
+    { label: "REB r", value: reb.correlation != null ? reb.correlation.toFixed(3) : "-", cls: "val-green", detail: `MAE: ${reb.mae != null ? reb.mae.toFixed(2) : "-"}` },
+    { label: "STL r", value: stl.correlation != null ? stl.correlation.toFixed(3) : "-", cls: "val-green", detail: `MAE: ${stl.mae != null ? stl.mae.toFixed(2) : "-"}` },
+    { label: "BLK r", value: blk.correlation != null ? blk.correlation.toFixed(3) : "-", cls: "val-green", detail: `MAE: ${blk.mae != null ? blk.mae.toFixed(2) : "-"}` },
+    { label: "Seasons", value: (payload.seasons || []).join(", ") || "-", cls: "val-accent", detail: "Validated" },
+  ];
+
+  document.getElementById("pssStatsRow").innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value ${c.cls}">${c.value}</div>
+      <div class="detail">${c.detail}</div>
+    </div>
+  `).join("");
+}
+
+function renderPssCharts(payload) {
+  // Scatter plot: sim vs actual PPG
+  const players = getFilteredPssPlayers();
+  const chartEl = document.getElementById("pssPtsChart");
+
+  if (!players.length) {
+    chartEl.innerHTML = '<div style="color:var(--text-muted);padding:20px">No players to display</div>';
+    document.getElementById("pssAccChart").innerHTML = "";
+    return;
+  }
+
+  const w = 550, h = 400, pad = 50;
+  const plotW = w - 2 * pad, plotH = h - 2 * pad;
+  const maxPts = Math.max(35, ...players.map(p => Math.max(p.sim_pts || 0, p.actual_pts || 0)));
+
+  let svg = `<svg width="100%" viewBox="0 0 ${w} ${h}">`;
+  // Diagonal
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad}" stroke="var(--text-muted)" stroke-dasharray="4,3" opacity="0.4"/>`;
+  // Axes
+  svg += `<line x1="${pad}" y1="${pad + plotH}" x2="${pad + plotW}" y2="${pad + plotH}" stroke="var(--border)"/>`;
+  svg += `<line x1="${pad}" y1="${pad}" x2="${pad}" y2="${pad + plotH}" stroke="var(--border)"/>`;
+  svg += `<text x="${w/2}" y="${h - 6}" text-anchor="middle" font-size="11" fill="var(--text-muted)">Actual PPG</text>`;
+  svg += `<text x="12" y="${h/2}" text-anchor="middle" font-size="11" fill="var(--text-muted)" transform="rotate(-90,12,${h/2})">Simulated PPG</text>`;
+
+  for (let v = 0; v <= maxPts; v += 5) {
+    const x = pad + (v / maxPts) * plotW;
+    const y = pad + plotH - (v / maxPts) * plotH;
+    svg += `<text x="${x}" y="${pad + plotH + 14}" text-anchor="middle" font-size="9" fill="var(--text-muted)">${v}</text>`;
+    svg += `<text x="${pad - 6}" y="${y + 3}" text-anchor="end" font-size="9" fill="var(--text-muted)">${v}</text>`;
+  }
+
+  players.forEach(p => {
+    if (p.actual_pts == null || p.sim_pts == null) return;
+    const x = pad + (p.actual_pts / maxPts) * plotW;
+    const y = pad + plotH - (p.sim_pts / maxPts) * plotH;
+    const delta = Math.abs(p.sim_pts - p.actual_pts);
+    const color = delta <= 2 ? "var(--green)" : delta <= 5 ? "var(--orange)" : "var(--red)";
+    svg += `<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" opacity="0.7"><title>${p.player_name}: sim=${p.sim_pts?.toFixed(1)} actual=${p.actual_pts?.toFixed(1)}</title></circle>`;
+  });
+
+  svg += "</svg>";
+  chartEl.innerHTML = svg;
+
+  // Accuracy bar chart
+  const accEl = document.getElementById("pssAccChart");
+  const acc = payload.stat_accuracy || {};
+  const statKeys = ["pts", "ast", "reb", "stl", "blk", "tov"];
+  const barW = 280, barH = statKeys.length * 30 + 30;
+  let bSvg = `<svg width="100%" viewBox="0 0 ${barW} ${barH}">`;
+  statKeys.forEach((k, i) => {
+    const a = acc[k] || {};
+    const corr = a.correlation || 0;
+    const y = 15 + i * 30;
+    const barLen = Math.max(0, corr) * 180;
+    const color = corr >= 0.95 ? "var(--green)" : corr >= 0.85 ? "var(--accent)" : "var(--orange)";
+    bSvg += `<text x="35" y="${y + 14}" text-anchor="end" font-size="12" fill="var(--text-muted)">${k.toUpperCase()}</text>`;
+    bSvg += `<rect x="40" y="${y + 2}" width="${barLen}" height="16" rx="3" fill="${color}" opacity="0.7"/>`;
+    bSvg += `<text x="${45 + barLen}" y="${y + 14}" font-size="11" fill="var(--text)">${corr.toFixed(3)}</text>`;
+  });
+  bSvg += "</svg>";
+  accEl.innerHTML = bSvg;
+}
+
+function renderPssTable() {
+  let players = getFilteredPssPlayers();
+  // Sort
+  players.sort((a, b) => {
+    let va = a[pssSortCol] ?? 0, vb = b[pssSortCol] ?? 0;
+    return pssSortDir === "asc" ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+  });
+
+  const cols = [
+    { key: "player_name", label: "Player", cls: "team" },
+    { key: "season", label: "Season", cls: "num" },
+    { key: "team", label: "Team", cls: "num" },
+    { key: "archetype", label: "Archetype", cls: "" },
+    { key: "sim_gp", label: "Sim GP", cls: "num", fmt: v => v != null ? Math.round(v) : "-" },
+    { key: "actual_gp", label: "Act GP", cls: "num", fmt: v => v != null ? Math.round(v) : "-" },
+    { key: "sim_mpg", label: "Sim MPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_mpg", label: "Act MPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_pts", label: "Sim PPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_pts", label: "Act PPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "delta_pts", label: "Δ PTS", cls: "num", fmt: v => { if (v == null) return "-"; const c = Math.abs(v) <= 2 ? "err-good" : Math.abs(v) <= 5 ? "err-ok" : "err-bad"; return `<span class="${c}">${v >= 0 ? "+" : ""}${v.toFixed(1)}</span>`; } },
+    { key: "sim_ast", label: "Sim APG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_ast", label: "Act APG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "delta_ast", label: "Δ AST", cls: "num", fmt: v => { if (v == null) return "-"; const c = Math.abs(v) <= 1 ? "err-good" : Math.abs(v) <= 2 ? "err-ok" : "err-bad"; return `<span class="${c}">${v >= 0 ? "+" : ""}${v.toFixed(1)}</span>`; } },
+    { key: "sim_reb", label: "Sim RPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_reb", label: "Act RPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "delta_reb", label: "Δ REB", cls: "num", fmt: v => { if (v == null) return "-"; const c = Math.abs(v) <= 1 ? "err-good" : Math.abs(v) <= 2 ? "err-ok" : "err-bad"; return `<span class="${c}">${v >= 0 ? "+" : ""}${v.toFixed(1)}</span>`; } },
+    { key: "sim_stl", label: "Sim SPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_stl", label: "Act SPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_blk", label: "Sim BPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_blk", label: "Act BPG", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_tov", label: "Sim TOV", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_tov", label: "Act TOV", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_fga", label: "Sim FGA", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_fga", label: "Act FGA", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_fg3m", label: "Sim 3PM", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_fg3m", label: "Act 3PM", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "sim_ftm", label: "Sim FTM", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+    { key: "actual_ftm", label: "Act FTM", cls: "num", fmt: v => v != null ? v.toFixed(1) : "-" },
+  ];
+
+  let html = "<table><thead><tr>";
+  cols.forEach(c => {
+    const cls = c.key === pssSortCol ? (pssSortDir === "asc" ? "sorted-asc" : "sorted-desc") : "";
+    html += `<th class="${cls}" data-col="${c.key}">${c.label}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+
+  players.forEach(p => {
+    html += "<tr>";
+    cols.forEach(c => {
+      const raw = p[c.key];
+      const display = c.fmt ? c.fmt(raw) : (raw != null ? raw : "-");
+      html += `<td class="${c.cls || ""}">${display}</td>`;
+    });
+    html += "</tr>";
+  });
+  html += "</tbody></table>";
+
+  document.getElementById("pssTableWrap").innerHTML = html;
+  document.querySelectorAll("#pssTableWrap th").forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (pssSortCol === col) {
+        pssSortDir = pssSortDir === "asc" ? "desc" : "asc";
+      } else {
+        pssSortCol = col;
+        pssSortDir = col === "player_name" || col === "team" || col === "season" ? "asc" : "desc";
+      }
+      renderPssTable();
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Enhanced Single Game Simulator (own tab)
+// ═══════════════════════════════════════════════════════════════
+
+function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore, oppScore, possessions, isHome, closeGame) {
+  const players = [];
+  if (!teamStep2) return players;
+
+  const allPlayers = [
+    ...(teamStep2.starter_players || []).map(p => ({...p, phase: "Starter"})),
+    ...(teamStep2.clutch_players || []).filter(p => {
+      const starters = (teamStep2.starter_players || []).map(s => s.player_id);
+      return !starters.includes(p.player_id);
+    }).map(p => ({...p, phase: "Clutch"})),
+  ];
+
+  // Build pool from starter + clutch, dedup by player_id
+  const seen = new Set();
+  const rosterPool = [];
+  (teamStep2.pool_players || teamStep2.starter_players || []).forEach(p => {
+    if (!seen.has(p.player_id)) { seen.add(p.player_id); rosterPool.push({...p, phase: "Pool"}); }
+  });
+  allPlayers.forEach(p => {
+    if (!seen.has(p.player_id)) { seen.add(p.player_id); rosterPool.push(p); }
+  });
+
+  // Allocate minutes across pool
+  const totalMinutes = 240;
+  let weights = rosterPool.map(p => Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 4));
+  const starterIds = new Set((teamStep2.starter_players || []).map(p => p.player_id));
+  const clutchIds = new Set((teamStep2.clutch_players || []).map(p => p.player_id));
+
+  weights = weights.map((w, i) => {
+    let m = w;
+    if (starterIds.has(rosterPool[i].player_id)) m *= 1.14;
+    if (clutchIds.has(rosterPool[i].player_id)) m *= 1.05;
+    if (!starterIds.has(rosterPool[i].player_id)) m *= 0.92;
+    return Math.max(m, 2);
+  });
+  const wSum = weights.reduce((a, b) => a + b, 0);
+  const minutes = weights.map(w => Math.min(40, Math.max(4, totalMinutes * w / wSum)));
+  const mSum = minutes.reduce((a, b) => a + b, 0);
+  const minutesFinal = minutes.map(m => totalMinutes * m / mSum);
+
+  // Compute opponent descriptors for matchup
+  const oppStyle = summarizeTeamStyle(opponentStep2);
+
+  // Simulate stats for each player
+  let totalPts = 0;
+  rosterPool.forEach((p, i) => {
+    const min = minutesFinal[i];
+    const off = (cleanText(p.off_archetype) || "Unknown").toLowerCase();
+    const def = (cleanText(p.def_archetype) || "Unknown").toLowerCase();
+    const impact = numOrZero(p.impact) || numOrZero(p.score) || 0;
+
+    // Archetype matchup adjustments
+    let scoringEff = 1.0, threeEff = 1.0, tovMult = 1.0, astMult = 1.0, rebMult = 1.0, stocksMult = 1.0;
+    const oppPoa = oppStyle.poa / 5;
+    const oppRimDef = oppStyle.rimDefense / 5;
+    const oppVersatile = oppStyle.switchability / 5;
+    const oppCreation = oppStyle.creation / 5;
+    const oppRimPressure = oppStyle.rimPressure / 5;
+
+    if (/(ball dominant|ballhandler|perimeter|all-around|creator)/.test(off)) {
+      scoringEff -= 0.08 * oppPoa;
+      tovMult += 0.16 * (oppPoa + oppVersatile);
+      astMult -= 0.07 * oppPoa;
+    }
+    if (/(shooter|popping)/.test(off)) {
+      threeEff -= 0.09 * oppVersatile;
+      threeEff += 0.06 * (1 - oppVersatile);
+    }
+    if (/(interior|finisher|rolling|rim)/.test(off)) {
+      scoringEff -= 0.10 * oppRimDef;
+      rebMult += 0.05 * (1 - oppRimDef);
+    }
+    if (/(poa|wing stopper|chaser)/.test(def)) {
+      stocksMult += 0.12 * oppCreation;
+    }
+    if (/(rim protector|dropping|mobile big)/.test(def)) {
+      stocksMult += 0.10 * oppRimPressure;
+      rebMult += 0.05;
+    }
+
+    // Base rates (estimated from impact/minutes/archetype)
+    const baseUsage = 0.15 + 0.25 * Math.min(1, Math.max(0, impact / 60));
+    const baseFga = Math.max(4, 12 * baseUsage * 2.5) * (min / 36);
+    const baseFta = Math.max(1, 3 * baseUsage * 2.5) * (min / 36);
+    const fg3Share = /(shooter|perimeter|popping)/.test(off) ? 0.45 : /(interior|rolling|finisher)/.test(off) ? 0.05 : 0.30;
+    const fg2Pct = /(interior|rolling|finisher)/.test(off) ? 0.58 : 0.48;
+    const fg3Pct = /(shooter)/.test(off) ? 0.38 : 0.34;
+    const ftPct = 0.77;
+
+    const fga = Math.round(baseFga * scoringEff + (Math.random() - 0.5) * 3);
+    const fg3a = Math.round(Math.min(fga, fga * fg3Share) + (Math.random() - 0.5) * 1);
+    const fg2a = Math.max(0, fga - Math.max(0, fg3a));
+    const fg2m = Math.round(fg2a * fg2Pct * scoringEff);
+    const fg3m = Math.round(Math.max(0, fg3a) * fg3Pct * threeEff);
+    const fta = Math.max(0, Math.round(baseFta * scoringEff + (Math.random() - 0.5) * 2));
+    const ftm = Math.round(fta * ftPct);
+    const pts = 2 * fg2m + 3 * fg3m + ftm;
+    const ast = Math.max(0, Math.round((/(ball dominant|ballhandler|creator|playmaking)/.test(off) ? 6 : 2) * (min / 36) * astMult + (Math.random() - 0.5) * 2));
+    const reb = Math.max(0, Math.round((/(interior|rolling|big|center)/.test(off) ? 8 : 4) * (min / 36) * rebMult + (Math.random() - 0.5) * 2));
+    const stl = Math.max(0, Math.round(1.0 * (min / 36) * stocksMult + (Math.random() - 0.5) * 0.8));
+    const blk = Math.max(0, Math.round((/(rim protector|interior|big)/.test(off + " " + def) ? 1.5 : 0.4) * (min / 36) * stocksMult + (Math.random() - 0.5) * 0.8));
+    const tov = Math.max(0, Math.round(1.5 * baseUsage * 5 * (min / 36) * tovMult + (Math.random() - 0.5) * 1));
+    const pf = Math.max(0, Math.round(2.5 * (min / 36) + (Math.random() - 0.5) * 1));
+
+    totalPts += pts;
+
+    players.push({
+      name: cleanNameLabel(p.player_name) || `ID ${cleanText(p.player_id) || "?"}`,
+      player_id: p.player_id,
+      phase: starterIds.has(p.player_id) ? "Starter" : clutchIds.has(p.player_id) ? "Clutch" : "Bench",
+      off_archetype: cleanText(p.off_archetype) || "Unknown",
+      def_archetype: cleanText(p.def_archetype) || "Unknown",
+      role: cleanText(p.role) || cleanText(p.position_band) || "-",
+      minutes: Math.round(min * 10) / 10,
+      pts, ast, reb, stl, blk, tov, pf,
+      fga: Math.max(0, fga), fgm: fg2m + fg3m, fg3a: Math.max(0, fg3a), fg3m, fta, ftm,
+      impact: numOrZero(impact).toFixed(2),
+      adjustments: {
+        scoring_eff: Math.round(scoringEff * 1000) / 1000,
+        three_eff: Math.round(threeEff * 1000) / 1000,
+        tov_mult: Math.round(tovMult * 1000) / 1000,
+        ast_mult: Math.round(astMult * 1000) / 1000,
+        reb_mult: Math.round(rebMult * 1000) / 1000,
+        stocks_mult: Math.round(stocksMult * 1000) / 1000,
+      },
+    });
+  });
+
+  // Reconcile to team score
+  if (totalPts > 0 && teamScore > 0) {
+    const scale = teamScore / totalPts;
+    players.forEach(p => {
+      p.pts = Math.round(p.pts * scale);
+    });
+  }
+
+  return players;
+}
+
+function renderEnhancedSingleGameResult() {
+  const el = document.getElementById("sgResult");
+  if (!currentSimulatedGame) {
+    el.innerHTML = "No game simulated yet.";
+    return;
+  }
+  const g = currentSimulatedGame;
+  const ctx = g.context || {};
+  const drivers = ctx.drivers || {};
+  const phase = ctx.phaseEdges || {};
+  const h2h = ctx.headToHead || [];
+
+  // Simulate player stats for both teams
+  const homePoss = 100;
+  const homeScore = Math.round(Math.max(85, 110 + g.sampledMargin / 2 + (Math.random() - 0.5) * 8));
+  const awayScore = Math.round(Math.max(85, 110 - g.sampledMargin / 2 + (Math.random() - 0.5) * 8));
+  const closeGame = Math.abs(g.sampledMargin) <= 7.5;
+
+  const homePlayerStats = simulatePlayerGameStats(
+    getTeamEntry(g.homeSeason, g.homeTeam),
+    ctx.homeStep2, ctx.awayStep2, homeScore, awayScore, homePoss, true, closeGame
+  );
+  const awayPlayerStats = simulatePlayerGameStats(
+    getTeamEntry(g.awaySeason, g.awayTeam),
+    ctx.awayStep2, ctx.homeStep2, awayScore, homeScore, homePoss, false, closeGame
+  );
+
+  const h2hHtml = renderHeadToHeadBars(g.homeTeam, g.awayTeam, h2h);
+  const contribHome = renderContributors(`${g.homeTeam} Impact Drivers`, "home", (ctx.contributors || {}).home || []);
+  const contribAway = renderContributors(`${g.awayTeam} Impact Drivers`, "away", (ctx.contributors || {}).away || []);
+
+  const sampledWinnerClass = g.sampledMargin >= 0 ? "sg-badge-home" : "sg-badge-away";
+
+  // Build lineup phase bonus section
+  const homeStep2 = ctx.homeStep2 || {};
+  const awayStep2 = ctx.awayStep2 || {};
+  const lineupPhasesHtml = `
+    <div class="sg-card">
+      <h4>Lineup Phase Bonuses & Penalties</h4>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-weight:700;color:var(--accent);margin-bottom:6px">${g.homeTeam} (Home)</div>
+          <div class="sg-list">
+            <div class="row"><span class="k">Starter Mu</span><span class="v">${fmt(homeStep2.mu_start, 2)}</span></div>
+            <div class="row"><span class="k">Rotation Mu</span><span class="v">${fmt(homeStep2.mu_rotation, 2)}</span></div>
+            <div class="row"><span class="k">Clutch Mu</span><span class="v">${fmt(homeStep2.mu_clutch, 2)}</span></div>
+            <div class="row"><span class="k">Continuity</span><span class="v">${fmt(homeStep2.continuity_score, 2)}</span></div>
+            <div class="row"><span class="k">Starter Fit</span><span class="v">${fmt(homeStep2.starter_fit_score, 2)}</span></div>
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--orange);margin-bottom:6px">${g.awayTeam} (Away)</div>
+          <div class="sg-list">
+            <div class="row"><span class="k">Starter Mu</span><span class="v">${fmt(awayStep2.mu_start, 2)}</span></div>
+            <div class="row"><span class="k">Rotation Mu</span><span class="v">${fmt(awayStep2.mu_rotation, 2)}</span></div>
+            <div class="row"><span class="k">Clutch Mu</span><span class="v">${fmt(awayStep2.mu_clutch, 2)}</span></div>
+            <div class="row"><span class="k">Continuity</span><span class="v">${fmt(awayStep2.continuity_score, 2)}</span></div>
+            <div class="row"><span class="k">Starter Fit</span><span class="v">${fmt(awayStep2.starter_fit_score, 2)}</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Build player stats table for both teams
+  function renderPlayerStatsTable(teamName, color, playerStats) {
+    if (!playerStats.length) return `<div style="color:var(--text-muted)">No Step 2 data for ${teamName}</div>`;
+    return `
+      <div style="margin-top:10px">
+        <div style="font-weight:700;color:${color};margin-bottom:6px;font-size:13px">${teamName} Player Stats</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;font-size:11px">
+            <thead><tr>
+              <th style="text-align:left">Player</th>
+              <th>Phase</th>
+              <th>OFF Arch</th>
+              <th>DEF Arch</th>
+              <th>MIN</th>
+              <th>PTS</th>
+              <th>AST</th>
+              <th>REB</th>
+              <th>STL</th>
+              <th>BLK</th>
+              <th>TOV</th>
+              <th>FGM-A</th>
+              <th>3PM-A</th>
+              <th>FTM-A</th>
+              <th>Score Eff</th>
+              <th>3pt Eff</th>
+              <th>TOV Mult</th>
+              <th>STK Mult</th>
+            </tr></thead>
+            <tbody>
+              ${playerStats.map(p => {
+                const adj = p.adjustments || {};
+                const phaseColor = p.phase === "Starter" ? "var(--green)" : p.phase === "Clutch" ? "var(--yellow)" : "var(--text-muted)";
+                const effColor = (v) => v < 0.95 ? "var(--red)" : v > 1.05 ? "var(--green)" : "var(--text)";
+                return `<tr>
+                  <td style="text-align:left;font-weight:600;white-space:nowrap">${p.name}</td>
+                  <td style="color:${phaseColor}">${p.phase}</td>
+                  <td style="font-size:10px">${p.off_archetype}</td>
+                  <td style="font-size:10px">${p.def_archetype}</td>
+                  <td class="num">${p.minutes.toFixed(1)}</td>
+                  <td class="num" style="font-weight:700">${p.pts}</td>
+                  <td class="num">${p.ast}</td>
+                  <td class="num">${p.reb}</td>
+                  <td class="num">${p.stl}</td>
+                  <td class="num">${p.blk}</td>
+                  <td class="num">${p.tov}</td>
+                  <td class="num">${p.fgm}-${p.fga}</td>
+                  <td class="num">${p.fg3m}-${p.fg3a}</td>
+                  <td class="num">${p.ftm}-${p.fta}</td>
+                  <td class="num" style="color:${effColor(adj.scoring_eff)}">${adj.scoring_eff}</td>
+                  <td class="num" style="color:${effColor(adj.three_eff)}">${adj.three_eff}</td>
+                  <td class="num" style="color:${effColor(1/adj.tov_mult)}">${adj.tov_mult}</td>
+                  <td class="num" style="color:${effColor(adj.stocks_mult)}">${adj.stocks_mult}</td>
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  // Archetype interaction summary
+  const homeArchs = new Set(homePlayerStats.filter(p => p.phase === "Starter").map(p => p.off_archetype));
+  const awayArchs = new Set(awayPlayerStats.filter(p => p.phase === "Starter").map(p => p.off_archetype));
+  const homeDefArchs = new Set(homePlayerStats.filter(p => p.phase === "Starter").map(p => p.def_archetype));
+  const awayDefArchs = new Set(awayPlayerStats.filter(p => p.phase === "Starter").map(p => p.def_archetype));
+
+  function archInteraction(offArchs, defArchs, teamName) {
+    const interactions = [];
+    const creators = ["Ball Dominant Creator", "Ballhandler", "All-Around Scorer", "Perimeter Scorer"];
+    const shooters = ["Off-Ball Movement Shooter", "Off-Ball Stationary Shooter", "PnR Popping Big"];
+    const rimOff = ["Interior Scorer", "Off-Ball Finisher", "PnR Rolling Big"];
+    const poaDef = ["POA Defender", "Wing Stopper", "Off-Ball Chaser"];
+    const rimDef = ["Rim Protector", "Dropping Big", "Mobile Big"];
+
+    creators.forEach(a => { if (offArchs.has(a)) {
+      poaDef.forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "Scoring/AST penalized", type: "penalty"}); });
+    }});
+    shooters.forEach(a => { if (offArchs.has(a)) {
+      ["Versatile Defender", "Wing Stopper"].forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "3PT efficiency reduced", type: "penalty"}); });
+      ["Dropping Big"].forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "3PT efficiency boosted", type: "bonus"}); });
+    }});
+    rimOff.forEach(a => { if (offArchs.has(a)) {
+      rimDef.forEach(d => { if (defArchs.has(d)) interactions.push({off: a, def: d, effect: "Scoring efficiency reduced", type: "penalty"}); });
+    }});
+    return interactions;
+  }
+
+  const homeVsAwayInteractions = archInteraction(homeArchs, awayDefArchs, g.homeTeam);
+  const awayVsHomeInteractions = archInteraction(awayArchs, homeDefArchs, g.awayTeam);
+
+  function renderInteractions(interactions, offTeam, defTeam) {
+    if (!interactions.length) return `<div style="color:var(--text-muted);font-size:12px">No specific archetype interactions detected</div>`;
+    return interactions.map(i => {
+      const color = i.type === "penalty" ? "var(--red)" : "var(--green)";
+      const icon = i.type === "penalty" ? "▼" : "▲";
+      return `<div style="font-size:12px;margin-bottom:4px;display:flex;gap:8px;align-items:center">
+        <span style="color:${color};font-weight:700">${icon}</span>
+        <span>${offTeam} <span style="color:var(--accent)">${i.off}</span> vs ${defTeam} <span style="color:var(--orange)">${i.def}</span>: <span style="color:${color}">${i.effect}</span></span>
+      </div>`;
+    }).join("");
+  }
+
+  el.innerHTML = `
+    <div class="sg-header">
+      <div class="sg-matchup">
+        <span class="sg-badge-home">${g.homeTeam} (${g.homeSeason})</span> vs
+        <span class="sg-badge-away">${g.awayTeam} (${g.awaySeason})</span>
+      </div>
+      <div class="sg-time">Simulated at ${g.timestamp} | Score: ${homeScore}-${awayScore}</div>
+    </div>
+
+    <div class="sg-kpi-grid">
+      <div class="sg-kpi"><div class="k">Home Win Probability</div><div class="v">${(g.homeWinProb * 100).toFixed(1)}%</div></div>
+      <div class="sg-kpi"><div class="k">Expected Margin (Home)</div><div class="v">${g.deltaMu.toFixed(2)}</div></div>
+      <div class="sg-kpi"><div class="k">Game Volatility</div><div class="v">${g.sigmaGame.toFixed(2)}</div></div>
+      <div class="sg-kpi"><div class="k">Single-Draw Winner</div><div class="v ${sampledWinnerClass}">${g.winner}</div></div>
+      <div class="sg-kpi"><div class="k">Sampled Margin</div><div class="v">${g.sampledMargin.toFixed(1)}</div></div>
+      <div class="sg-kpi"><div class="k">Close Game?</div><div class="v">${closeGame ? '<span style="color:var(--orange)">YES</span>' : "No"}</div></div>
+    </div>
+
+    <div class="sg-detail-grid">
+      <div class="sg-card">
+        <h4>Margin Drivers</h4>
+        <div class="sg-list">
+          <div class="row"><span class="k">Team Strength Edge (mu)</span><span class="v">${numOrZero(drivers.talentEdge).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Home Court Edge</span><span class="v">+${numOrZero(drivers.homeCourtEdge).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Phase Blend Edge (Step 2)</span><span class="v">${phase.blend == null ? "-" : numOrZero(phase.blend).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Starter / Rotation / Clutch</span><span class="v">${phase.starter == null ? "-" : numOrZero(phase.starter).toFixed(2)} / ${phase.rotation == null ? "-" : numOrZero(phase.rotation).toFixed(2)} / ${phase.clutch == null ? "-" : numOrZero(phase.clutch).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Volatility Gap</span><span class="v">${numOrZero(drivers.volatilityGap).toFixed(2)}</span></div>
+          <div class="row"><span class="k">Sampled Margin</span><span class="v">${g.sampledMargin.toFixed(2)}</span></div>
+        </div>
+      </div>
+
+      <div class="sg-card">
+        <h4>Head-to-Head Profile</h4>
+        ${h2hHtml}
+      </div>
+
+      ${lineupPhasesHtml}
+
+      <div class="sg-card">
+        <h4>Archetype Interactions: ${g.homeTeam} OFF vs ${g.awayTeam} DEF</h4>
+        ${renderInteractions(homeVsAwayInteractions, g.homeTeam, g.awayTeam)}
+      </div>
+
+      <div class="sg-card">
+        <h4>Archetype Interactions: ${g.awayTeam} OFF vs ${g.homeTeam} DEF</h4>
+        ${renderInteractions(awayVsHomeInteractions, g.awayTeam, g.homeTeam)}
+      </div>
+
+      <div class="sg-card">
+        <h4>Top Player Contributors</h4>
+        <div class="sg-contrib-grid">
+          ${contribHome}
+          ${contribAway}
+        </div>
+      </div>
+    </div>
+
+    ${renderPlayerStatsTable(g.homeTeam, "var(--accent)", homePlayerStats)}
+    ${renderPlayerStatsTable(g.awayTeam, "var(--orange)", awayPlayerStats)}
+  `;
 }
 </script>
 </body>

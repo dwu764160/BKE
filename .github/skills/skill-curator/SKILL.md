@@ -35,6 +35,8 @@ when_to_use:
 example_prompts:
   - "Run skill curator and propose merges for overlapping skills."
   - "Validate all skills and standardize their frontmatter."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Skill Curator
 

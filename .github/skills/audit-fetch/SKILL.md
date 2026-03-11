@@ -32,6 +32,8 @@ when_to_use:
 example_prompts:
   - "Run a fetch audit for season 2024-25 and report any payload parsing fragility."
   - "Verify `data/historical/` artifacts exist and have expected columns."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Fetch Audit Skill
 

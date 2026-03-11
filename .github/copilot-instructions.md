@@ -38,6 +38,13 @@ The [loop](../loop/) folder is your live context and planning hub. You must:
 - **Avoid duplication:** Before creating a new skill, check for overlapping skills by searching `/.github/skills/` for similar names or descriptions.
 - **Skill lifecycle:** When you add a new skill, update this file's checklist and add a one-line reference to the skill in the loop context (`loop/in_progress_context.txt`) describing why it was created and where it is used.
 
+## Automatic Skill Invocation & Documentation
+
+- **Automatically detect and invoke skills:** For every non-trivial task (code changes, data fetches, pipeline runs, or anything that materially alters outputs), automatically search `/.github/skills/` for a matching skill. If a matching skill exists, load its `SKILL.md` and follow the `preferred_tools`, `job_scope`, and `example_prompts` before making changes. Do not proceed with ad-hoc edits that bypass a matching skill unless explicitly authorized by the user.
+- **Document skill usage:** Each time a skill is used, remember to log it at the end of your response.
+- **When no skill exists:** If no suitable skill exists and the task is reusable, create a new skill in `/.github/skills/` using the template below and immediately record its creation in `loop/skill_usage.log` and `loop/in_progress_context.txt`. If the task is a one-off, proceed but record why a new skill was not created.
+- **Auditability:** Prefer skills for reproducibility and auditing — skills are the canonical operational record for the agent. Follow skills-first even when making small iterative edits that will be committed to the repo.
+
 ### Skill creation rules & template
 - File location: create skill files under `/.github/skills/` and name them `<shortname>.skill.md`.
 - Required frontmatter fields: `name`, `description`, `persona`, `preferred_tools`, `avoid_tools`, `job_scope`, `when_to_use`, `example_prompts`.
@@ -122,5 +129,108 @@ If you create a new skill, add at least one `example_prompts` entry that demonst
 - [ ] Validate and test after every change; update the loop folder with findings.
  - [ ] Search and prefer existing skills in `/.github/skills/` before taking action on a task.
  - [ ] When a task is reusable, create a new skill in `/.github/skills/` and add a reference to it in the loop context.
+ - [ ] Validate and test after every change; update the loop folder with findings.
+ - [ ] Search and prefer existing skills in `/.github/skills/` before taking action on a task.
+ - [ ] When a task is reusable, create a new skill in `/.github/skills/` and add a reference to it in the loop context.
+ - [ ] Automatically detect, invoke, and log skill usage for non-trivial tasks (append one-line records to `loop/skill_usage.log` and `loop/in_progress_context.txt`).
 
 **If in doubt, refer to the loop folder and [readme.md](../readme.md) for the latest project state and required workflow.**
+
+---
+applyTo: '**'
+---
+
+# BKE Agent Instructions
+
+This file is automatically loaded and applied to **all agents** in this workspace, including the default Copilot agent and any custom agents (e.g., Beast Mode 3.1).
+
+## Core Workflow: Skills-First
+
+**Before taking ANY action on a task, you MUST:**
+
+1. **Search for a matching skill** in `/.github/skills/` that covers the work
+2. **If a skill exists**, read its `SKILL.md` and follow:
+   - `preferred_tools` (which tools to use)
+   - `job_scope` (the exact scope of work)
+   - `when_to_use` (activation conditions)
+   - `example_prompts` (how to invoke the skill)
+3. **If no skill exists** and the task is reusable/likely to recur, create a new skill in `/.github/skills/` before proceeding
+4. **Respect `avoid_tools`** sections of each skill
+
+## Available Skills
+
+Your workspace includes domain-specific skills for:
+- **audit-fetch** — Validate fetch/ingest stage
+- **audit-compute** — Audit compute logic and formula integrity
+- **audit-model** — Run model diagnostics and backtests
+- **audit-eval** — Validate player evaluation and minute-model pipeline
+- **audit-aggregate** — Audit player profile aggregation
+- **basketball-knowledge** — Canonical domain knowledge (role-vs-impact separation, position bands, archetype gating)
+- **data-audit** — Repository-wide data validation
+- **docs-sync** — Keep documentation in sync with code changes
+- **forecast** — Projection, scenario mapping, minute-model interactions
+- **frontend-sync** — Keep frontend viewers aligned to backend schema
+- **simulation** — Simulation pipeline operations and audit
+- **backtest-vs-forecast** — Validate backtest/forecast coverage
+- **self-improvement** — Evaluate skill usage and apply learned corrections
+- **skill-curator** — Curate and validate the skills themselves
+- **agent-customization** — Configure agent and skill files
+
+## Canonical Reference
+
+For all major decisions about pipeline, archetype, or metric logic, refer to:
+- **[copilot-instructions.md](../copilot-instructions.md)** — Your complete workflow manual
+- **[loop/context_summary.txt](../../loop/context_summary.txt)** — Current project state
+- **[loop/current_phase_plan.DO_NOT_CHANGE.txt](../../loop/current_phase_plan.DO_NOT_CHANGE.txt)** — Phase plan
+- **[loop/overall_plan.DO_NOT_CHANGE.txt](../../loop/overall_plan.DO_NOT_CHANGE.txt)** — Overall plan
+- **[loop/in_progress_context.txt](../../loop/in_progress_context.txt)** — Active work and blockers
+
+## Skill Invocation Pattern
+
+When you detect a matching skill exists:
+
+```
+✅ CORRECT: Read the skill and follow its preferred_tools, job_scope, and example_prompts
+❌ WRONG: Ad-hoc implementation that bypasses the skill's structured guidance
+```
+
+### Example: Running a Fetch Audit
+
+If the user asks to "validate that fetch scripts are working," you should:
+1. Recognize this matches the `audit-fetch` skill
+2. Read `/.github/skills/audit-fetch/SKILL.md`
+3. Follow its `preferred_tools` and `job_scope` exactly
+4. Update loop context with findings
+
+## Loop Folder Pattern
+
+The `loop/` folder is your live workspace context. Always:
+- Check `context_summary.txt` before starting work
+- Update it after major changes
+- Reference `in_progress_context.txt` to see what's active
+
+## Pipeline & Documentation Updates
+
+**After every pipeline file change:**
+- Update [readme.md](../../readme.md) to reflect the correct order
+- Add a one-line reference to any new skills in `loop/in_progress_context.txt`
+- Validate outputs match documented locations
+
+## When to Bypass Skills
+
+You may skip the skills-first check **only if**:
+- The task is a one-off that will never recur
+- The user explicitly authorizes ad-hoc implementation
+- The task is purely informational/conversational
+
+In all other cases, follow skills-first rigorously.
+
+## Summary
+
+- 🎯 **Search skills first** for every non-trivial task
+- 📖 **Read the skill's SKILL.md** to understand scope and tools
+- 📍 **Refer to loop/ and copilot-instructions.md** for context and decisions
+- 📝 **Update docs** (readme.md, loop context) after pipeline changes
+- ✅ **Log skill usage** by updating loop/in_progress_context.txt
+
+**If in doubt, check copilot-instructions.md and the loop folder first.**

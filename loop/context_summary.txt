@@ -1,3 +1,39 @@
+2026-03-10 — Simulation core rework: Step 1/Step 2 integration + matchup/player-stat backend + calibration pass
+-------------------------------------------------------------------------------------------------------------
+- Completed a backend-only simulation-core rework across `src/simulation/` with four major changes:
+	- `season_sim.py` now reuses shared lineup-projection context internally instead of ignoring Step 2 logic.
+	- Added archetype-vs-archetype interaction handling for main rotation units via new `src/simulation/player_stats_sim.py`.
+	- Added detailed single-game and sample-season player stat simulation outputs.
+	- Upgraded `lineup_projection.py` with continuity priors, lineup-fit heuristics, and candidate-pool pruning.
+- New outputs:
+	- `data/processed/simulation/simulation_step1_player_season_stats.parquet`
+	- `data/processed/simulation/simulation_step1_player_game_samples.parquet`
+	- `data/processed/simulation/forecast_step1_player_season_stats_<scenario>.parquet`
+	- `data/processed/simulation/forecast_step1_player_game_samples_<scenario>.parquet`
+	- `reports/simulation_single_game.json`
+	- `reports/forecast_single_game.json`
+- Validation snapshot after final marginal-scale calibration:
+	- `python3 src/simulation/lineup_projection.py`
+		- starter overlap mean: `0.7089`
+		- clutch overlap mean: `0.8289`
+		- rotation corr: `0.7867`
+	- `python3 src/simulation/season_sim.py`
+		- 2022-23 margin: `MAE=5.52`, `RMSE=6.81`, `r=0.8267`
+		- 2023-24 margin: `MAE=5.94`, `RMSE=7.15`, `r=0.8683`
+		- 2024-25 margin: `MAE=3.70`, `RMSE=4.44`, `r=0.9471`
+	- `python3 src/simulation/run_forecast.py --scenarios end_of_season --skip-preseason-fetch`
+		- 2023-24 margin: `MAE=7.75`, `RMSE=9.80`, `r=0.7026`
+		- 2024-25 margin: `MAE=8.83`, `RMSE=11.22`, `r=0.6193`
+		- 2023-24 ppp: `MAE=8.74`, `RMSE=9.96`, `r=0.6807`
+		- 2024-25 ppp: `MAE=8.44`, `RMSE=10.03`, `r=0.6623`
+- Interpretation:
+	- Backtest recovered materially after shrinking lineup/matchup bonuses to truly marginal levels.
+	- End-of-season forecast is mixed but acceptable: 2024-25 improved versus the first integrated pass; 2023-24 softened slightly.
+	- Step 2 standalone rotation quality improved clearly; starter overlap still remains below target.
+- Documentation synced:
+	- `readme.md` updated for new simulation outputs, single-game CLI, and shared Step 1/Step 2 context usage.
+	- `src/simulation/run_forecast.py` now records scenario-specific player season/game artifact paths in its output map.
+
 2026-03-09 — compute_linear_metrics logic fix: DWS normalization target + net proxy correction
 -------------------------------------------------------------------------------------------------------------
 - Continued deep audit of remaining `src/data_compute` scripts identified a high-confidence active logic bug in:

@@ -31,6 +31,8 @@ when_to_use:
 example_prompts:
   - "Audit player impact profile builds and minute-model fits for suspicious distributions."
   - "Validate that the profile aggregate includes newest fields added in the last commit."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Player Eval Audit Skill
 

@@ -30,6 +30,8 @@ when_to_use:
 example_prompts:
   - "Validate the profile aggregate and report missing fields introduced in last commit."
   - "Run aggregation smoke build and produce a column-normalization report."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Aggregate Audit Skill
 

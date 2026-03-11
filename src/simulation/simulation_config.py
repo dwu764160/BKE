@@ -14,6 +14,7 @@ DATA_DIR = ROOT_DIR / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 HISTORICAL_DIR = DATA_DIR / "historical"
 REPORTS_DIR = ROOT_DIR / "reports"
+AGGREGATE_DIR = ROOT_DIR / "aggregate"
 
 TEAM_FEATURES_PATH = PROCESSED_DIR / "player_eval" / "team_feature_aggregation.parquet"
 PLAYER_PROFILES_PATH = PROCESSED_DIR / "player_eval" / "player_impact_profiles.parquet"
@@ -21,6 +22,7 @@ POSITION_ESTIMATES_PATH = PROCESSED_DIR / "player_position_estimates.parquet"
 METRICS_LINEUPS_PATH = PROCESSED_DIR / "metrics_lineups.parquet"
 CLUTCH_STATS_ALL_PATH = HISTORICAL_DIR / "player_clutch_stats_all.parquet"
 TEAMS_PATH = HISTORICAL_DIR / "teams.parquet"
+PROFILE_AGGREGATE_PATH = AGGREGATE_DIR / "player_profile_aggregate.parquet"
 
 SIMULATION_PROCESSED_DIR = PROCESSED_DIR / "simulation"
 SIMULATION_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -28,6 +30,9 @@ SIMULATION_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 STEP2_LINEUP_PROFILES_PATH = SIMULATION_PROCESSED_DIR / "simulation_step2_lineup_profiles.parquet"
 STEP2_LINEUP_REPORT_PATH = REPORTS_DIR / "simulation_step2_lineup_profiles.json"
 STEP2_VALIDATION_PATH = REPORTS_DIR / "simulation_step2_validation.json"
+STEP1_PLAYER_SEASON_STATS_PATH = SIMULATION_PROCESSED_DIR / "simulation_step1_player_season_stats.parquet"
+STEP1_PLAYER_GAME_SAMPLES_PATH = SIMULATION_PROCESSED_DIR / "simulation_step1_player_game_samples.parquet"
+STEP1_SINGLE_GAME_REPORT_PATH = REPORTS_DIR / "simulation_single_game.json"
 
 # Forecast mode paths
 FORECAST_DIR = PROCESSED_DIR / "forecast"
@@ -38,6 +43,9 @@ FORECAST_SEASON_RESULTS_PATH = REPORTS_DIR / "forecast_season_results.json"
 FORECAST_LINEUP_REPORT_PATH = REPORTS_DIR / "forecast_lineup_profiles.json"
 FORECAST_LINEUP_PROFILES_PATH = SIMULATION_PROCESSED_DIR / "forecast_step2_lineup_profiles.parquet"
 FORECAST_VALIDATION_PATH = REPORTS_DIR / "forecast_step2_validation.json"
+FORECAST_PLAYER_SEASON_STATS_PATH = SIMULATION_PROCESSED_DIR / "forecast_step1_player_season_stats.parquet"
+FORECAST_PLAYER_GAME_SAMPLES_PATH = SIMULATION_PROCESSED_DIR / "forecast_step1_player_game_samples.parquet"
+FORECAST_SINGLE_GAME_REPORT_PATH = REPORTS_DIR / "forecast_single_game.json"
 
 # Ensure report output directory exists when simulation scripts run standalone.
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -92,11 +100,16 @@ STEP2_ENABLE_ROTATION_REGIME_MODEL = False
 # Continuity prior: continuity_factor = 1 - kappa * (1 - R)
 STEP2_CONTINUITY_KAPPA = 0.35
 STEP2_CONTINUITY_DEFAULT_RETURNING = 1.0
+STEP2_CONTINUITY_STARTER_BONUS = 0.08
+STEP2_CONTINUITY_ROTATION_BONUS = 0.04
 
 # Clutch core constraint
 STEP2_CLUTCH_CANDIDATE_SIZE = 7
 STEP2_CLUTCH_MIN_STARTERS = 3
 STEP2_CLUTCH_MAX_SWAPS = 2
+STEP2_CANDIDATE_LIMIT = 9
+STEP2_CANDIDATE_PER_ROLE = 2
+STEP2_CANDIDATE_PER_BAND = 2
 
 # Rotation regime model
 STEP2_REGIME_STAR_COEF = 0.8
@@ -123,6 +136,32 @@ STARTER_WEIGHT_C = 0.15
 # Rotation model: mu_rotation = alpha * stagger + (1-alpha) * bench
 ROTATION_ALPHA = 0.30
 STAGGER_MINUTES_THRESHOLD = 24.0
+
+# Step 2 fit heuristics
+STEP2_FIT_CREATOR_BONUS = 0.08
+STEP2_FIT_SPACING_BONUS = 0.06
+STEP2_FIT_POA_BONUS = 0.05
+STEP2_FIT_RIM_BONUS = 0.05
+STEP2_FIT_STAGGER_BONUS = 0.03
+
+# Simulation bonus controls
+LINEUP_TEAM_BONUS_CLIP = 0.30
+LINEUP_STARTER_BONUS_SCALE = 0.20
+LINEUP_ROTATION_BONUS_SCALE = 0.15
+LINEUP_CONTINUITY_BONUS_SCALE = 0.08
+LINEUP_FIT_BONUS_SCALE = 0.08
+LINEUP_CLUTCH_BONUS_SCALE = 0.25
+CLUTCH_MARGIN_TRIGGER = 7.5
+MATCHUP_SPREAD_BONUS_CLIP = 0.15
+MATCHUP_PPP_DELTA_CLIP = 0.035
+MATCHUP_TEAM_INTERACTION_SCALE = 0.15
+PPP_CONTEXT_BONUS_SCALE = 0.0
+PLAYER_GAME_TOTAL_MINUTES = 240.0
+PLAYER_GAME_ROTATION_SIZE = 10
+PLAYER_GAME_MIN_ACTIVE = 8
+PLAYER_GAME_MINUTES_STARTER_BONUS = 0.14
+PLAYER_GAME_MINUTES_CLUTCH_BONUS = 0.05
+PLAYER_GAME_MINUTES_BENCH_PENALTY = 0.08
 
 # Volatility proxy from impact_stability
 PLAYER_VOL_BASE = 3.5

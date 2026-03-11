@@ -666,3 +666,123 @@ Step 2 forecast validation overall (latest rerun):
 - `python3 src/simulation/run_forecast.py --skip-preseason-fetch`
 - `python3 app/simulation_viewer.py`
 - Scenario outputs and combined forecast payloads regenerated successfully.
+
+---
+## Entry: 2026-03-10 — Player Stat Phase (v1)
+
+### Philosophy & Design Principles
+
+**Player-level realism, marginal to team outcomes.** The player-stat phase converts lineup and matchup context into per-game player-box samples and aggregated season totals. The phase is explicitly secondary to team net-rating simulation: player-level randomness and sample noise are allowed to be substantial, and all player-level effects are tuned to be marginal to team-level margin outputs (so forecast/backtest remains driven by Step1/Step2 calibration).
+
+### What was built
+
+- `src/simulation/player_stats_sim.py` — deterministic single-sample player-box simulator and season aggregator.
+- Inputs:
+	- `projected_player_profiles_*.parquet`
+	- `simulation_step2_lineup_profiles.parquet` (lineup_bonus_map)
+	- pairwise archetype matchup map (derived from roster archetypes)
+	- schedule / availability plan
+- Outputs:
+	- `simulation_step1_player_game_samples.parquet`
+	- `simulation_step1_player_season_stats.parquet`
+	- Forecast equivalents with scenario suffixes
+
+### Mathematical & Implementation Summary
+
+- **Minutes allocation:** clamp per-player game minutes to [0, 40], then scale so team sum = 240:
+	- minutes_i_raw = clamp(projected_MPG_i, 0, 40)
+	- minutes_i = minutes_i_raw * (240 / sum_j minutes_j_raw)
+	- Rationale: simple, robust, preserves projected role shares while enforcing game invariants.
+
+- **Shot/attempt modeling:** deterministic expectations converted to counts via Poisson/Binomial draws:
+	- FGA_expected_i = usage_share_i * possessions_team
+	- FGA_i ~ Poisson(FGA_expected_i)
+	- FG3A_expected_i = 3pt_share_i * FGA_expected_i
+	- FG3A_i ~ Poisson(FG3A_expected_i)
+	- FG3M_i ~ Binomial(FG3A_i, FG3_pct_i)
+	- FGM_non3_i ~ Binomial(FGA_i - FG3A_i, two_pt_pct_i)
+	- FGM_i = FG3M_i + FGM_non3_i
+	- FT_attempts_i ~ Poisson(FT_expected_i); FTM_i ~ Binomial(FT_attempts_i, FT_pct_i)
+	- Rationale: Poisson for low-rate counts, Binomial for successes conditional on attempts; this produces correct mean/variance structure for counting stats.
+
+- **Per-game shooting variability:** per-game success probability can be sampled via a Beta-Binomial surrogate when more variance is desired (future option). Current default uses Binomial with season FG% as p (conservative).
+
+- **Rebounds & other counting stats:** modeled as Poisson using per-player rebound share; team-level reconciliation then enforces team totals by proportional scaling.
+
+- **PPP / scoring adjustments from lineup & matchup:** two parallel contributions:
+	1. Δµ_lineup (net-rating per 100 possessions) — computed per phase and added to team `mu`:
+		 - m_phase = mean(player_i_impact for players in phase)
+		 - delta_phase = m_phase - mu_team
+		 - team_bonus_phase = clip(scale_phase * delta_phase, -LINEUP_TEAM_BONUS_CLIP, LINEUP_TEAM_BONUS_CLIP)
+		 - Uses: LINEUP_STARTER_BONUS_SCALE=0.20, LINEUP_ROTATION_BONUS_SCALE=0.15, LINEUP_CONTINUITY_BONUS_SCALE=0.08, LINEUP_FIT_BONUS_SCALE=0.08, LINEUP_CLUTCH_BONUS_SCALE=0.25
+		 - Effect mapping: team_bonus expressed in net-rating units (points per 100 possessions). Per-game points shift ≈ team_bonus * (possessions/100). Example: team_bonus = +0.5 → +0.5 points/game at 100 possessions.
+	2. PPP_CONTEXT_BONUS_SCALE (0.0025) — a very small per-possession PPP adjustment applied to scoring components derived from lineup bonus differences:
+		 - PPP_adj_points_per_game = PPP_CONTEXT_BONUS_SCALE * (team_bonus_A - team_bonus_B) * possessions
+		 - Example: team_bonus diff = 0.5 → PPP_adj = 0.0025 * 0.5 * 100 = 0.125 points/game (deliberately small).
+		 - Rationale: keep possession-level shot-and-PPP effects marginal relative to net-rating channel so we don't double-count.
+
+- **Archetype pairwise matchup effects:** base_pair_value_archetype[a,b] in a small range (typical seeds −1.0..+1.0), then:
+	- matchup_effect = MATCHUP_TEAM_INTERACTION_SCALE * base_pair_value
+	- matchup_effect clipped to ±MATCHUP_SPREAD_BONUS_CLIP
+	- Parameters: MATCHUP_TEAM_INTERACTION_SCALE = 0.35, MATCHUP_SPREAD_BONUS_CLIP = 0.35
+	- Example: base -0.5 (POA defender vs creator) → post-scale -0.175 net-rating/100 possessions → ≈ -0.175 points/game at 100 poss.
+	- Basketball reason: archetype-level defense constriction reduces open creation opportunities; effects are real but small on game margin and should be marginal in season-level forecasts.
+
+- **Clutch gating & expectation:** clutch effects only apply when game is close:
+	- Close probability: P_close = Phi((CLUTCH_MARGIN_TRIGGER - mean)/sigma) − Phi((-CLUTCH_MARGIN_TRIGGER - mean)/sigma)
+	- With CLUTCH_MARGIN_TRIGGER = 7.5, typical sigma_game ≈ 12 → P_close ≈ 0.45 (example).
+	- Effective clutch contribution (season-expected) ≈ LINEUP_CLUTCH_BONUS_SCALE * clutch_delta * P_close.
+	- Rationale: coaches use different personnel in close situations; clutch players can swing end-of-game outcomes but only in close games.
+
+- **Fit & continuity priors:** shrink and prefer returning/fit lineups:
+	- Continuity uses a Bayesian shrinkage form: posterior = (kappa*prior + n*sample_mean)/(kappa + n)
+	- Returning players receive a continuity bump that increases their selection probability (STEP2_CONTINUITY_DEFAULT_RETURNING controlled).
+	- Fit score (structural complementarity) computed as a z-scored dot product of per-player fit-features and lineup-role weights; scaled by LINEUP_FIT_BONUS_SCALE.
+	- Rationale: coaching intent (continuity) and complementary fit matter but must be small relative to raw impact to avoid misattribution.
+
+- **Candidate-pruning and enumeration:** limit top-K per role (STEP2_CANDIDATE_PER_ROLE) and global candidate cap (STEP2_CANDIDATE_LIMIT) before combinatorial enumeration. Rationale: runtime and robustness—prevents chasing noisy small-sample players.
+
+- **Deterministic single-sample design:** current default is one deterministic/random-seeded sample per run (fast, reproducible). Multi-sample Monte Carlo is available as an optional extension when users want distributional player-level uncertainty.
+
+- **Team-level reconciliation:** after sampling:
+	- enforce team minutes = 240 (rescale if necessary)
+	- reconcile team points to simulated team score by proportional scaling of shot outcomes (small correction)
+	- Rationale: keeps aggregated player outputs consistent with team-level simulation invariants used by Step1.
+
+### Validation & magnitude heuristics
+
+- Small knobs, small effects by design:
+	- LINEUP_TEAM_BONUS_CLIP = 0.55 → absolute ceiling per-phase ≈ 0.55 net-rating/100 possessions → ≈ 0.55 points/game at 100 possessions (small).
+	- MATCHUP_TEAM_INTERACTION_SCALE = 0.35 → reduces base archetype pairwise effects to loosely one-third.
+	- PPP_CONTEXT_BONUS_SCALE = 0.0025 → converts 1 net-rating point into ≈0.25 points/game via PPP channel; intentionally tiny vs. direct net-rating channel.
+	- CLUTCH_MARGIN_TRIGGER = 7.5 ensures clutch is applied to roughly 40–50% of games (depends on sigma), so clutch bonus is diluted across season-level expectation.
+
+- Why these magnitudes:
+	- Five-man lineup metrics are noisy — clip and scales keep lineup/ matchup signals marginal to team rating to avoid overfitting.
+	- Archetype interactions exist but are small at the game-level; scaling keeps forecasts stable and reduces catastrophic shifts during calibration.
+	- PPP adjustments should reflect possession-level microstructure, not replace aggregated net-rating signals — thus PPP_CONTEXT_BONUS_SCALE is small.
+
+### Basketball reasoning — examples (design rationale mapped to basketball intuition)
+
+- **POA defender vs Ball-Dominant Creator:** base_pair = −0.50 (creator efficiency penalty before scaling). After MATCHUP_TEAM_INTERACTION_SCALE=0.35 → −0.175 net-rating/100 poss. Reason: POA (point-of-attack) defenders deny easy drives and isolate creation, raising contested shot rate and lowering assist creation.
+
+- **Rim-protecting Big vs Roll/Putback Big:** base_pair = +0.40 → +0.14 net-rating/100 poss after scaling. Reason: rim protectors reduce opponent rim-finish efficiency and force more outside looks.
+
+- **Versatile wing vs Iso-heavy guard:** base_pair = −0.30 → −0.105 net-rating/100 poss after scaling. Reason: switchable wings can remove mismatches and lower iso guard efficiency.
+
+- **Starter delta vs rotation delta:** starters often have higher aggregate minutes and more creation-control; STARTER_SCALE=0.20 > ROTATION_SCALE=0.15 encodes that the starting five’s deviation from team mean should matter slightly more to per-possession outcomes.
+
+### Operational consequences and what to watch
+
+- Small changes to the scales can move forecast MAE: raising MATCHUP_TEAM_INTERACTION_SCALE or LINEUP_*_SCALE will increase sensitivity of game margins to lineup composition and can amplify season-level errors if overfit.
+- Continuity_kappa tradeoff: larger kappa improves temporal stability but can mask real roster-driven improvement; tune by leave-one-season-out validation.
+- Candidate pruning: tighter pruning reduces noise but risks missing true outlier lineups (coach-driven).
+
+### Files added/changed by this phase
+
+- `src/simulation/player_stats_sim.py` — main player-box sampler (new).
+- `src/simulation/season_sim.py` — now calls player stat sampler and writes player_game/player_season parquets.
+- `src/simulation/simulation_config.py` — added PPP and lineup tuning knobs.
+- Outputs written to `data/processed/simulation/*` and `reports/*` (single-game JSONs and scenario-suffixed parquets).
+
+--- End of Player Stat Phase summary

@@ -31,6 +31,8 @@ when_to_use:
 example_prompts:
   - "Run the data audit and normalize common column name variants across processed artifacts."
   - "Run `tests/validate_data_integrity.py --season 2024-25` and summarize failures."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Data Audit Skill
 

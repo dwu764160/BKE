@@ -36,6 +36,8 @@ example_prompts:
   - "Audit all viewers for schema mismatches."
   - "Sync frontend displays to latest backend outputs."
   - "Check for outdated fields in app/ viewers."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Frontend Sync Skill
 

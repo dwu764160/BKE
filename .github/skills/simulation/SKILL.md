@@ -37,6 +37,8 @@ example_prompts:
   - "Run and validate all simulation scripts."
   - "Audit schedule generation in simulation."
   - "Check Step2 lineup constraint enforcement and report consistency."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Simulation Skill (Operations + Audit)
 

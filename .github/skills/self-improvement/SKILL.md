@@ -35,6 +35,8 @@ when_to_use:
 example_prompts:
   - "Run self-improvement for this session and update the used skills."
   - "Summarize last session's skill usage and persist learnings."
+log_usage: true
+usage_log: loop/skill_usage.log
 ---
 # Self-Improvement Skill
 

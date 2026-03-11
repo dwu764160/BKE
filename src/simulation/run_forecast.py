@@ -39,6 +39,8 @@ from src.player_eval.constants import (  # noqa: E402
 )
 from src.simulation.simulation_config import (  # noqa: E402
     FORECAST_DIR,
+    FORECAST_PLAYER_GAME_SAMPLES_PATH,
+    FORECAST_PLAYER_SEASON_STATS_PATH,
     FORECAST_SEASON_RESULTS_PATH,
     REPORTS_DIR,
     SIMULATION_PROCESSED_DIR,
@@ -168,6 +170,12 @@ def main() -> None:
         lineup_report_path = REPORTS_DIR / f"forecast_lineup_profiles_{scenario_key}.json"
         lineup_profiles_path = SIMULATION_PROCESSED_DIR / f"forecast_step2_lineup_profiles_{scenario_key}.parquet"
         lineup_validation_path = REPORTS_DIR / f"forecast_step2_validation_{scenario_key}.json"
+        player_season_stats_path = FORECAST_PLAYER_SEASON_STATS_PATH.with_name(
+            f"forecast_step1_player_season_stats_{scenario_key}.parquet"
+        )
+        player_game_samples_path = FORECAST_PLAYER_GAME_SAMPLES_PATH.with_name(
+            f"forecast_step1_player_game_samples_{scenario_key}.parquet"
+        )
 
         # Step 1: Project player profiles.
         print("\n[1/4] Projecting player profiles...")
@@ -234,6 +242,8 @@ def main() -> None:
                 "projected_profiles": str(profiles_path),
                 "projected_team_features": str(team_features_path),
                 "season_results": str(season_results_path),
+                "player_season_stats": str(player_season_stats_path),
+                "player_game_samples": str(player_game_samples_path),
                 "validation": str(validation_path),
                 "lineup_report": str(lineup_report_path),
                 "lineup_profiles": str(lineup_profiles_path),
