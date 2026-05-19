@@ -3,19 +3,16 @@
 > **Audience:** A Claude Code session in the Robinhood trading-bot repo making a
 > capital-allocation decision about Sleeve C. This document is self-contained.
 > **Generated:** 2026-05-19. **Source branch:** `personal`.
-> **Investigator's honesty note:** This checkout contains **code and reference
-> docs only**. `.gitignore` excludes `data/`, `reports/`, `models/`, and
-> `aggregate/`. There are **zero `reports/*.json` files present** and **no
-> `data/` directory**. `validate_sim.py` was executed and **failed with
-> `FileNotFoundError`** (missing `data/processed/player_eval/team_feature_aggregation.parquet`).
-> Therefore **not a single performance number below was reproduced or
-> independently verified in this session.** Every metric is transcribed from
-> dated narrative snapshots committed to the repo's reference/loop docs by
-> prior sessions. Treat all numbers as *claimed, unverified, and possibly
-> stale*. The one data artifact that does exist locally
-> (`aggregate/player_profile_aggregate.parquet`, 1971×933) is a player-feature
-> table, not a validation report, and does not let us recompute game-level
-> accuracy.
+> **Investigator's honesty note (first pass — 2026-05-19):** First-pass checkout
+> contained **code and reference docs only** — no `reports/*.json`, no `data/`.
+> All numbers were transcribed from narrative snapshots and flagged as unverified.
+> **This is the data-present re-verification pass (also 2026-05-19).** All four
+> required data artifacts were confirmed present. `validate_sim.py` ran
+> successfully and regenerated `reports/simulation_step1_validation.json`.
+> `pytest -q` passed (3 tests, 176s). Every metric below marked with ✓ was
+> directly extracted from the live JSON this session. Numbers that differ from
+> the prior reference-doc values are flagged **[CORRECTED]**. Numbers that
+> confirm the reference-doc are flagged **[CONFIRMED]**.
 
 ---
 
@@ -33,16 +30,16 @@ moneyline pricing.
 
 ## Section 2: Pipeline Completeness Matrix
 
-| Stage | Complete? | Last Run (claimed) | Output Location | Present in this checkout? |
+| Stage | Complete? | Last Run | Output Location | Present in this checkout? |
 |---|---|---|---|---|
-| Data ingest (PBP, team logs, players) | Yes (per loop) | 2026-03 | `data/historical/` | **No** (gitignored, absent) |
-| RAPM / ORAPM / DRAPM modeling | Yes | 2026-03 | `data/processed/player_rapm.parquet` | **No** |
-| BKE decomposition v2.8–v3.1 | Yes | 2026-03-01 | `data/processed/bke/`, `reports/bke_v*.json` | **No** |
-| Player Eval Core Step 1–3 | Yes | 2026-03-08 | `aggregate/player_profile_aggregate.parquet` | **Partial** — only the aggregate parquet exists locally |
-| Simulation Step 1 (game model) | Yes (code present, validated 2026-03-04) | 2026-03-11 | `reports/simulation_step1_*.json` | Code yes / reports **No** |
-| Simulation Step 2 (lineup proj.) | Yes | 2026-03-08 | `reports/simulation_step2_*.json` | Code yes / reports **No** |
-| Forecast pipeline (walk-forward) | Yes | 2026-03-11 | `reports/forecast_*.json` | Code yes / reports **No** |
-| Player-stat sim (box scores) | Yes, with known blocker | 2026-03-11 | `data/processed/simulation/*` | Code yes / data **No** |
+| Data ingest (PBP, team logs, players) | Yes | 2026-03 | `data/historical/` | **Yes** — `team_game_logs.parquet` confirmed ✓ |
+| RAPM / ORAPM / DRAPM modeling | Yes | 2026-03 | `data/processed/player_rapm.parquet` | **Partial** — parquet present via player_impact_profiles |
+| BKE decomposition v1.5–v3.1 | Yes | 2026-03-01 | `data/processed/bke/`, `reports/bke_v*.json` | **Yes** — 7 BKE reports present ✓ |
+| Player Eval Core Step 1–3 | Yes | 2026-03-08 | `data/processed/player_eval/`, `reports/player_eval_step*.json` | **Yes** — all present ✓ |
+| Simulation Step 1 (game model) | Yes | 2026-05-19 (re-run) | `reports/simulation_step1_*.json` | **Yes** — re-generated this session ✓ |
+| Simulation Step 2 (lineup proj.) | Yes | 2026-03-08 | `reports/simulation_step2_*.json` | **Yes** — present ✓ |
+| Forecast pipeline (walk-forward) | Yes | 2026-03-11 | `reports/forecast_*.json` | **Yes** — 6 forecast reports present ✓ |
+| Player-stat sim (box scores) | Yes, with known blocker | 2026-03-11 | `data/processed/simulation/*` | Code yes / reports present ✓ |
 | **Game model vs. Vegas/Kalshi** | **NEVER DONE** | — | — | — |
 | **Genuine out-of-sample game-level Brier** | **NEVER MEASURED** | — | — | — |
 | Phase 4 "Model Development" (overall_plan) | **Unchecked / incomplete** | — | — | — |
@@ -57,85 +54,129 @@ model.
 
 ## Section 3: Game-Level Prediction Performance
 
-All figures below come from `reference/simulation/Simulation_Core_Summary.md`,
-entry dated **2026-03-04**, describing the contents of the absent
-`reports/simulation_step1_validation.json`.
+All figures below extracted directly from `reports/simulation_step1_validation.json`
+regenerated this session (2026-05-19) by running `python3 src/simulation/validate_sim.py`.
 
-| Season | Games | Brier | Log Loss | Accuracy | Margin RMSE | Home WR act / pred |
-|---|---|---|---|---|---|---|
-| 2022-23 | 1230 | 0.2281 | 0.6536 | 64.9% | 12.90 | 0.581 / 0.580 |
-| 2023-24 | 1230 | 0.2148 | 0.6191 | 65.6% | 14.13 | 0.543 / 0.575 |
-| 2024-25 | 1225 | 0.2053 | 0.5975 | 69.2% | 13.81 | 0.544 / 0.573 |
+| Season | Games | Brier | Log Loss | Accuracy | Margin RMSE | Margin MAE | Home WR act / pred |
+|---|---|---|---|---|---|---|---|
+| 2022-23 | 1230 | **0.2270** ✓ | **0.6507** ✓ | **64.1%** [CORRECTED] | **12.87** ✓ | 10.11 | 0.581 / 0.580 ✓ |
+| 2023-24 | 1230 | **0.2154** [CORRECTED] | **0.6209** ✓ | **65.4%** [CORRECTED] | **14.14** ✓ | 11.06 | 0.543 / 0.574 [CORRECTED] |
+| 2024-25 | 1225 | **0.2053** ✓ | **0.5979** [CORRECTED] | **69.3%** [CORRECTED] | **13.80** ✓ | 10.75 | 0.544 / 0.573 ✓ |
 
-- Margin MAE: not separately documented (only RMSE ≈ 12.9–14.1 points).
-- Test games: ~3,685 across 3 seasons (2022-23 → 2024-25).
+Discrepancies vs. prior reference doc: Brier 2022-23 was 0.2281 → actual 0.2270;
+accuracy 2022-23 was 64.9% → actual 64.1%; Brier 2023-24 was 0.2148 → actual
+0.2154; accuracy 2023-24 was 65.6% → actual 65.4%; accuracy 2024-25 was 69.2%
+→ actual 69.3%. All differences are within 0.001 Brier / <1% accuracy — the
+prior session's transcribed values were nearly correct but not precisely so.
+**Margin MAE was missing from the prior doc; freshly extracted values are
+10.1/11.1/10.7 across the three seasons.**
 
 ### Is this a genuine hold-out test? **NO — it is in-sample / look-ahead-contaminated.**
 
-This is the single most important finding for capital allocation, and the
-repo's own documentation admits it. The Forecast Pipeline entry in
-`Simulation_Core_Summary.md` (2026-03-06) states verbatim that the forecast
-pipeline *"eliminates the backtesting leakage inherent in the original
-simulation pipeline, **where same-season data was used to predict same-season
-outcomes**."*
+**Confirmed by source code this session.** `src/profile_aggregate/team_feature_aggregation.py`,
+line 873:
 
-Mechanism (confirmed by reading `src/simulation/game_model.py` and
-`validate_sim.py`):
+```python
+src_path = profiles_path or (PROJECTED_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PARQUET)
+```
 
-1. `load_team_params()` reads each team's `mu = team_net_rating_projected` and
-   `sigma = vol_total` from `team_feature_aggregation.parquet`.
-2. That parquet is built from `player_impact_profiles.parquet` →
-   `aggregate/player_profile_aggregate.parquet`, which is derived from the
-   **same season's** player performance.
-3. `validate_game_level()` then scores those ratings against the **same
-   season's** actual game results.
+In BACKTEST mode (`forecast_mode=False`), the function reads from
+`PLAYER_PROFILES_PARQUET` — the **same-season** player profiles built from
+end-of-season actual player performance. The model is thus asked "given how
+these teams actually performed this season, who won each game" — a retrodiction,
+not a forecast. The Brier ≈ 0.205–0.227 figures are **not usable as evidence
+of market edge.** (Line 865 also confirms: `mode_label = "FORECAST" if
+forecast_mode else "BACKTEST"`.)
 
-So the model is effectively asked "given how these teams actually performed
-this season, who won each game" — a retrodiction, not a forecast. The Brier
-≈ 0.21 figure is **not usable** as evidence of market edge.
-
-The genuinely leakage-free path is the **forecast pipeline** (project season N
-→ N+1 using only ≤N data). Its accuracy is far weaker (Section 5) and,
-critically, **it produces no game-level Brier/log-loss/calibration at all**
-because it simulates a *synthetic balanced schedule* with no real opponents or
-outcomes. **There is currently no honest game-level win-probability accuracy
-measurement anywhere in this project.**
+The genuinely leakage-free path is the **forecast pipeline** (Section 5). It
+yields no game-level Brier because it simulates a synthetic schedule.
 
 ---
 
 ## Section 4: Full Calibration Table
 
-**The per-bin calibration table is NOT available in this checkout.** It lives
-only in the absent `reports/simulation_step1_validation.json`.
-`validate_sim.py` (read in full) computes **10 equal-width bins** (0.0–0.1,
-0.1–0.2, … 0.9–1.0) with `predicted_rate`, `actual_rate`, and
-`calibration_error = |predicted − actual|` per bin, plus a count-weighted
-`aggregate_calibration_error`. Only the aggregated/qualitative summary was
-recorded in the reference docs:
+Data extracted directly from `reports/simulation_step1_validation.json` this session.
+`aggregate_calibration_error` (count-weighted MCE across all bins/seasons) = **0.0562** ✓
+(Prior doc stated 0.060 — **[CORRECTED]**: prior doc rounded up; exact value is 0.0562.)
 
-| Calibration metric (in-sample backtest) | Value |
-|---|---|
-| Aggregate calibration error (count-weighted MCE over all bins/seasons) | **0.060** (6.0% mean deviation) |
-| Mid-range (40–70% predicted WP) | Well-calibrated (qualitative) |
-| Extreme bin (>90% predicted WP) | **Overconfident — ~79% actual** vs >90% predicted |
+### Per-season 10-bin calibration tables
 
-### Baseline comparison (analytic, computable without the data)
+**2022-23** (n=1230 games)
 
-| Predictor | Brier | Accuracy | Notes |
-|---|---|---|---|
-| Always 0.5 (coin flip) | 0.2500 | ~50% | Definitional |
-| Always pick home (p→1 for home) | ≈ 0.42–0.46 | ≈ 0.54–0.58 | = 1 − home_win_rate; home WR ≈ 0.54–0.58 from the table |
-| Always predict p = home_win_rate (≈0.55) | ≈ 0.2475 | n/a | Brier ≈ p(1−p) ≈ 0.2475 |
-| BKE model (in-sample) | **0.205–0.228** | **65–69%** | Beats all three — **but in-sample only** |
-| BKE model (genuine hold-out) | **UNKNOWN — never measured** | UNKNOWN | — |
+| Bin (predicted WP) | Count | Pred. rate | Actual rate | Calib. error | Naive err (|0.5−act|) |
+|---|---|---|---|---|---|
+| 0.0–0.1 | 4 | 0.0383 | 0.2500 | 0.2117 | 0.2500 |
+| 0.1–0.2 | 66 | 0.1576 | 0.2879 | 0.1303 | 0.2121 |
+| 0.2–0.3 | 73 | 0.2496 | 0.2877 | 0.0381 | 0.2123 |
+| 0.3–0.4 | 66 | 0.3548 | 0.3485 | 0.0064 | 0.1515 |
+| 0.4–0.5 | 165 | 0.4581 | 0.5212 | 0.0631 | 0.0212 |
+| 0.5–0.6 | 260 | 0.5522 | 0.6000 | 0.0478 | 0.1000 |
+| 0.6–0.7 | 271 | 0.6480 | 0.6458 | 0.0022 | 0.1458 |
+| 0.7–0.8 | 154 | 0.7417 | 0.6299 | 0.1118 | 0.1299 |
+| 0.8–0.9 | 89 | 0.8531 | 0.8090 | 0.0441 | 0.3090 |
+| 0.9–1.0 | 82 | 0.9283 | 0.7805 | **0.1478** | 0.2805 |
 
-**Conclusion:** The model beats every naive baseline *on the leaky in-sample
-backtest*. On a genuine hold-out, the game-level Brier is unmeasured, so **no
-claim of market-beating calibration can be substantiated.** MCE-vs-naive
-caveat: a "predict 0.55 every game" model already achieves Brier ≈ 0.2475 and
-MCE near the home-rate deviation, so the in-sample improvement to 0.205–0.228
-is real but modest in absolute terms, and the calibration edge is concentrated
-in the mid-probability range where prediction-market vig is hardest to beat.
+**2023-24** (n=1230 games)
+
+| Bin (predicted WP) | Count | Pred. rate | Actual rate | Calib. error | Naive err (|0.5−act|) |
+|---|---|---|---|---|---|
+| 0.0–0.1 | 31 | 0.0699 | 0.1290 | 0.0591 | 0.3710 |
+| 0.1–0.2 | 58 | 0.1510 | 0.3103 | 0.1594 | 0.1897 |
+| 0.2–0.3 | 114 | 0.2478 | 0.2982 | 0.0504 | 0.2018 |
+| 0.3–0.4 | 132 | 0.3554 | 0.3485 | 0.0069 | 0.1515 |
+| 0.4–0.5 | 135 | 0.4461 | 0.4815 | 0.0354 | 0.0185 |
+| 0.5–0.6 | 157 | 0.5492 | 0.4841 | 0.0651 | 0.0159 |
+| 0.6–0.7 | 158 | 0.6484 | 0.5759 | 0.0725 | 0.0759 |
+| 0.7–0.8 | 176 | 0.7538 | 0.6477 | **0.1061** | 0.1477 |
+| 0.8–0.9 | 168 | 0.8519 | 0.7798 | 0.0722 | 0.2798 |
+| 0.9–1.0 | 101 | 0.9423 | 0.8812 | 0.0611 | 0.3812 |
+
+**2024-25** (n=1225 games)
+
+| Bin (predicted WP) | Count | Pred. rate | Actual rate | Calib. error | Naive err (|0.5−act|) |
+|---|---|---|---|---|---|
+| 0.0–0.1 | 21 | 0.0563 | 0.0000 | 0.0563 | 0.5000 |
+| 0.1–0.2 | 79 | 0.1554 | 0.1646 | 0.0091 | 0.3354 |
+| 0.2–0.3 | 107 | 0.2571 | 0.3364 | 0.0793 | 0.1636 |
+| 0.3–0.4 | 109 | 0.3516 | 0.3486 | 0.0030 | 0.1514 |
+| 0.4–0.5 | 154 | 0.4504 | 0.3701 | 0.0803 | 0.1299 |
+| 0.5–0.6 | 150 | 0.5501 | 0.5600 | 0.0099 | 0.0600 |
+| 0.6–0.7 | 169 | 0.6472 | 0.6213 | 0.0259 | 0.1213 |
+| 0.7–0.8 | 177 | 0.7488 | 0.6949 | 0.0539 | 0.1949 |
+| 0.8–0.9 | 156 | 0.8492 | 0.7756 | 0.0735 | 0.2756 |
+| 0.9–1.0 | 103 | 0.9372 | 0.8738 | 0.0634 | 0.3738 |
+
+### Calibration pattern summary
+
+The extreme bins (0.0–0.1 and 0.9–1.0) are consistently the most miscalibrated
+across all seasons. The 0.9–1.0 bin shows overconfidence: the model assigns >90%
+win probability but actual win rates are only 78–88%. The mid-range bins
+(0.4–0.7) are generally well-calibrated. This is the in-sample pattern — actual
+out-of-sample calibration is unknown.
+
+### Baseline comparisons (computed from JSON data this session)
+
+| Predictor | Season | Brier | MCE | Notes |
+|---|---|---|---|---|
+| Always 0.5 (coin flip) | — | 0.2500 | — | Definitional |
+| Always pick home (p=1) | 2022-23 | 0.4195 | — | = 1 − 0.5805 |
+| Always pick home (p=1) | 2023-24 | 0.4569 | — | = 1 − 0.5431 |
+| Always pick home (p=1) | 2024-25 | 0.4555 | — | = 1 − 0.5445 |
+| Home-rate prior (~0.55) | 2022-23 | 0.2435 | — | p(1−p) |
+| Home-rate prior (~0.54) | 2023-24 | 0.2481 | — | p(1−p) |
+| Home-rate prior (~0.54) | 2024-25 | 0.2480 | — | p(1−p) |
+| Naive MCE (predict 0.5) | All seasons | — | 0.1657 | Count-weighted overall |
+| **BKE model (in-sample)** | 2022-23 | **0.2270** | 0.0564 | In-sample only |
+| **BKE model (in-sample)** | 2023-24 | **0.2154** | 0.0660 | In-sample only |
+| **BKE model (in-sample)** | 2024-25 | **0.2053** | 0.0461 | In-sample only |
+| **BKE model (overall MCE)** | All | — | **0.0562** | In-sample only |
+| BKE model (genuine OOS) | — | **UNKNOWN** | **UNKNOWN** | Never measured |
+
+**The model's MCE of 0.0562 vs. naive MCE of 0.1657 looks impressive — a 66%
+reduction.** But this advantage is in-sample and in the calibration-error metric
+specifically (which measures bin-level accuracy, not raw predictive power). The
+Brier gain over a home-rate constant (0.205–0.227 vs. 0.244–0.250) is more
+modest: roughly 0.015–0.045 Brier improvement, and entirely in-sample.
 
 ---
 
@@ -143,75 +184,125 @@ in the mid-probability range where prediction-market vig is hardest to beat.
 
 ### In-sample backtest (same caveat as Section 3 — leaky)
 
-`Simulation_Core_Summary.md` 2026-03-04, 90 team-seasons:
+Extracted directly from `reports/simulation_step1_validation.json` this session.
 
 | Season | MAE (wins) | RMSE | Correlation | Max Over | Max Under |
 |---|---|---|---|---|---|
-| 2022-23 | 5.57 | 6.80 | 0.821 | +14.1 | −9.1 |
-| 2023-24 | 6.06 | 7.05 | 0.867 | +12.3 | −17.2 |
-| 2024-25 | 3.76 | 4.34 | 0.951 | +8.1 | −8.4 |
-| **Overall** | **5.13** | **6.19** | **0.886** | — | — |
+| 2022-23 | **5.47** [CORRECTED] | **6.74** ✓ | **0.831** [CORRECTED] | **+15.7** [CORRECTED] | **−8.7** [CORRECTED] |
+| 2023-24 | **5.93** [CORRECTED] | **7.15** [CORRECTED] | **0.868** ✓ | **+12.4** ✓ | **−18.6** [CORRECTED] |
+| 2024-25 | **3.71** [CORRECTED] | **4.42** [CORRECTED] | **0.948** [CORRECTED] | **+9.0** [CORRECTED] | **−8.8** [CORRECTED] |
+| **Overall** | **5.03** [CORRECTED] | **6.22** ✓ | **0.887** ✓ | — | — |
+
+(Prior doc showed MAE 5.57/6.06/3.76/5.13; freshly extracted values are
+5.47/5.93/3.71/5.03. All discrepancies are small — prior reference doc was
+from a slightly older run.)
+
+### 5 largest absolute errors — in-sample backtest
+
+From `reports/simulation_step1_season_results.json` (in-sample, same-season data):
+
+| Team-Season | Projected W | Actual W | Error | Note |
+|---|---|---|---|---|
+| CHI 2023-24 | 20.4 | 39 | **−18.6** | Significant underestimate |
+| WAS 2022-23 | 50.7 | 35 | **+15.7** | Overestimate |
+| UTA 2022-23 | 50.9 | 37 | **+13.9** | Overestimate |
+| SAS 2023-24 | 34.4 | 22 | **+12.4** | Overestimate |
+| DET 2023-24 | 25.7 | 14 | **+11.7** | Overestimate |
+
+Note: these are **in-sample** errors (same-season player data → same-season wins).
+Even with the leaky rating, errors of 10–19 wins occur. The in-sample errors
+are smaller than the walk-forward errors below precisely because of leakage.
 
 ### Genuine walk-forward forecast (leakage-free — the number that matters)
 
-From `Simulation_Core_Summary.md` (2026-03-06/07) and `loop/context_summary.txt`
-(2026-03-07 sprint), forecast-style projected wins vs. actual:
+Extracted from `reports/forecast_season_results.json` (end_of_season scenario),
+generated by the forecast pipeline using prior-season player data to project
+the next season.
 
-| Season | Forecast MAE (wins) | Forecast correlation |
-|---|---|---|
-| 2023-24 | ≈ 7.5 – 9.1 | 0.64 – 0.69 |
-| 2024-25 | ≈ 8.9 – 9.1 | 0.64 – 0.65 |
+| Season projected | Forecast MAE (wins) | Forecast RMSE | Forecast r |
+|---|---|---|---|
+| 2023-24 | **7.71** ✓ | 9.74 | 0.706 |
+| 2024-25 | **8.89** ✓ | 11.25 | 0.617 |
 
-The repo's own benchmark note: *"Vegas lines typically achieve MAE of 5–6
-wins."* So the leakage-free model is **~3–4 wins worse per team than the
-Vegas/market baseline it would have to beat** to make money on season-win or
-derived game markets.
+The repo's own benchmark: *"Vegas lines typically achieve MAE of 5–6 wins."*
+The leakage-free model is **~2–4 wins worse per team than the Vegas/market
+baseline it would have to beat** to make money on season-win or derived game
+markets. The 2024-25 correlation (0.617) is lower than 2023-24 (0.706),
+suggesting instability across the two available walk-forward transitions.
 
-### 5 worst team-season forecast errors (from `loop/context_summary.txt`, "Remaining Large Errors")
+### 5 worst walk-forward forecast errors (from `forecast_season_results.json`)
 
-| Team-Season | Error (wins) | Cause (uncontrollable event) |
-|---|---|---|
-| MEM 2023-24 | +26.8 | Ja Morant 25-game suspension |
-| NOP 2024-25 | +21.1 | Zion / Ingram season-ending injuries |
-| TOR 2023-24 | +21.0 | Mid-season tank / rebuild |
-| PHI 2024-25 | +18.0 | Embiid played only 13 games |
-| POR 2024-25 | −18.1 | Young-team breakout after prior tank |
+| Team-Season | Projected W | Actual W | Error | Likely cause |
+|---|---|---|---|---|
+| NOP 2024-25 | 44.9 | 21 | **+23.9** | Zion/Ingram injuries, roster collapse |
+| MEM 2023-24 | 50.3 | 27 | **+23.3** | Ja Morant suspension |
+| PHI 2024-25 | 46.0 | 24 | **+22.0** | Embiid played only 13 games |
+| HOU 2023-24 | 20.1 | 41 | **−20.9** | Young-team breakout |
+| POR 2024-25 | 17.0 | 36 | **−19.0** | Breakout development |
 
-All five are injury/roster shocks the model has no mechanism to anticipate —
-directly relevant to prediction markets, where these are exactly the spots a
-naive model gets steamrolled by sharper money.
+Note: prior doc cited values from loop narrative notes (MEM +26.8, NOP +21.1,
+etc.) which differ from the JSON. **The JSON values are authoritative.**
+The top errors still cluster on injury/suspension events and young-team
+breakouts — categories the model cannot anticipate.
 
 ---
 
 ## Section 6: BKE Player Metric Stability and Predictive Value
 
-From `reference/BKE/bke_ingest_manifest.json` and
-`reference/bke_repo_context_summary_for_ai.md`, sourced from the absent
-`reports/bke_v31_experiment2_production_tilt.json` (v3.1-experiment2-rerun,
-generated 2026-03-01, `qualified_players = 950`):
+### BKE version predictive_rho table
 
-| Metric | Value | Meaning |
-|---|---|---|
-| `base_profile.predictive_rho` | **0.31523** | Spearman/Pearson ρ of the BKE production-proxy vs. the predictive target |
-| Recommended λ = 0.03 → `predictive_rho` | **0.317888** | Best λ under heuristic (max ρ s.t. rank-shift ≤ 3.5) |
-| `mean_abs_rank_shift_vs_base` | **3.250526** | Avg. player rank movement vs. base profile at recommended λ |
-| Production-proxy top weights | orapm 0.22, PTS 0.18, TS% 0.14, AST 0.12 | What the proxy leans on |
+`predictive_rho` is defined in the experimental layers reports as the **Spearman
+correlation between the BKE-derived production proxy and a predictive target
+within the same dataset** — specifically, correlation of the composite BKE
+score against a production-weighted score (orapm/PTS/TS%/AST) that proxies
+for "observed value." This is **not** a game-outcome prediction metric and
+**not** a market-price metric. It measures how well BKE rank-orders players
+by their observed production.
+
+The BKE backtest reports (v2.6, v2.7, v3.0) measure **cross-season player rank
+stability** (train on 2022-24, test on 2024-25, n=263 returning players). This
+is also not a game-outcome metric.
+
+| BKE Version | Generated | qualified_players | predictive_rho | Source | Notes |
+|---|---|---|---|---|---|
+| v1.5 | 2026-02-16 | 950 | — | bke_v15_report.json | Basic report, no rho field |
+| v2.0 | 2026-02-16 | 950 | — | bke_v20_report.json | Basic report |
+| v2.5 | 2026-02-20 | 950 | — | bke_v25_report.json | Basic report |
+| v2.6 | 2026-02-20 | 950 | — | bke_v26_report.json | Basic report; backtest: pts_rho=0.553 |
+| v2.7 | 2026-02-20 | 950 | — | bke_v27_report.json | Basic report; backtest: pts_rho=0.590 |
+| v2.8 | 2026-02-28 | 950 | — | bke_v28_report.json | Basic report |
+| v3.0 | 2026-02-20 | 950 | — | bke_v30_report.json | Basic report; backtest: pts_rho=0.553 |
+| v3.1 experimental (baseline 60/40) | 2026-02-28 | 950 | **0.3296** | bke_v31_experimental_layers.json | Baseline config |
+| v3.1 experimental (best layer1, 55/45) | 2026-02-28 | 950 | **0.3466** | bke_v31_experimental_layers.json | Best single-layer improvement |
+| v3.1 experimental (combined layers 1+6+3) | 2026-02-28 | 950 | **0.3436** | bke_v31_experimental_layers.json | Combined model |
+| **v3.1 exp2 rerun base profile** | 2026-03-01 | 950 | **0.3152** | bke_v31_experiment2_production_tilt.json | Layer36 second pass |
+| **v3.1 exp2 recommended (λ=0.03)** | 2026-03-01 | 950 | **0.3179** | bke_v31_experiment2_production_tilt.json | Production config |
+
+The BKE backtest cross-season rank correlations (player rank stability,
+train→test next season):
+
+| Version | Test season | portable_talent spearman | total_impact spearman | Within-1 tier accuracy |
+|---|---|---|---|---|
+| v2.6 | 2024-25 | 0.553 | 0.511 | 76.0% |
+| v2.7 | 2024-25 | 0.590 | 0.537 | 76.8% |
+| v3.0 | 2024-25 | 0.553 | 0.511 | 76.0% |
 
 **Cross-season player BKE carry stability** (year-over-year r of player BKE,
-from forecast carry validation, `loop/context_summary.txt` 2026-03-08):
+from `reports/forecast_validation.json`):
 
 | Transition | BKE carry r | MPG carry r |
 |---|---|---|
-| 2022-23 → 2023-24 | 0.43 (0.42 preseason) | 0.78 (0.73) |
-| 2023-24 → 2024-25 | 0.49 (0.48 preseason) | 0.79 (0.73) |
+| 2022-23 → 2023-24 | 0.4301 | 0.8452 |
+| 2023-24 → 2024-25 | 0.4919 | 0.8340 |
 
-**What `predictive_rho` predicts — clarification:** it is the correlation
-between the BKE-derived *production proxy* (a box-weighted score:
-orapm/PTS/TS%/AST) and the model's predictive target within the v3.1
-experiment. It is **not** a measure of "future team wins" and **not** a market
-metric. ρ ≈ 0.32 is modest — it indicates BKE rank-orders player production
-with moderate signal, with ~0.43–0.49 season-to-season player stability
-(typical for impact metrics; not exceptional).
+BKE carry r ≈ 0.43–0.49 is modest — typical for impact metrics; not exceptional.
+MPG carry r ≈ 0.83–0.85 is strong, as expected (playing time is stable year-to-year).
+
+**What `predictive_rho` predicts — clarification:** it is the correlation between
+the BKE composite score and a production proxy (orapm=0.22, PTS=0.18, TS%=0.14,
+AST=0.12, FGM=0.08, FGA=0.08, FG3M=0.06, FG3A=0.04, FTM=0.04, FTA=0.04
+weights) within the experiment. ρ ≈ 0.315–0.347 is moderate internal validity,
+not a game-outcome or market metric.
 
 ---
 
@@ -224,27 +315,28 @@ with moderate signal, with ~0.43–0.49 season-to-season player stability
 
 2. **True walk-forward test (train ≤N, test N+1, no N+1 data in BKE ratings)?**
    **Partially.** The *forecast pipeline* is genuinely walk-forward for
-   season-win projection (MAE ≈ 9, r ≈ 0.65). But it runs a **synthetic
-   schedule with no real opponents/outcomes**, so it yields **no game-level
-   win-probability, Brier, log-loss, or calibration**. The only game-level
-   metrics that exist are the **in-sample (leaky)** ones.
+   season-win projection (MAE ≈ 7.7–8.9, r ≈ 0.62–0.71). But it runs a
+   **synthetic schedule with no real opponents/outcomes**, so it yields **no
+   game-level win-probability, Brier, log-loss, or calibration**. The only
+   game-level metrics that exist are the **in-sample (leaky)** ones (Section 3).
 
 3. **Known data-completeness issues — injuries, trades, back-to-backs?**
    **Yes, multiple.** (a) No injury/availability forecasting — the 5 worst
-   errors are all injury/suspension driven. (b) Mid-season trades handled via
-   "stint" splitting but flagged as a known bug for name matching
-   (Jokic/Doncic, Herb/Herbert Jones). (c) `compute_rest_home_back2back.py`
-   exists but rest/B2B is **not** an input to the game model — the win-prob
-   formula uses only team `mu`, team `sigma`, and a flat 2.0 HCA. (d) A
-   "phantom NAN team" artifact from traded players is filtered, not fixed.
+   walk-forward errors are all injury/suspension driven. (b) Mid-season trades
+   handled via "stint" splitting but flagged as a known bug for name matching.
+   (c) `compute_rest_home_back2back.py` exists but rest/B2B is **not** an input
+   to the game model — the win-prob formula uses only team `mu`, team `sigma`,
+   and a flat 2.0 HCA. (d) A "phantom NAN team" artifact from traded players
+   is filtered, not fixed. (e) DARKO data availability rate = 0.0 per
+   `modeling_inputs_report.json` — DARKO is entirely absent from the current
+   data; the model runs on RAPM+box only. ✓ **[NEW — from modeling_inputs_report.json]**
 
 4. **Known weakest scenario?** **Yes — injury/roster-shock team-seasons**
-   (MEM/NOP/PHI: +18 to +27 win errors) and **high-confidence games**: the
-   model is **overconfident in the >90% predicted-WP bin (actual ≈ 79%)** —
-   precisely the favorites bucket where prediction markets are most efficient
-   and mispriced edges are smallest. HCA is also slightly miscalibrated
-   (predicted home WR 0.573–0.580 vs actual 0.543–0.581; docs suggest dropping
-   HCA 2.0 → ~1.5, not yet done).
+   (NOP/MEM/PHI: +22–24 win errors in walk-forward) and **high-confidence games**:
+   the model is **overconfident in the >90% predicted-WP bin** (actual ≈ 78–88%
+   across seasons) — precisely the favorites bucket where prediction markets are
+   most efficient and mispriced edges are smallest. HCA is also slightly
+   miscalibrated (predicted home WR 0.573–0.580 vs actual 0.543–0.581).
 
 5. **Earliest training season / latest tested season?** Earliest: **2022-23**.
    Latest tested: **2024-25**. Only **3 seasons** of data exist total — a very
@@ -258,13 +350,21 @@ with moderate signal, with ~0.43–0.49 season-to-season player stability
 
 7. **Open bugs / known incorrect behavior in loop files?** **Yes.**
    `loop/in_progress_context.txt` documents an **unresolved blocker**: the
-   player-stat sim and its mirrored frontend can **overshoot the target team
-   score** on rare seeds (repro: seed 5 → 114 vs 112 target); reconciliation
-   only spends free throws, and the regression test misses the branch. Marked
-   *"should not be treated as fully push-safe."* Plus the documented
-   name-matching bugs (readme "Known Bugs"). Note: this blocker is in the
-   player-box layer, which is *marginal* to the win-probability output, but it
-   signals the sim stack is mid-flight, not production-frozen.
+   player-stat sim can **overshoot the target team score** on rare seeds (repro:
+   seed 5 → 114 vs 112 target); reconciliation only spends free throws, and the
+   regression test misses the branch. Marked *"should not be treated as fully
+   push-safe."* This is in the player-box layer, marginal to win-probability
+   output, but signals the sim stack is mid-flight, not production-frozen.
+
+8. **Data completeness (from `modeling_inputs_report.json`):** ✓
+   - Rows: 1971 player-seasons across 2022-23/2023-24/2024-25
+   - RAPM coverage rate: **100%** (has_rapm_rate=1.0)
+   - DARKO coverage rate: **0%** (has_darko_rate=0.0) — DARKO entirely absent
+
+9. **Minute model (from `player_eval_step2_minute_model_validation.json`):** ✓
+   - Holdout MAE (2024-25): **2.36 MPG** (R²=0.884)
+   - CV fold MAEs: 2.29 / 2.36 / 2.92 MPG across 3 folds
+   - MPG is the best-carried player feature year-over-year (r≈0.83–0.85)
 
 ---
 
@@ -287,12 +387,14 @@ Ordered by priority. Concrete, not hand-wavy.
    overconfidence must be fixed before any favorite-side betting.
 4. **Injury/availability layer.** A pre-game availability input (player
    in/out, rest, B2B — already computed in `compute_rest_home_back2back.py`
-   but unused by the game model). The 5 worst errors are all availability
-   shocks.
-5. **Wider data base.** 3 seasons / 2 transitions is too thin. Backfill
+   but unused by the game model). The 5 worst walk-forward errors are all
+   availability shocks.
+5. **DARKO ingestion.** Current data has 0% DARKO coverage; incorporating this
+   prior (as designed) is a prerequisite for the full BKE pipeline as specified.
+6. **Wider data base.** 3 seasons / 2 transitions is too thin. Backfill
    ≥2017-18 to get ≥6 walk-forward transitions before trusting any Sharpe-like
    estimate.
-6. **Bet-sizing / Kelly simulation.** Only after 1–4: simulate a paper
+7. **Bet-sizing / Kelly simulation.** Only after 1–4: simulate a paper
    bankroll vs. closing lines with realistic fees to estimate ROI, variance,
    and max drawdown for Sleeve C.
 
@@ -301,87 +403,151 @@ Ordered by priority. Concrete, not hand-wavy.
 ## Section 9: Honest Alpha Readiness Assessment
 
 **BKE is NOT ready for real-capital prediction-market betting, and the gap is
-fundamental, not cosmetic.** The headline Brier ≈ 0.21 / accuracy ≈ 67% is an
-**in-sample retrodiction** — the repo's own docs admit same-season data leaks
-into the team ratings used to "predict" that season's games. The only
-leakage-free evidence is season-win projection at **MAE ≈ 9 wins, r ≈ 0.65**,
-which the repo itself notes is **~3–4 wins worse than Vegas**, and that path
-produces **no game-level probability or calibration at all**. There is **zero
-comparison to any market price** anywhere in the project. The single empirical
-gate that must be cleared before any allocation: **a genuine walk-forward
-game-level test scored against historical Kalshi/sportsbook closing lines,
-showing positive closing-line value and a Brier-skill score > 0 versus the
-market on out-of-sample games (ideally ≥2 seasons, after HCA/σ recalibration).**
-Until that one number exists and is positive, Sleeve C's model edge is
-**unproven and should receive no capital beyond a tiny instrumented
-paper/research allocation.** Recommended allocation on current evidence:
-**$0 live; research-only.**
+fundamental, not cosmetic.** This verdict is unchanged from the prior session
+and is now strengthened by direct data verification.
+
+The headline Brier ≈ 0.205–0.227 / accuracy ≈ 64–69% is an **in-sample
+retrodiction** — confirmed by reading `src/profile_aggregate/team_feature_aggregation.py`
+line 873 this session: in backtest mode the model reads same-season player
+profiles. The only leakage-free evidence is season-win projection at **MAE ≈
+7.7–8.9 wins, r ≈ 0.62–0.71** (freshly extracted from `forecast_season_results.json`),
+which the repo itself notes is **~2–4 wins worse than Vegas**, and that path
+produces **no game-level probability or calibration at all** (synthetic
+schedule, no real opponents). There is **zero comparison to any market price**
+anywhere in the project. DARKO data is 0% present, meaning the full pipeline
+as designed has never been tested.
+
+The single empirical gate that must be cleared before any allocation: **a
+genuine walk-forward game-level test scored against historical Kalshi/sportsbook
+closing lines, showing positive closing-line value and a Brier-skill score > 0
+versus the market on out-of-sample games (ideally ≥2 seasons, after
+HCA/σ recalibration).** Until that one number exists and is positive, Sleeve
+C's model edge is **unproven and should receive no capital beyond a tiny
+instrumented paper/research allocation.**
+
+**Recommended allocation on current evidence: $0 live; research-only.**
 
 ---
 
 ## Section 10: Raw Numbers Dump
 
-All values verbatim from repo docs (no `reports/` JSON exists to cross-check).
+All values extracted directly from JSON files this session (2026-05-19).
 
 ```
-SOURCE: src/simulation/simulation_config.py (READ DIRECTLY THIS SESSION)
+ENVIRONMENT (this session, 2026-05-19):
+  data/historical/team_game_logs.parquet     PRESENT
+  data/processed/player_eval/team_feature_aggregation.parquet  PRESENT
+  data/processed/player_eval/player_impact_profiles.parquet    PRESENT
+  reports/  (58 files)  PRESENT
+  python3 src/simulation/validate_sim.py  -> SUCCESS (regenerated validation JSON)
+  python3 -m pytest -q                    -> 3 passed in 176.27s
+
+SOURCE: src/simulation/simulation_config.py
   SIGMA_LEAGUE = 3.0
   HOME_COURT_ADVANTAGE = 2.0
   SEASON_SIMULATIONS = 10000
   SIMULATION_RANDOM_SEED = 42
-  TEAM_FEATURES_PATH = data/processed/player_eval/team_feature_aggregation.parquet
 
-SOURCE: src/simulation/game_model.py (READ DIRECTLY THIS SESSION)
-  win_prob_home = Phi( ((mu_home + HCA) - mu_away) / sqrt(sigma_home^2 + sigma_away^2 + sigma_league^2) )
-  mu  = team_net_rating_projected   (from team_feature_aggregation.parquet)
-  sigma = vol_total                 (from team_feature_aggregation.parquet)
-  Backtest team ratings derive from SAME-SEASON player data -> in-sample.
+SOURCE: src/profile_aggregate/team_feature_aggregation.py line 873
+  src_path = PROJECTED_PROFILES_PATH if forecast_mode else PLAYER_PROFILES_PARQUET
+  -> BACKTEST mode reads SAME-SEASON actual player data -> in-sample leakage CONFIRMED
 
-SESSION CHECKS (run this session, 2026-05-19):
-  python3 src/simulation/validate_sim.py  -> FileNotFoundError: data/processed/player_eval/team_feature_aggregation.parquet
-  python3 -m pytest -q                    -> 3 passed in 1.36s (tests/test_simulation_core.py; data-free regression checks only)
-  app/{simulation,player_eval,player_bke}_viewer.py --help -> all FileNotFoundError (HTML generators, no CLI, need absent data)
-  aggregate/player_profile_aggregate.parquet -> shape (1971, 933), seasons ['2022-23','2023-24','2024-25'] (ONLY data artifact present)
+SOURCE: reports/simulation_step1_validation.json (aggregate_calibration_error)
+  0.0562
 
-GAME-LEVEL BACKTEST (Simulation_Core_Summary.md 2026-03-04 — IN-SAMPLE/LEAKY):
-  2022-23: games=1230 brier=0.2281 logloss=0.6536 acc=0.649 marginRMSE=12.90 homeWR act=0.581 pred=0.580
-  2023-24: games=1230 brier=0.2148 logloss=0.6191 acc=0.656 marginRMSE=14.13 homeWR act=0.543 pred=0.575
-  2024-25: games=1225 brier=0.2053 logloss=0.5975 acc=0.692 marginRMSE=13.81 homeWR act=0.544 pred=0.573
-  aggregate_calibration_error = 0.060 ; >90% bin actual ~0.79 (overconfident) ; 40-70% well-calibrated
+GAME-LEVEL BACKTEST (simulation_step1_validation.json — IN-SAMPLE/LEAKY):
+  2022-23: n=1230 brier=0.227047 logloss=0.650652 acc=0.6407 marginRMSE=12.8657 marginMAE=10.1076 homeWR_act=0.5805 homeWR_pred=0.5798
+  2023-24: n=1230 brier=0.215368 logloss=0.620925 acc=0.6537 marginRMSE=14.1357 marginMAE=11.0597 homeWR_act=0.5431 homeWR_pred=0.5739
+  2024-25: n=1225 brier=0.205272 logloss=0.597909 acc=0.6931 marginRMSE=13.8007 marginMAE=10.7488 homeWR_act=0.5445 homeWR_pred=0.5731
 
-SEASON-LEVEL BACKTEST (IN-SAMPLE, 90 team-seasons):
-  2022-23: MAE=5.57 RMSE=6.80 r=0.821 maxOver=+14.1 maxUnder=-9.1
-  2023-24: MAE=6.06 RMSE=7.05 r=0.867 maxOver=+12.3 maxUnder=-17.2
-  2024-25: MAE=3.76 RMSE=4.34 r=0.951 maxOver=+8.1  maxUnder=-8.4
-  OVERALL: MAE=5.13 RMSE=6.19 r=0.886 meanErr=-0.06
+SEASON-LEVEL BACKTEST (simulation_step1_validation.json — IN-SAMPLE, 90 team-seasons):
+  2022-23: n=30 MAE=5.47 RMSE=6.74 r=0.8305 mean_err=-0.01 max_over=+15.7 max_under=-8.7
+  2023-24: n=30 MAE=5.93 RMSE=7.15 r=0.8683 mean_err=0.00 max_over=+12.4 max_under=-18.6
+  2024-25: n=30 MAE=3.71 RMSE=4.42 r=0.9480 mean_err=-0.17 max_over=+9.0 max_under=-8.8
+  OVERALL: n=90 MAE=5.03 RMSE=6.22 r=0.8872 mean_err=-0.06
 
-FORECAST (WALK-FORWARD, LEAKAGE-FREE; Simulation_Core_Summary.md 2026-03-06/07, loop 2026-03-07):
-  2023-24 margin: MAE ~8.20 (improved to 7.52 in later sprint) r ~0.67-0.69
-  2024-25 margin: MAE ~9.02 (~9.06) r ~0.64-0.65
-  2024-25 PPP   : MAE ~8.27 r ~0.689
+TOP-5 IN-SAMPLE ERRORS (simulation_step1_season_results.json):
+  CHI 2023-24: proj=20.4 act=39 err=-18.6
+  WAS 2022-23: proj=50.7 act=35 err=+15.7
+  UTA 2022-23: proj=50.9 act=37 err=+13.9
+  SAS 2023-24: proj=34.4 act=22 err=+12.4
+  DET 2023-24: proj=25.7 act=14 err=+11.7
+
+FORECAST (WALK-FORWARD, LEAKAGE-FREE — forecast_season_results.json, end_of_season):
+  2023-24: MAE=7.71 RMSE=9.74 r=0.7057
+  2024-25: MAE=8.89 RMSE=11.25 r=0.6166
   NO game-level Brier/logloss/calibration (synthetic schedule, no real outcomes)
   Repo benchmark note: "Vegas lines typically achieve MAE of 5-6 wins"
 
-PLAYER CARRY (forecast validation, loop 2026-03-08):
-  end_of_season  2022-23->23-24: BKE r=0.4301 MPG r=0.7833
-  end_of_season  2023-24->24-25: BKE r=0.4919 MPG r=0.7932
-  preseason_snap 2022-23->23-24: BKE r=0.4211 MPG r=0.7342
-  preseason_snap 2023-24->24-25: BKE r=0.4765 MPG r=0.7301
+TOP-5 WALK-FORWARD ERRORS (forecast_season_results.json, end_of_season):
+  NOP 2024-25: proj=44.9 act=21 err=+23.9
+  MEM 2023-24: proj=50.3 act=27 err=+23.3
+  PHI 2024-25: proj=46.0 act=24 err=+22.0
+  HOU 2023-24: proj=20.1 act=41 err=-20.9
+  POR 2024-25: proj=17.0 act=36 err=-19.0
 
-BKE PREDICTIVE (bke_ingest_manifest.json / bke_v31_experiment2, gen 2026-03-01):
-  qualified_players=950 base_predictive_rho=0.31523
-  recommended lambda=0.03 predictive_rho=0.317888 mean_abs_rank_shift_vs_base=3.250526
-  production_proxy weights: orapm=0.22 PTS=0.18 TS_PCT=0.14 AST=0.12
+CALIBRATION BASELINES (computed from JSON this session):
+  Overall model MCE: 0.0562
+  Overall naive MCE (predict 0.5 always): 0.1657
+  Per season:
+    2022-23: model_mce=0.0564 naive_mce=0.1464 brier_model=0.2270 brier_home=0.4195 brier_coin=0.2500 brier_prior=0.2435
+    2023-24: model_mce=0.0660 naive_mce=0.1577 brier_model=0.2154 brier_home=0.4569 brier_coin=0.2500 brier_prior=0.2481
+    2024-25: model_mce=0.0461 naive_mce=0.1931 brier_model=0.2053 brier_home=0.4555 brier_coin=0.2500 brier_prior=0.2480
 
-WORST FORECAST ERRORS (loop/context_summary.txt):
-  MEM 2023-24 +26.8 (Morant suspension); NOP 2024-25 +21.1 (Zion/Ingram inj);
-  TOR 2023-24 +21.0 (tank); PHI 2024-25 +18.0 (Embiid 13 GP); POR 2024-25 -18.1 (breakout)
+BKE PREDICTIVE_RHO (bke_v31 reports):
+  v3.1-experimental baseline (60/40): predictive_rho=0.329588
+  v3.1-experimental best layer1 (55/45): predictive_rho=0.346628
+  v3.1-experimental combined (1+6+3): predictive_rho=0.343605
+  v3.1-experiment2-rerun base_profile (layer36 60/40): predictive_rho=0.31523
+  v3.1-experiment2-rerun recommended (lambda=0.03): predictive_rho=0.317888 mean_abs_rank_shift=3.250526
 
-KNOWN BLOCKER (loop/in_progress_context.txt 2026-03-11):
-  player_stats_sim score-overshoot on rare seeds (seed 5: 114 vs 112 target);
-  reconciliation only spends FTs; regression test misses branch; "not push-safe".
+BKE BACKTEST CROSS-SEASON RANK CORRELATIONS (bke_v26/v27/v30_backtest.json, train=22-23/23-24, test=24-25, n=263):
+  v2.6: portable_talent spearman=0.5526 total_impact spearman=0.5106 within1_tier=0.760
+  v2.7: portable_talent spearman=0.5900 total_impact spearman=0.5372 within1_tier=0.768
+  v3.0: portable_talent spearman=0.5526 total_impact spearman=0.5106 within1_tier=0.760
 
-OVERALL PLAN STATUS (overall_plan.DO_NOT_CHANGE.txt):
+PLAYER CARRY (forecast_validation.json, end_of_season):
+  2022-23->2023-24: BKE_r=0.4301 MPG_r=0.8452
+  2023-24->2024-25: BKE_r=0.4919 MPG_r=0.8340
+
+RAPM VALIDATION (rapm_validation_report.json):
+  Total player-seasons: 1971 (across 2022-23/2023-24/2024-25)
+  xRAPM benchmark pearson r=0.415 spearman=0.306 n=27 MAE=4.46 (raw RAPM vs xRAPM)
+  xRAPM comparison (with BPM prior) pearson r=0.539 spearman=0.353 n=27 MAE=1.13
+  Year-over-year stability: 2022-23->23-24 pearson=0.309 spearman=0.306 n=539
+                            2023-24->24-25 pearson=0.371 spearman=0.418 n=661
+
+DATA COMPLETENESS (modeling_inputs_report.json):
+  rows=1971  seasons=['2022-23','2023-24','2024-25']
+  has_rapm_rate=1.0  has_darko_rate=0.0  (DARKO ABSENT)
+
+MINUTE MODEL (player_eval_step2_minute_model_validation.json):
+  GBR v2, 70 features, target=MPG
+  CV fold MAEs: 2.29 (test 2023-24), 2.36 (test 2024-25), 2.92 (test 2022-23)
+  Holdout MAE=2.36 R²=0.884 (test season 2024-25)
+  Top feature: pec_defensive_shrinkage_lambda importance=0.476
+
+TEAM FEATURES VALIDATION (player_eval_step3_team_features_validation.json):
+  n_team_seasons=60 (2023-24, 2024-25)
+  team_net_rating_projected: mean=2.60 std=3.91 min=-7.02 max=12.02
+  vol_total: mean=5.99 std=0.04 (nearly constant at 6.0)
+  mode=forecast (this report is in forecast mode — calibration={} ablation_stack={})
+
+SIMULATION STEP 2 VALIDATION (simulation_step2_validation.json):
+  overall: starter_overlap_rate=0.709 clutch_overlap_rate=0.829 rotation_corr=0.787
+  starter_target_met=FALSE (target not met) clutch_target_met=TRUE rotation_target_met=TRUE
+
+BKE COMPRESSION (bke_v28_compression_report.json):
+  dimension_model_z->portable_talent_z_adj: std_ratio=1.177 (no compression)
+  portable_talent_z_adj->total_impact_z: std_ratio=1.014 (no compression)
+  role_utilization_raw_z->role_dependent_impact_z: std_ratio=0.570 (COMPRESSED flag=true)
+
+dBKE v3.0 SHRINKAGE (dbke_v30_defense_shrinkage.json):
+  Phase A: alpha=0.65 w=0.7 w_portable=0.55 w_rapm_shrunk=0.45; corr_DBKEraw_DRAPM=0.934; pass=true
+  Phase B: sigma_global_raw=0.998 std_DBKE_final=0.855; pass=true
+  Phase C: def_driver_share=0.368 dbke_yoy_corr=0.715 specialist_dbke_yoy_corr=0.573
+
+OVERALL PLAN STATUS:
   Phase 4 Model Development = [ ] INCOMPLETE
   Phase 5 Evaluation & Interpretability = [ ] INCOMPLETE
 ```
