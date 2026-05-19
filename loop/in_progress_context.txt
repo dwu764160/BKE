@@ -1,3 +1,41 @@
+2026-03-11 — Simulation realism upgrade completed
+===============================================================================
+
+Completed in this pass:
+  - `src/simulation/player_stats_sim.py`
+    - Replaced independent per-player Poisson stat generation with a team-budget pipeline:
+      team totals first, then capped Dirichlet usage, multinomial allocation,
+      Beta-Binomial shooting, rebound/assist/stock budgets, and FT-based score reconciliation.
+    - Lowered archetype interaction strength via `PLAYER_GAME_ARCHETYPE_EFFECT_SCALE = 0.60`.
+    - Increased starter offensive load via starter/clutch usage boosts and a hard per-player usage cap (`0.38`).
+    - Added blowout and close-game minute scripting to better reflect on/off context.
+  - `src/simulation/simulation_config.py`
+    - Added new player-game realism knobs for archetype scaling, usage boosts/cap,
+      Dirichlet concentration, Beta concentration, and blowout minute redistribution.
+  - `app/simulation_viewer.py`
+    - Reworked the single-game JS sim to use the same high-level structure as the backend:
+      team stat budgets, usage competition, constrained attempt allocation, and score reconciliation.
+  - `tests/test_simulation_core.py`
+    - Added regression checks for capped 10-man rotation, conserved shot subtype constraints,
+      and bounded normalized game-usage shares.
+  - `readme.md`
+    - Synced simulation docs to describe the new team-budget + Dirichlet + Beta-Binomial player stat path.
+  - `app/simulation.html`
+    - Regenerated successfully.
+
+Validation completed:
+  - `pytest -q tests/test_simulation_core.py` — 3/3 pass
+  - `python3 scripts/validate_player_stat_sim.py --mode backtest`
+    - PTS: MAE=0.92, r=0.987, bias=+0.48
+    - FGA: MAE=0.72, r=0.988
+    - FG3A: MAE=0.33, r=0.982
+
+Known blocker from this pass:
+  - `src/simulation/player_stats_sim.py` and the mirrored frontend path in `app/simulation_viewer.py` can still overshoot the requested team score on rare seeds. The downward reconciliation path only spends free throws, so if the overshoot occurs in a zero-FT or low-FT state it can remain above target.
+  - Repro smoke test hit the issue on seed 5: the simulated box summed to 114 points against a 112-point target.
+  - `tests/test_simulation_core.py` currently misses this branch because the schema assertion is pointed at the input roster rather than the simulated box output, and the test only samples one fixed seed.
+  - Status: this patch set is documented, but it should not be treated as fully push-safe until reconciliation or coverage is tightened.
+
 2026-03-XX — Frontend game sim & scatter fixes + Monte Carlo proposal
 ===============================================================================
 

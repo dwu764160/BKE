@@ -136,7 +136,20 @@ def test_matchup_map_penalizes_creator_against_poa():
 
 
 def test_single_game_player_stats_reconcile_team_points_and_minutes():
-    home = _roster("HOM")
+    home = pd.concat(
+        [
+            _roster("HOM"),
+            pd.DataFrame(
+                [
+                    _player("HOM", "HOM9", "Wing", "Connector", "Rotational Defender", 14.0, 0.11, 0.30),
+                    _player("HOM", "HOM10", "Guard", "Ballhandler", "Rotational Defender", 12.0, 0.14, 0.27),
+                    _player("HOM", "HOM11", "Big", "PnR Rolling Big", "Rotational Defender", 11.0, 0.10, 0.05),
+                    _player("HOM", "HOM12", "Wing", "Off-Ball Stationary Shooter", "Rotational Defender", 9.0, 0.09, 0.44),
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
     away = _roster("AWY", poa=True)
     descriptors = build_team_descriptor_map(pd.concat([home, away], ignore_index=True))
     away_desc = descriptors["2025-26"]["AWY"]
@@ -170,3 +183,9 @@ def test_single_game_player_stats_reconcile_team_points_and_minutes():
     assert int(box["pts"].sum()) == 112
     assert math.isclose(float(box["sim_minutes"].sum()), 240.0, rel_tol=0.0, abs_tol=1e-6)
     assert (box[["pts", "reb", "ast", "stl", "blk", "tov", "fga", "fta"]] >= 0).all().all()
+    assert len(box) == 10
+    assert (box["fg3a"] <= box["fga"]).all()
+    assert (box["fgm"] <= box["fga"]).all()
+    assert (box["ftm"] <= box["fta"]).all()
+    assert math.isclose(float(box["usage_proxy"].sum()), 1.0, rel_tol=0.0, abs_tol=1e-6)
+    assert float(box["usage_proxy"].max()) <= 0.380001

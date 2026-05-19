@@ -2668,9 +2668,114 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
   const players = [];
   if (!teamStep2) return players;
 
-  // ── 1. Build full roster pool (deduped by player_id) ──
+  const normalize = (arr) => {
+    const clean = arr.map(v => (Number.isFinite(v) && v > 0 ? v : 0));
+    const total = clean.reduce((a, b) => a + b, 0);
+    if (total <= 0) return clean.map(() => 1 / Math.max(clean.length, 1));
+    return clean.map(v => v / total);
+  };
+  const sampleNormal01 = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+  const sampleNormal = (mean, sigma) => mean + sigma * sampleNormal01();
+  const sampleGamma = (shape) => {
+    const k = Math.max(shape, 0.01);
+    if (k < 1) {
+      return sampleGamma(k + 1) * Math.pow(Math.random(), 1 / k);
+    }
+    const d = k - 1 / 3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+      const x = sampleNormal01();
+      let v = 1 + c * x;
+      if (v <= 0) continue;
+      v = v * v * v;
+      const u = Math.random();
+      if (u < 1 - 0.0331 * Math.pow(x, 4)) return d * v;
+      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+    }
+  };
+  const sampleDirichlet = (alpha) => {
+    const draws = alpha.map(a => sampleGamma(a));
+    const total = draws.reduce((a, b) => a + b, 0);
+    return draws.map(v => v / Math.max(total, 1e-9));
+  };
+  const sampleBeta = (a, b) => {
+    const x = sampleGamma(a);
+    const y = sampleGamma(b);
+    return x / Math.max(x + y, 1e-9);
+  };
+  const applyShareCap = (shares, cap) => {
+    let out = normalize(shares);
+    for (let iter = 0; iter < out.length + 2; iter++) {
+      const over = out.map(v => v > cap + 1e-9);
+      if (!over.some(Boolean)) break;
+      let excess = 0;
+      out = out.map((v, i) => {
+        if (over[i]) {
+          excess += v - cap;
+          return cap;
+        }
+        return v;
+      });
+      const freeIdx = out.map((_, i) => !over[i]);
+      const freeTotal = out.reduce((sum, v, i) => sum + (freeIdx[i] ? v : 0), 0);
+      if (freeTotal <= 1e-9) break;
+      out = out.map((v, i) => freeIdx[i] ? v + excess * (v / freeTotal) : v);
+    }
+    return normalize(out);
+  };
+  const multinomialDraw = (n, probs) => {
+    const out = new Array(probs.length).fill(0);
+    const p = normalize(probs);
+    for (let draw = 0; draw < Math.max(0, n); draw++) {
+      const r = Math.random();
+      let cum = 0;
+      let idx = p.length - 1;
+      for (let i = 0; i < p.length; i++) {
+        cum += p[i];
+        if (r <= cum) { idx = i; break; }
+      }
+      out[idx] += 1;
+    }
+    return out;
+  };
+  const multinomialWithCaps = (n, probs, caps) => {
+    const out = new Array(probs.length).fill(0);
+    let remaining = Math.max(0, n);
+    let remainingCaps = caps.slice();
+    while (remaining > 0 && remainingCaps.reduce((a, b) => a + b, 0) > 0) {
+      const eligible = remainingCaps.map(v => v > 0 ? 1 : 0);
+      const draw = multinomialDraw(remaining, probs.map((p, i) => p * eligible[i]));
+      let accepted = 0;
+      for (let i = 0; i < out.length; i++) {
+        const take = Math.min(draw[i], remainingCaps[i]);
+        out[i] += take;
+        remainingCaps[i] -= take;
+        accepted += take;
+      }
+      if (accepted <= 0) {
+        const idx = remainingCaps.findIndex(v => v > 0);
+        if (idx < 0) break;
+        out[idx] += 1;
+        remainingCaps[idx] -= 1;
+        accepted = 1;
+      }
+      remaining -= accepted;
+    }
+    return out;
+  };
+  const drawBinomial = (n, p) => {
+    let made = 0;
+    for (let i = 0; i < n; i++) if (Math.random() < p) made += 1;
+    return made;
+  };
+
   const starterIds = new Set((teamStep2.starter_players || []).map(p => String(p.player_id)));
-  const clutchIds  = new Set((teamStep2.clutch_players  || []).map(p => String(p.player_id)));
+  const clutchIds = new Set((teamStep2.clutch_players || []).map(p => String(p.player_id)));
   const seen = new Set();
   const fullPool = [];
   const addToPool = (arr) => (arr || []).forEach(p => {
@@ -2680,14 +2785,9 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
   addToPool(teamStep2.starter_players);
   addToPool(teamStep2.clutch_players);
   addToPool(teamStep2.pool_players);
-
   if (!fullPool.length) return players;
 
-  // ── 2. Rotation selection: limit to 10 players ──
-  const ROTATION_SIZE = 10;
-  const rotSize = Math.min(ROTATION_SIZE, fullPool.length);
-
-  // Compute importance for selection (starters always included)
+  const rotationSize = Math.min(10, fullPool.length);
   const importance = fullPool.map(p => {
     const base = Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 1);
     const pid = String(p.player_id);
@@ -2696,33 +2796,26 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
     if (clutchIds.has(pid)) imp *= 1.10;
     return imp;
   });
+  const selected = new Set();
+  fullPool.forEach((p, i) => { if (starterIds.has(String(p.player_id))) selected.add(i); });
+  [...fullPool.keys()].sort((a, b) => importance[b] - importance[a]).forEach(idx => {
+    if (selected.size < rotationSize) selected.add(idx);
+  });
+  const rotation = [...selected].map(i => fullPool[i]);
 
-  // Select rotation: starters first, then fill by importance
-  const selectedIdxs = new Set();
-  fullPool.forEach((p, i) => { if (starterIds.has(String(p.player_id))) selectedIdxs.add(i); });
-  const sortedByImp = [...fullPool.keys()].sort((a, b) => importance[b] - importance[a]);
-  for (const idx of sortedByImp) {
-    if (selectedIdxs.size >= rotSize) break;
-    selectedIdxs.add(idx);
-  }
-  const rotation = [...selectedIdxs].map(i => fullPool[i]);
-
-  // ── 3. Anchored minute allocation (matches backend logic) ──
-  const TOTAL_MINUTES = 240;
+  const totalMinutes = 240;
   const baseMpgs = rotation.map(p => Math.max(numOrZero(p.minutes) || numOrZero(p.mpg) || 10, 6));
-  const allocBase = baseMpgs.map((bm, i) => {
+  let mins = baseMpgs.map((bm, i) => {
     const pid = String(rotation[i].player_id);
     let m = bm;
-    if (starterIds.has(pid))       m += 1.4;   // starter bonus (+0.14 * 10)
-    if (clutchIds.has(pid))        m += 0.5;   // clutch bonus (+0.05 * 10)
-    if (!starterIds.has(pid))      m -= 0.8;   // bench penalty (-0.08 * 10)
+    if (starterIds.has(pid)) m += 1.4;
+    if (clutchIds.has(pid)) m += 0.5;
+    if (!starterIds.has(pid)) m -= 0.8;
     return Math.max(m, 4);
   });
-  const allocSum = allocBase.reduce((a, b) => a + b, 0);
-  let mins = allocBase.map(b => TOTAL_MINUTES * b / Math.max(allocSum, 1));
-
-  // Cap: no player plays more than base_mpg + 4
-  const caps = baseMpgs.map(bm => Math.min(bm + 4, 40));
+  const allocSum = mins.reduce((a, b) => a + b, 0);
+  mins = mins.map(m => totalMinutes * m / Math.max(allocSum, 1));
+  const caps = baseMpgs.map(v => Math.min(v + 4, 40));
   let excess = 0;
   mins = mins.map((m, i) => {
     if (m > caps[i]) { excess += m - caps[i]; return caps[i]; }
@@ -2730,136 +2823,181 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
   });
   if (excess > 0.5) {
     const headroom = mins.map((m, i) => caps[i] - m);
-    const hrTotal = headroom.reduce((a, b) => a + b, 0);
-    if (hrTotal > 0.5) {
-      mins = mins.map((m, i) => Math.min(m + headroom[i] * (excess / hrTotal), caps[i]));
-    }
+    const headroomTotal = headroom.reduce((a, b) => a + b, 0);
+    if (headroomTotal > 0.5) mins = mins.map((m, i) => Math.min(m + headroom[i] * (excess / headroomTotal), caps[i]));
+  }
+  if (closeGame) {
+    const clutchWeights = normalize(rotation.map((p, i) => clutchIds.has(String(p.player_id)) ? mins[i] : 0));
+    const nonClutchWeights = normalize(rotation.map((p, i) => clutchIds.has(String(p.player_id)) ? 0 : Math.max(mins[i] - 4, 0))); 
+    mins = mins.map((m, i) => m + 3.0 * clutchWeights[i] - 3.0 * nonClutchWeights[i]);
+  }
+  if (Math.abs(teamScore - oppScore) >= 15) {
+    const starterWeights = normalize(rotation.map((p, i) => starterIds.has(String(p.player_id)) ? Math.max(mins[i] - 4, 0) : 0));
+    const benchWeights = normalize(rotation.map((p, i) => starterIds.has(String(p.player_id)) ? 0 : Math.max(baseMpgs[i], 1))); 
+    const shift = 6.0;
+    mins = mins.map((m, i) => m - shift * starterWeights[i] + shift * benchWeights[i]);
   }
   mins = mins.map(m => Math.max(4, Math.min(40, m)));
-  const mTotal = mins.reduce((a, b) => a + b, 0);
-  mins = mins.map(m => TOTAL_MINUTES * m / Math.max(mTotal, 1));
+  const minuteTotal = mins.reduce((a, b) => a + b, 0);
+  mins = mins.map(m => totalMinutes * m / Math.max(minuteTotal, 1));
 
-  // ── 4. Opponent style for matchup adjustments ──
   const oppStyle = summarizeTeamStyle(opponentStep2);
+  const teamStyle = summarizeTeamStyle({ starter_players: rotation });
+  const effectScale = 0.60;
+  const minuteShares = normalize(mins);
 
-  // ── 5. Simulate physically-consistent stats for each player ──
-  // Helper: binomial-ish draw (clamp a percentage to make/attempt)
-  const binomDraw = (n, p) => {
-    if (n <= 0) return 0;
-    let made = 0;
-    for (let i = 0; i < n; i++) { if (Math.random() < p) made++; }
-    return made;
-  };
-
-  let rawTotalPts = 0;
-  const rawPlayers = [];
-
-  rotation.forEach((p, i) => {
-    const min = mins[i];
+  const playerMeta = rotation.map((p, i) => {
     const pid = String(p.player_id);
     const off = (cleanText(p.off_archetype) || "Unknown").toLowerCase();
     const def = (cleanText(p.def_archetype) || "Unknown").toLowerCase();
-    const impact = numOrZero(p.impact) || numOrZero(p.score) || 0;
-
-    // Archetype matchup adjustments
+    const usage = Math.max(0.08, Math.min(0.40, numOrZero(p.behavioral_usage) || (0.15 + 0.25 * Math.min(1, Math.max(0, (numOrZero(p.impact) || numOrZero(p.score) || 0) / 60)))));
     let scoringEff = 1.0, threeEff = 1.0, tovMult = 1.0, astMult = 1.0, rebMult = 1.0, stocksMult = 1.0;
     const oppPoa = oppStyle.poa / 5;
     const oppRimDef = oppStyle.rimDefense / 5;
     const oppVersatile = oppStyle.switchability / 5;
     const oppCreation = oppStyle.creation / 5;
     const oppRimPressure = oppStyle.rimPressure / 5;
-
     if (/(ball dominant|ballhandler|perimeter|all-around|creator)/.test(off)) {
-      scoringEff -= 0.08 * oppPoa;
-      tovMult += 0.16 * (oppPoa + oppVersatile);
-      astMult -= 0.07 * oppPoa;
+      scoringEff -= effectScale * 0.08 * oppPoa;
+      tovMult += effectScale * 0.16 * (oppPoa + oppVersatile);
+      astMult -= effectScale * 0.07 * oppPoa;
     }
     if (/(shooter|popping)/.test(off)) {
-      threeEff -= 0.09 * oppVersatile;
-      threeEff += 0.06 * (1 - oppVersatile);
+      threeEff -= effectScale * 0.09 * oppVersatile;
+      threeEff += effectScale * 0.06 * (1 - oppVersatile);
     }
     if (/(interior|finisher|rolling|rim)/.test(off)) {
-      scoringEff -= 0.10 * oppRimDef;
-      rebMult += 0.05 * (1 - oppRimDef);
+      scoringEff -= effectScale * 0.10 * oppRimDef;
+      rebMult += effectScale * 0.05 * (1 - oppRimDef);
     }
-    if (/(poa|wing stopper|chaser)/.test(def)) {
-      stocksMult += 0.12 * oppCreation;
-    }
+    if (/(poa|wing stopper|chaser)/.test(def)) stocksMult += effectScale * 0.12 * oppCreation;
     if (/(rim protector|dropping|mobile big)/.test(def)) {
-      stocksMult += 0.10 * oppRimPressure;
-      rebMult += 0.05;
+      stocksMult += effectScale * 0.10 * oppRimPressure;
+      rebMult += effectScale * 0.05;
     }
-
-    // Base rates scaled by minutes and archetype
-    const baseUsage = 0.15 + 0.25 * Math.min(1, Math.max(0, impact / 60));
-    const baseFga = Math.max(2, 12 * baseUsage * 2.5) * (min / 36);
-    const baseFta = Math.max(0.5, 3 * baseUsage * 2.5) * (min / 36);
-
-    // Shot distribution and efficiency by archetype
-    const fg3Share = /(shooter|perimeter|popping)/.test(off) ? 0.45 : /(interior|rolling|finisher)/.test(off) ? 0.05 : 0.30;
-    const fg2Pct = Math.min(0.70, (/(interior|rolling|finisher)/.test(off) ? 0.58 : 0.48) * scoringEff);
-    const fg3Pct = Math.min(0.50, (/(shooter)/.test(off) ? 0.38 : 0.34) * threeEff);
-    const ftPct = 0.77;
-
-    // Shot attempts (with noise)
-    const fga = Math.max(1, Math.round(baseFga + (Math.random() - 0.5) * 3));
-    const fg3a = Math.max(0, Math.min(fga, Math.round(fga * fg3Share + (Math.random() - 0.5) * 1)));
-    const fg2a = fga - fg3a;
-
-    // Field goals made via binomial draws (physically consistent)
-    const fg2m = binomDraw(fg2a, fg2Pct);
-    const fg3m = binomDraw(fg3a, fg3Pct);
-
-    // Free throws
-    const fta = Math.max(0, Math.round(baseFta + (Math.random() - 0.5) * 2));
-    const ftm = binomDraw(fta, ftPct);
-
-    // PTS = 2*FG2M + 3*FG3M + FTM (always physically consistent)
-    const pts = 2 * fg2m + 3 * fg3m + ftm;
-
-    // Other stats
-    const ast = Math.max(0, Math.round((/(ball dominant|ballhandler|creator|playmaking)/.test(off) ? 6 : 2) * (min / 36) * astMult + (Math.random() - 0.5) * 2));
-    const reb = Math.max(0, Math.round((/(interior|rolling|big|center)/.test(off) ? 8 : 4) * (min / 36) * rebMult + (Math.random() - 0.5) * 2));
-    const stl = Math.max(0, Math.round(1.0 * (min / 36) * stocksMult + (Math.random() - 0.5) * 0.8));
-    const blk = Math.max(0, Math.round((/(rim protector|interior|big)/.test(off + " " + def) ? 1.5 : 0.4) * (min / 36) * stocksMult + (Math.random() - 0.5) * 0.8));
-    const tov = Math.max(0, Math.round(1.5 * baseUsage * 5 * (min / 36) * tovMult + (Math.random() - 0.5) * 1));
-    const pf = Math.max(0, Math.round(2.5 * (min / 36) + (Math.random() - 0.5) * 1));
-
-    rawTotalPts += pts;
-
-    rawPlayers.push({
-      name: cleanNameLabel(p.player_name) || `ID ${cleanText(p.player_id) || "?"}`,
-      player_id: p.player_id,
+    const fg3Share = /(shooter|perimeter|popping)/.test(off) ? 0.45 : /(interior|rolling|finisher)/.test(off) ? 0.08 : 0.30;
+    const fg2Pct = Math.max(0.33, Math.min(0.80, (/(interior|rolling|finisher)/.test(off) ? 0.58 : 0.49) * scoringEff));
+    const fg3Pct = Math.max(0.20, Math.min(0.52, (/(shooter)/.test(off) ? 0.38 : 0.34) * threeEff));
+    return {
+      p,
+      pid,
+      min: mins[i],
+      usage,
       phase: starterIds.has(pid) ? "Starter" : clutchIds.has(pid) ? "Clutch" : "Bench",
-      off_archetype: cleanText(p.off_archetype) || "Unknown",
-      def_archetype: cleanText(p.def_archetype) || "Unknown",
-      role: cleanText(p.role) || cleanText(p.position_band) || "-",
-      minutes: Math.round(min * 10) / 10,
-      pts, ast, reb, stl, blk, tov, pf,
-      fga, fgm: fg2m + fg3m, fg2a, fg2m, fg3a, fg3m, fta, ftm,
-      impact: numOrZero(impact).toFixed(2),
-      adjustments: {
-        scoring_eff: Math.round(scoringEff * 1000) / 1000,
-        three_eff: Math.round(threeEff * 1000) / 1000,
-        tov_mult: Math.round(tovMult * 1000) / 1000,
-        ast_mult: Math.round(astMult * 1000) / 1000,
-        reb_mult: Math.round(rebMult * 1000) / 1000,
-        stocks_mult: Math.round(stocksMult * 1000) / 1000,
-      },
-    });
+      scoringEff, threeEff, tovMult, astMult, rebMult, stocksMult,
+      fg3Share, fg2Pct, fg3Pct, ftPct: 0.77,
+      playmaking: /(ball dominant|ballhandler|creator|playmaking)/.test(off) ? 1.35 : 0.85,
+      reboundRate: /(interior|rolling|big|center|rim)/.test(off + " " + def) ? 1.25 : 0.80,
+      blockRate: /(rim protector|interior|big|mobile big)/.test(off + " " + def) ? 1.35 : 0.65,
+      stealRate: /(poa|wing stopper|chaser)/.test(def) ? 1.20 : 0.80,
+      foulRate: /(rim protector|interior|big)/.test(off + " " + def) ? 1.10 : 0.90,
+    };
   });
 
-  // ── 6. Reconcile points to team score (add/remove FTM one at a time) ──
+  const teamSpacing = teamStyle.spacing / 5;
+  const teamCreation = teamStyle.creation / 5;
+  const teamRim = teamStyle.rimPressure / 5;
+  const trailing3pa = oppScore - teamScore >= 6 ? 0.02 : (teamScore - oppScore >= 10 ? -0.01 : 0);
+  const teamTov = Math.round(Math.max(8, Math.min(22, sampleNormal(possessions * (0.118 + 0.035 * (oppStyle.poa + oppStyle.switchability) / 5 - 0.010 * teamSpacing), 2.2))));
+  const teamFta = Math.round(Math.max(10, Math.min(34, sampleNormal(possessions * (0.175 + 0.060 * teamRim + 0.020 * teamCreation - 0.040 * (oppStyle.rimDefense / 5)), 3.0))));
+  const teamOrebGuess = Math.round(Math.max(7, Math.min(18, sampleNormal(possessions * (0.10 + 0.05 * teamRim), 2.0))));
+  const teamFga = Math.round(Math.max(72, Math.min(102, sampleNormal(possessions - 0.44 * teamFta + teamOrebGuess - teamTov, 4.5))));
+  const team3paShare = Math.max(0.24, Math.min(0.52, 0.32 + 0.12 * teamSpacing + 0.02 * (oppStyle.rimDefense / 5) - 0.02 * (oppStyle.switchability / 5) + trailing3pa));
+  const team3pa = Math.round(Math.max(16, Math.min(Math.floor(teamFga * 0.65), sampleNormal(teamFga * team3paShare, 3.0))));
+
+  const baseUsageWeights = playerMeta.map(m => minuteShares[playerMeta.indexOf(m)] * m.usage * (m.phase === "Starter" ? 1.18 : 1.0) * (closeGame && m.phase !== "Bench" ? 1.05 : 1.0));
+  const usageMean = normalize(baseUsageWeights);
+  const alpha = usageMean.map((share, i) => {
+    const starVar = playerMeta[i].usage >= 0.24 ? 1.70 : 1.0;
+    return Math.max((85 * share) / starVar, 0.15);
+  });
+  const usageShare = applyShareCap(sampleDirichlet(alpha), 0.38);
+
+  const shotProbs = normalize(usageShare.map((u, i) => u * (0.95 + 0.10 * playerMeta[i].scoringEff)));
+  const threeProbs = normalize(usageShare.map((u, i) => u * playerMeta[i].fg3Share * playerMeta[i].threeEff));
+  const ftProbs = normalize(usageShare.map((u, i) => u * (0.70 + (/(interior|rolling|rim)/.test((playerMeta[i].p.off_archetype || "").toLowerCase()) ? 0.45 : 0.0))));
+  const tovProbs = normalize(usageShare.map((u, i) => u * playerMeta[i].tovMult));
+
+  const fgaAlloc = multinomialDraw(teamFga, shotProbs);
+  const fg3aAlloc = multinomialWithCaps(team3pa, threeProbs, fgaAlloc);
+  const fg2aAlloc = fgaAlloc.map((v, i) => Math.max(0, v - fg3aAlloc[i]));
+  const ftaAlloc = multinomialDraw(teamFta, ftProbs);
+  const tovAlloc = multinomialDraw(teamTov, tovProbs);
+
+  const fg2mAlloc = [];
+  const fg3mAlloc = [];
+  const ftmAlloc = [];
+  playerMeta.forEach((meta, i) => {
+    const hotCold = meta.usage >= 0.24 ? 1.0 : 1.15;
+    const fg2Conc = Math.max(8, 42 / hotCold);
+    const fg3Conc = Math.max(6, 34 / hotCold);
+    const ftConc = Math.max(12, 48 / Math.max(hotCold - 0.05, 0.75));
+    const fg2p = sampleBeta(Math.max(meta.fg2Pct * fg2Conc, 0.5), Math.max((1 - meta.fg2Pct) * fg2Conc, 0.5));
+    const fg3p = sampleBeta(Math.max(meta.fg3Pct * fg3Conc, 0.5), Math.max((1 - meta.fg3Pct) * fg3Conc, 0.5));
+    const ftp = sampleBeta(Math.max(meta.ftPct * ftConc, 0.5), Math.max((1 - meta.ftPct) * ftConc, 0.5));
+    fg2mAlloc.push(drawBinomial(fg2aAlloc[i], Math.max(0.22, Math.min(0.86, fg2p))));
+    fg3mAlloc.push(drawBinomial(fg3aAlloc[i], Math.max(0.12, Math.min(0.62, fg3p))));
+    ftmAlloc.push(drawBinomial(ftaAlloc[i], Math.max(0.40, Math.min(0.98, ftp))));
+  });
+
+  const teamFgm = fg2mAlloc.reduce((a, b) => a + b, 0) + fg3mAlloc.reduce((a, b) => a + b, 0);
+  const teamAst = Math.round(Math.max(12, Math.min(teamFgm, teamFgm * (0.56 + 0.10 * teamCreation + 0.05 * teamSpacing - 0.03 * (oppStyle.poa / 5)))));
+  const astAlloc = multinomialDraw(teamAst, normalize(playerMeta.map((m, i) => minuteShares[i] * m.playmaking * m.astMult * (m.phase === "Starter" ? 1.15 : 1.0))));
+
+  const oppMissed = Math.round(Math.max(24, Math.min(52, possessions * 0.44)));
+  const oppTov = Math.round(Math.max(9, Math.min(22, possessions * 0.13)));
+  const oppRimAttempts = Math.round(Math.max(22, Math.min(48, possessions * (0.40 + 0.05 * (oppStyle.rimPressure / 5)))));
+  const teamOreb = Math.round(Math.max(4, Math.min(20, (teamFga - teamFgm) * (0.23 + 0.07 * teamRim - 0.05 * (oppStyle.rimDefense / 5)))));
+  const teamDreb = Math.round(Math.max(18, Math.min(42, oppMissed * (0.70 + 0.04 * (teamStyle.rimDefense / 5)))));
+  const orebAlloc = multinomialDraw(teamOreb, normalize(playerMeta.map((m, i) => minuteShares[i] * m.reboundRate * (m.p.role === "Big" ? 1.20 : 1.0) * m.rebMult)));
+  const drebAlloc = multinomialDraw(teamDreb, normalize(playerMeta.map((m, i) => minuteShares[i] * m.reboundRate * (m.p.role === "Big" ? 1.10 : 0.95) * m.rebMult)));
+  const stlAlloc = multinomialDraw(Math.round(Math.max(3, Math.min(14, oppTov * 0.55))), normalize(playerMeta.map((m, i) => minuteShares[i] * m.stealRate * m.stocksMult)));
+  const blkAlloc = multinomialDraw(Math.round(Math.max(1, Math.min(12, oppRimAttempts * 0.10))), normalize(playerMeta.map((m, i) => minuteShares[i] * m.blockRate * m.stocksMult)));
+  const pfAlloc = multinomialDraw(Math.round(Math.max(12, Math.min(30, rotation.reduce((sum, p, i) => sum + 2.5 * mins[i] / 36, 0)))), normalize(playerMeta.map((m, i) => minuteShares[i] * m.foulRate)));
+
+  let rawTotalPts = 0;
+  const rawPlayers = playerMeta.map((meta, i) => {
+    const pts = 2 * fg2mAlloc[i] + 3 * fg3mAlloc[i] + ftmAlloc[i];
+    rawTotalPts += pts;
+    return {
+      name: cleanNameLabel(meta.p.player_name) || `ID ${cleanText(meta.p.player_id) || "?"}`,
+      player_id: meta.p.player_id,
+      phase: meta.phase,
+      off_archetype: cleanText(meta.p.off_archetype) || "Unknown",
+      def_archetype: cleanText(meta.p.def_archetype) || "Unknown",
+      role: cleanText(meta.p.role) || cleanText(meta.p.position_band) || "-",
+      minutes: Math.round(meta.min * 10) / 10,
+      pts,
+      ast: astAlloc[i],
+      reb: orebAlloc[i] + drebAlloc[i],
+      stl: stlAlloc[i],
+      blk: blkAlloc[i],
+      tov: tovAlloc[i],
+      pf: pfAlloc[i],
+      fga: fgaAlloc[i],
+      fgm: fg2mAlloc[i] + fg3mAlloc[i],
+      fg2a: fg2aAlloc[i],
+      fg2m: fg2mAlloc[i],
+      fg3a: fg3aAlloc[i],
+      fg3m: fg3mAlloc[i],
+      fta: ftaAlloc[i],
+      ftm: ftmAlloc[i],
+      impact: numOrZero(meta.p.impact || meta.p.score).toFixed(2),
+      adjustments: {
+        scoring_eff: Math.round(meta.scoringEff * 1000) / 1000,
+        three_eff: Math.round(meta.threeEff * 1000) / 1000,
+        tov_mult: Math.round(meta.tovMult * 1000) / 1000,
+        ast_mult: Math.round(meta.astMult * 1000) / 1000,
+        reb_mult: Math.round(meta.rebMult * 1000) / 1000,
+        stocks_mult: Math.round(meta.stocksMult * 1000) / 1000,
+      },
+    };
+  });
+
   if (rawTotalPts > 0 && teamScore > 0) {
-    // Sort by usage (descending) for reconciliation order
-    const sortedIdxs = [...rawPlayers.keys()].sort((a, b) => {
-      const ua = rawPlayers[a].fga + rawPlayers[a].fta;
-      const ub = rawPlayers[b].fga + rawPlayers[b].fta;
-      return ub - ua;
-    });
+    const sortedIdxs = [...rawPlayers.keys()].sort((a, b) => (rawPlayers[b].fga + rawPlayers[b].fta) - (rawPlayers[a].fga + rawPlayers[a].fta));
     let current = rawTotalPts;
     let cursor = 0;
-    // Add points via FTM/FTA if under
     while (current < teamScore && sortedIdxs.length) {
       const idx = sortedIdxs[cursor % sortedIdxs.length];
       rawPlayers[idx].ftm += 1;
@@ -2868,7 +3006,6 @@ function simulatePlayerGameStats(teamEntry, teamStep2, opponentStep2, teamScore,
       current += 1;
       cursor += 1;
     }
-    // Remove points via FTM if over
     cursor = 0;
     let safety = 0;
     while (current > teamScore && safety < 500) {

@@ -46,12 +46,18 @@ The player stat sim produces one deterministic season, while the Monte Carlo pro
 - Maintains the speed advantage of vectorized Monte Carlo (no per-player work in the 10K loop).
 - Only adds K=25 player stat passes, which takes ~2-5 seconds.
 
-### Implementation Scope
-- Modify `season_sim.py` to expose per-season margin arrays (currently internal).
-- Add a `sample_representative_seasons(n_samples, percentiles)` utility.
-- Modify `player_stats_sim.py.simulate_detailed_season()` to accept a pre-drawn margin array instead of computing its own.
-- Add aggregation logic to compute P10/P50/P90 player stat projections.
-- Update validation to compare ranges vs. single-point estimates.
+### Implementation Scope (updated for forecast-first emphasis)
+
+- Recently implemented (already in the codebase):
+   - `src/simulation/player_stats_sim.py`: team-level stat budget sampling, Dirichlet usage allocation, capped multinomial allocation, Beta‑Binomial shooting, and reconciliation to team totals.
+   - `src/simulation/simulation_config.py`: tuning knobs added (e.g., `PLAYER_GAME_ARCHETYPE_EFFECT_SCALE`, `PLAYER_GAME_DIRICHLET_SCALE`, `PLAYER_GAME_BETA_CONCENTRATION`, `PLAYER_GAME_USAGE_CAP`).
+   - `app/simulation_viewer.py`: frontend single-game sim mirrored to backend for parity.
+
+- Remaining work to enable Option A (forecast coupling):
+   - `src/simulation/season_sim.py` / `src/simulation/run_forecast.py`: expose per-season margin arrays and add `sample_representative_seasons(n_samples=25, percentiles=[10,50,90])` to pick representative MC iterations.
+   - Add a driver that calls `player_stats_sim` for each sampled margin array (e.g., `simulate_detailed_season(margin_array)`) and writes per-sample player-season artifacts.
+   - Aggregation: compute per-player P10/P50/P90 across the K samples and emit `reports/player_stat_sim_ranges.json` plus per-sample parquet outputs under `data/processed/simulation/`.
+   - Validation: ensure `scripts/validate_player_stat_sim.py` verifies forecast-mode artifacts and writes `reports/player_stat_sim_validation_forecast.json`.
 
 ### Estimated Complexity: Medium
 
@@ -94,6 +100,41 @@ Phase 2: If Option A proves insufficient, implement Option B as an optional "dee
 ```
 
 ---
+
+## Forecast Performance (latest run)
+
+- **Season-level (2023-24 forecast):** margin MAE = 7.71, RMSE = 9.74, correlation = 0.7057. See `reports/forecast_season_results.json`.
+- **Player-level (forecast mode):** PTS MAE = 2.64, RMSE = 3.39, correlation = 0.9002; AST MAE = 0.71, correlation = 0.8811; REB MAE = 1.00, correlation = 0.8777. See `reports/player_stat_sim_validation_forecast.json`.
+- **Lineup / rotation:** starter overlap ≈ 0.67, rotation_corr ≈ 0.36; starter/clutch targets not fully met. See `reports/forecast_lineup_profiles.json`.
+- **Known weakness:** the single-game score reconciliation path can still overshoot the target on rare seeds when the downward correction has no FT makes to remove. The frontend viewer mirrors the same logic, so this output should be treated as review-only until the reconciliation path or regression coverage is hardened.
+
+Notes: These forecast artifacts were produced after applying the team-stat budget + Dirichlet + Beta‑Binomial changes in `src/simulation/player_stats_sim.py`. Forecast artifacts should be treated as the canonical evaluation for forecasting quality.
+
+## Updated Plan & Next Steps (forecast-focused)
+
+1. Implement Option A sampling in `src/simulation/run_forecast.py` / `src/simulation/season_sim.py`:
+   - Add `sample_representative_seasons(n_samples=25, percentiles=[10,50,90])` to select representative Monte Carlo iterations.
+   - For each sampled iteration, call `player_stats_sim.simulate_detailed_season(margin_array)` (or an equivalent wrapper) and persist per-sample player-season outputs.
+2. Re-run the forecast pipeline to refresh canonical forecast artifacts:
+
+```bash
+python3 src/simulation/run_forecast.py --scenarios end_of_season --skip-preseason-fetch
+```
+
+3. Aggregate K-sample player stat distributions and emit:
+   - `reports/player_stat_sim_ranges.json` (P10/P50/P90 per player)
+   - Per-sample parquet outputs under `data/processed/simulation/` for auditing.
+4. Validate forecast ranges:
+
+```bash
+python3 scripts/validate_player_stat_sim.py --mode forecast --scenario end_of_season
+```
+
+   - Inspect `reports/player_stat_sim_validation_forecast.json` for player/team biases and correlations.
+5. Tune modeling knobs (grid/sweep) to improve forecast targets:
+   - `PLAYER_GAME_DIRICHLET_SCALE`, `PLAYER_GAME_BETA_CONCENTRATION`, `PLAYER_GAME_USAGE_CAP`, `PLAYER_GAME_ARCHETYPE_EFFECT_SCALE` (in `src/simulation/simulation_config.py`).
+6. If Option A does not meet downstream requirements, schedule Option B (deep per-player Monte Carlo) as an overnight job.
+
 
 ## Files Affected
 

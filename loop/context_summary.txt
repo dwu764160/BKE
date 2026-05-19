@@ -1,3 +1,42 @@
+2026-05-19 — Current simulation-risk note
+-------------------------------------------------------------
+- The latest player-stat/simulation patch set still has a known reconciliation weakness: `src/simulation/player_stats_sim.py` and the mirrored frontend in `app/simulation_viewer.py` can overshoot the requested team score in rare zero-FT correction paths.
+- Reproduced in a 50-seed smoke test (seed 5 -> 114 points on a 112-point target).
+- Test coverage gap: `tests/test_simulation_core.py` currently misses that branch because the schema assertion checks the fixture roster rather than the simulated box output.
+- Status: documentation has been updated to reflect the issue, but the change set should not be described as fully push-safe yet.
+
+2026-03-11 — Player stat realism upgrade: team budgets + usage competition + softer archetype effects
+-------------------------------------------------------------------------------------------------------------
+- Reworked `src/simulation/player_stats_sim.py` so single-game/detailed-season player stats now flow through:
+	- team stat budgets first (`FGA`, `3PA`, `FTA`, `TOV`, rebound/stock proxies),
+	- capped Dirichlet usage competition (starter-boosted, star-variance aware),
+	- multinomial player allocation that conserves team totals,
+	- Beta-Binomial shooting for hot/cold variance,
+	- softer archetype matchup effects (`PLAYER_GAME_ARCHETYPE_EFFECT_SCALE = 0.60`).
+- Added margin-aware game script adjustments:
+	- close games push more minutes and usage into clutch cores,
+	- blowouts trim starter minutes and redistribute to bench rotation players.
+- Viewer sync:
+	- `app/simulation_viewer.py` single-game JS now mirrors the same structure (team totals first, usage competition second, constrained allocation third), so the frontend no longer drifts from the backend stat engine.
+- New config knobs in `src/simulation/simulation_config.py`:
+	- `PLAYER_GAME_ARCHETYPE_EFFECT_SCALE = 0.60`
+	- `PLAYER_GAME_STARTER_USAGE_BOOST = 1.18`
+	- `PLAYER_GAME_CLUTCH_USAGE_BOOST = 1.06`
+	- `PLAYER_GAME_USAGE_CAP = 0.38`
+	- `PLAYER_GAME_DIRICHLET_SCALE = 85.0`
+	- `PLAYER_GAME_BETA_CONCENTRATION = 42.0`
+	- `PLAYER_GAME_BLOWOUT_MARGIN = 15.0`
+	- `PLAYER_GAME_BLOWOUT_STARTER_PENALTY = 0.10`
+- Validation:
+	- `pytest -q tests/test_simulation_core.py` → 3/3 pass
+	- `python3 scripts/validate_player_stat_sim.py --mode backtest`
+		- PTS: `MAE=0.92`, `r=0.987`, `bias=+0.48`
+		- AST: `MAE=0.22`, `r=0.989`
+		- REB: `MAE=0.39`, `r=0.986`
+		- FGA: `MAE=0.72`, `r=0.988`
+		- FG3A: `MAE=0.33`, `r=0.982`
+- Result: realism constraints improved structurally without degrading season-level validation versus the prior pass.
+
 2026-03-11 — Grid sweep calibration: tuned LINEUP_TEAM_BONUS_CLIP, MATCHUP_TEAM_INTERACTION_SCALE, PPP_CONTEXT_BONUS_SCALE
 -------------------------------------------------------------------------------------------------------------
 - Ran 64-trial grid sweep across 3 sensitive knobs (scripts/grid_sweep_sim_knobs.py):
