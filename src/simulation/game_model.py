@@ -45,6 +45,13 @@ from src.simulation.simulation_config import (
     HOME_COURT_ADVANTAGE,
     SEASON_SIMULATIONS,
     SIMULATION_RANDOM_SEED,
+    B2B_PENALTY_HOME,
+    B2B_PENALTY_AWAY,
+    REST_DAY_BONUS_HOME,
+    REST_DAY_BONUS_AWAY,
+    get_team_hca,
+    get_team_pace,
+    DEFAULT_PACE_PER_48,
 )
 
 
@@ -123,6 +130,79 @@ def compute_game_distribution(
     }
 
 
+def compute_game_distribution_with_context(
+    home_team: TeamParams,
+    away_team: TeamParams,
+    is_b2b_home: int = 0,
+    is_b2b_away: int = 0,
+    days_rest_home: int = 1,
+    days_rest_away: int = 1,
+    use_team_hca: bool = True,
+    use_b2b: bool = True,
+    use_rest: bool = True,
+    use_pace_sigma: bool = True,
+    config: SimConfig = None,
+) -> Dict[str, float]:
+    """Compute game distribution with full game-day context applied.
+
+    Inputs are scoped to the home team's perspective:
+      - delta_mu = (home_mu - away_mu) + team_hca(home) + B2B/rest adjustments
+      - sigma_game scaled by sqrt(matchup_pace / league_avg_pace) if use_pace_sigma
+
+    Flag-gated so the harness (Plan 5) can run ablation scenarios isolating each effect.
+    Returns same schema as compute_game_distribution plus per-component breakdown.
+    """
+    if config is None:
+        config = SimConfig()
+
+    # HCA: team-specific if available and enabled, else flat default
+    if use_team_hca:
+        hca = get_team_hca(home_team.team_abbreviation)
+    else:
+        hca = config.home_court_advantage
+
+    # B2B adjustment (per fitted coefficients; sign already baked into coef)
+    b2b_adj = 0.0
+    if use_b2b:
+        b2b_adj = B2B_PENALTY_HOME * float(is_b2b_home) + B2B_PENALTY_AWAY * float(is_b2b_away)
+
+    # Rest day adjustment — centered on 1 day rest (typical) so a neutral matchup adds 0
+    rest_adj = 0.0
+    if use_rest:
+        rest_adj = (
+            REST_DAY_BONUS_HOME * (float(days_rest_home) - 1.0)
+            + REST_DAY_BONUS_AWAY * (float(days_rest_away) - 1.0)
+        )
+
+    delta_mu = (home_team.mu - away_team.mu) + hca + b2b_adj + rest_adj
+
+    # Sigma: optionally scaled by pace ratio (higher pace -> wider margin variance)
+    base_sigma = np.sqrt(
+        home_team.sigma ** 2 + away_team.sigma ** 2 + config.sigma_league ** 2
+    )
+    if use_pace_sigma:
+        season = home_team.season
+        matchup_pace = 0.5 * get_team_pace(season, home_team.team_abbreviation) + 0.5 * get_team_pace(season, away_team.team_abbreviation)
+        # Scale sigma by sqrt of pace ratio — variance scales linearly with possessions
+        pace_factor = np.sqrt(max(matchup_pace, 1.0) / DEFAULT_PACE_PER_48)
+        sigma_game = base_sigma * pace_factor
+    else:
+        sigma_game = base_sigma
+
+    z = delta_mu / sigma_game if sigma_game > 0 else 0.0
+    win_prob_home = float(norm.cdf(z))
+
+    return {
+        "delta_mu": float(delta_mu),
+        "sigma_game": float(sigma_game),
+        "win_prob_home": float(win_prob_home),
+        "z_score": float(z),
+        "hca_applied": float(hca),
+        "b2b_adj": float(b2b_adj),
+        "rest_adj": float(rest_adj),
+    }
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Layer 3 — Schedule Engine
 # ═════════════════════════════════════════════════════════════════════
@@ -152,7 +232,11 @@ def build_schedule(season: str, game_logs_path: Path = None) -> List[Game]:
 
         pts = float(row.get("PTS", np.nan))
         opp_pts = float(row.get("OPP_PTS", np.nan))
-        margin = pts - opp_pts if not (np.isnan(pts) or np.isnan(opp_pts)) else np.nan
+        if not (np.isnan(pts) or np.isnan(opp_pts)):
+            margin = pts - opp_pts
+        else:
+            # Fallback: PLUS_MINUS is pre-computed point differential (positive = team won)
+            margin = float(row.get("PLUS_MINUS", np.nan))
 
         games.append(Game(
             game_id=str(row.get("GAME_ID", "")),

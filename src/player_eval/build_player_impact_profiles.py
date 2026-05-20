@@ -301,7 +301,9 @@ def _apply_team_stint_split(flat_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[s
     base["_base_possessions"] = pd.to_numeric(base.get("possessions"), errors="coerce")
 
     merged = base.merge(stints, on=["player_id", "season"], how="left")
-    has_stint = merged["team_abbreviation_stint"].astype(str).str.len() > 0
+    # Clean stint abbreviations first so NaN→"" (str(NaN)="nan" has len>0, falsely triggering has_stint)
+    merged["team_abbreviation_stint"] = merged["team_abbreviation_stint"].map(_clean_team_abbreviation)
+    has_stint = merged["team_abbreviation_stint"].str.len() > 0
 
     team_map = _load_team_id_map()
 
@@ -725,12 +727,36 @@ def main() -> None:
         on=["player_id", "season"],
         how="left",
     )
+    pos_keep = ["player_id", "season", "primary_position_estimate", "primary_position",
+                "pct_pg", "pct_sg", "pct_sf", "pct_pf", "pct_c"]
+    # Propagate canonical bands when present in the position estimates parquet.
+    for band_col in ("position_band_5", "position_band_3"):
+        if band_col in pos.columns:
+            pos_keep.append(band_col)
+    # Drop any columns from data that would collide with pos (other than merge keys),
+    # so pos provides authoritative position values without suffix conflicts.
+    collision_cols = [c for c in pos_keep if c not in ("player_id", "season") and c in data.columns]
+    if collision_cols:
+        data = data.drop(columns=collision_cols)
     data = data.merge(
-        pos[["player_id", "season", "primary_position_estimate", "primary_position",
-             "pct_pg", "pct_sg", "pct_sf", "pct_pf", "pct_c"]],
+        pos[pos_keep],
         on=["player_id", "season"],
         how="left",
     )
+
+    # Backfill canonical bands derived from primary_position_estimate when missing
+    # (e.g., if upstream parquet was generated before band columns existed).
+    from src.data_compute.compute_position_estimate import position_band_3_from_band_5
+    if "position_band_5" not in data.columns:
+        data["position_band_5"] = data["primary_position_estimate"]
+    else:
+        data["position_band_5"] = data["position_band_5"].fillna(data["primary_position_estimate"])
+    if "position_band_3" not in data.columns:
+        data["position_band_3"] = data["position_band_5"].map(position_band_3_from_band_5)
+    else:
+        data["position_band_3"] = data["position_band_3"].fillna(
+            data["position_band_5"].map(position_band_3_from_band_5)
+        )
 
     # Metrics linear → WS, BPM, VORP
     if not metrics_lin.empty:
@@ -1031,6 +1057,10 @@ def main() -> None:
             flat[f"def_prob_{key}"] = val
         for idx, val in enumerate(profile.playtype_vector):
             flat[f"playtype_{idx}"] = val
+        # Canonical position bands (see src/data_compute/compute_position_estimate.py).
+        # Always populated even if not in the dataclass — downstream code uses these.
+        flat["position_band_5"] = _safe_str(row.get("position_band_5"), default=flat["position_proxy"])
+        flat["position_band_3"] = _safe_str(row.get("position_band_3"), default="wings")
         flat_rows.append(flat)
 
     flat_df = pd.DataFrame(flat_rows)

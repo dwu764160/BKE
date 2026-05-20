@@ -88,10 +88,13 @@ TRACKING_DIR = "data/tracking"
 #
 # Backfill status (as of 2026-05-20):
 #   Box scores + team game logs fetched:  2017-18 through 2021-22
-#   PBP / possessions still needed:       2017-18 through 2021-22
-#   BKE tier for older seasons:           rapm_only (tracking unavailable)
+#   PBP / possessions complete:           all 8 seasons (2017-18 through 2024-25)
+#   BKE tier for older seasons:           rapm_only (tracking unavailable pre-2022)
 #
-SEASONS: List[str] = ["2022-23", "2023-24", "2024-25"]
+SEASONS: List[str] = [
+    "2017-18", "2018-19", "2019-20", "2020-21", "2021-22",
+    "2022-23", "2023-24", "2024-25",
+]
 
 # COVID-disrupted seasons: included in RAPM (with reduced decay weight 0.25),
 # excluded from game model training and HCA calibration.

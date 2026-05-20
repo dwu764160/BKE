@@ -2,7 +2,7 @@
 
 > **Audience:** A Claude Code session in the Robinhood trading-bot repo making a
 > capital-allocation decision about Sleeve C. This document is self-contained.
-> **Generated:** 2026-05-19. **Source branch:** `personal`.
+> **Generated:** 2026-05-19 (updated 2026-05-20). **Source branch:** `personal`.
 > **Investigator's honesty note (first pass — 2026-05-19):** First-pass checkout
 > contained **code and reference docs only** — no `reports/*.json`, no `data/`.
 > All numbers were transcribed from narrative snapshots and flagged as unverified.
@@ -41,7 +41,7 @@ moneyline pricing.
 | Forecast pipeline (walk-forward) | Yes | 2026-03-11 | `reports/forecast_*.json` | **Yes** — 6 forecast reports present ✓ |
 | Player-stat sim (box scores) | Yes, with known blocker | 2026-03-11 | `data/processed/simulation/*` | Code yes / reports present ✓ |
 | **Game model vs. Vegas/Kalshi** | **NEVER DONE** | — | — | — |
-| **Genuine out-of-sample game-level Brier** | **NEVER MEASURED** | — | — | — |
+| **Genuine out-of-sample game-level Brier** | **NOW MEASURED** | 2026-05-20 | `reports/forecast_game_validation.json` | **Yes** — 7 walk-forward transitions ✓ |
 | Phase 4 "Model Development" (overall_plan) | **Unchecked / incomplete** | — | — | — |
 | Phase 5 "Evaluation & Interpretability" | **Unchecked / incomplete** | — | — | — |
 
@@ -314,11 +314,28 @@ not a game-outcome or market metric.
    no line ingestion, no closing-line-value analysis.
 
 2. **True walk-forward test (train ≤N, test N+1, no N+1 data in BKE ratings)?**
-   **Partially.** The *forecast pipeline* is genuinely walk-forward for
-   season-win projection (MAE ≈ 7.7–8.9, r ≈ 0.62–0.71). But it runs a
-   **synthetic schedule with no real opponents/outcomes**, so it yields **no
-   game-level win-probability, Brier, log-loss, or calibration**. The only
-   game-level metrics that exist are the **in-sample (leaky)** ones (Section 3).
+   **Yes — now built (2026-05-20).** `src/simulation/validate_forecast.py` scores
+   prior-season projected team ratings against actual N+1 game outcomes. Results
+   from `reports/forecast_game_validation.json`:
+
+   | Season | Games | Brier | Accuracy | Home WR act/pred |
+   |---|---|---|---|---|
+   | 2018-19 | 1230 | 0.2400 | 59.3% | 0.593 / 0.589 |
+   | 2019-20 *(COVID bubble)* | 1059 | 0.2493 | 55.1% | 0.551 / 0.589 |
+   | 2020-21 *(COVID restricted)* | 1080 | 0.2484 | 54.3% | 0.543 / 0.588 |
+   | 2021-22 | 1230 | 0.2480 | 54.4% | 0.544 / 0.588 |
+   | 2022-23 | 1230 | 0.2449 | 58.1% | 0.581 / 0.588 |
+   | 2023-24 | 1230 | 0.2273 | 61.4% | 0.543 / 0.577 |
+   | 2024-25 | 1225 | 0.2379 | 61.2% | 0.544 / 0.574 |
+
+   **7-transition aggregate Brier: 0.2420** (5 clean, excl. COVID: **0.2396**).
+   The old "2-transition Brier 0.2320" was over-optimistic — it only covered the
+   two best-performing seasons. Meaningful but still **0.14–0.16 above a strong
+   market baseline (~0.22–0.23 for good sportsbooks)**.
+
+   HCA miscalibration is visible: model predicts 58.8–58.9% home wins in all
+   seasons; actual ranges from 54.3% (COVID) to 59.3% (2018-19). COVID seasons
+   had no HCA (bubble/restricted fans) but model applies flat HCA regardless.
 
 3. **Known data-completeness issues — injuries, trades, back-to-backs?**
    **Yes, multiple.** (a) No injury/availability forecasting — the 5 worst
@@ -338,9 +355,13 @@ not a game-outcome or market metric.
    most efficient and mispriced edges are smallest. HCA is also slightly
    miscalibrated (predicted home WR 0.573–0.580 vs actual 0.543–0.581).
 
-5. **Earliest training season / latest tested season?** Earliest: **2022-23**.
-   Latest tested: **2024-25**. Only **3 seasons** of data exist total — a very
-   thin base for any walk-forward claim (effectively 2 forecast transitions).
+5. **Earliest training season / latest tested season?** Earliest: **2017-18**
+   (backfilled 2026-05-20). Latest tested: **2024-25**. **8 seasons** of
+   possession/RAPM data now present. Walk-forward coverage: **7 transitions**
+   (5 clean, 2 COVID-flagged). Data backfill completed via pipeline reconstruction
+   (`compute_player_profiles.py`, `build_player_impact_profiles.py` bug fixes for
+   pre-2022 team assignment NaN, `game_model.py` PLUS_MINUS fallback for older
+   season game outcomes).
 
 6. **Next planned improvement (loop files)?** `overall_plan` Phase 4 (proper
    Game Outcome model: Logistic/XGBoost) and Phase 5 (cross-validation, SHAP)
@@ -372,11 +393,9 @@ not a game-outcome or market metric.
 
 Ordered by priority. Concrete, not hand-wavy.
 
-1. **Game-level walk-forward harness.** Modify the forecast pipeline (or add a
-   mode) so that season-N→N+1 *projected* team ratings are scored against the
-   **real N+1 schedule and outcomes**, producing genuine out-of-sample Brier,
-   log-loss, and the 10-bin calibration table. Until this exists, Sleeve C has
-   **no measurable edge**.
+1. ~~**Game-level walk-forward harness.**~~ **DONE (2026-05-20).** `src/simulation/validate_forecast.py`
+   now exists and scores projected team ratings against real N+1 outcomes.
+   7-transition Brier = 0.2420 (5 clean: 0.2396). Baseline established.
 2. **Kalshi/closing-line ingestion + comparison.** For 2023-24 and 2024-25,
    pull historical moneyline closing prices, convert to implied probabilities,
    and compute the model's **closing-line value (CLV)** and Brier-skill score
@@ -391,9 +410,9 @@ Ordered by priority. Concrete, not hand-wavy.
    availability shocks.
 5. **DARKO ingestion.** Current data has 0% DARKO coverage; incorporating this
    prior (as designed) is a prerequisite for the full BKE pipeline as specified.
-6. **Wider data base.** 3 seasons / 2 transitions is too thin. Backfill
-   ≥2017-18 to get ≥6 walk-forward transitions before trusting any Sharpe-like
-   estimate.
+6. ~~**Wider data base.**~~ **DONE (2026-05-20).** Backfilled to 2017-18; 8 seasons
+   / 7 walk-forward transitions (5 clean). Next threshold: compare against
+   Kalshi closing lines once item 2 is complete.
 7. **Bet-sizing / Kelly simulation.** Only after 1–4: simulate a paper
    bankroll vs. closing lines with realistic fees to estimate ROI, variance,
    and max drawdown for Sleeve C.
@@ -406,24 +425,23 @@ Ordered by priority. Concrete, not hand-wavy.
 fundamental, not cosmetic.** This verdict is unchanged from the prior session
 and is now strengthened by direct data verification.
 
-The headline Brier ≈ 0.205–0.227 / accuracy ≈ 64–69% is an **in-sample
-retrodiction** — confirmed by reading `src/profile_aggregate/team_feature_aggregation.py`
-line 873 this session: in backtest mode the model reads same-season player
-profiles. The only leakage-free evidence is season-win projection at **MAE ≈
-7.7–8.9 wins, r ≈ 0.62–0.71** (freshly extracted from `forecast_season_results.json`),
-which the repo itself notes is **~2–4 wins worse than Vegas**, and that path
-produces **no game-level probability or calibration at all** (synthetic
-schedule, no real opponents). There is **zero comparison to any market price**
-anywhere in the project. DARKO data is 0% present, meaning the full pipeline
-as designed has never been tested.
+**Update 2026-05-20:** The game-level walk-forward harness now exists
+(`src/simulation/validate_forecast.py`) and has been run against 7 historical
+seasons. **True out-of-sample Brier: 0.2396 (5 clean transitions) / 0.2420
+(7 incl. COVID)**. The in-sample Brier of 0.205–0.227 confirmed to be leaky
+(same-season player data). The gap between in-sample (0.205–0.227) and
+walk-forward (0.2273–0.2480) quantifies the leakage; the walk-forward Brier
+is the only honest number.
 
-The single empirical gate that must be cleared before any allocation: **a
-genuine walk-forward game-level test scored against historical Kalshi/sportsbook
-closing lines, showing positive closing-line value and a Brier-skill score > 0
-versus the market on out-of-sample games (ideally ≥2 seasons, after
-HCA/σ recalibration).** Until that one number exists and is positive, Sleeve
-C's model edge is **unproven and should receive no capital beyond a tiny
-instrumented paper/research allocation.**
+The walk-forward Brier of 0.2396 is **above the rough market-efficiency
+threshold (~0.22–0.23)**. HCA is miscalibrated (flat 58.8–58.9% predicted vs.
+season-varying actuals). The minute model retains same-season training leakage.
+DARKO data is 0% present. **No comparison to market prices exists.**
+
+The remaining empirical gate: **a walk-forward game-level Brier-skill score
+vs. Kalshi/sportsbook closing lines, showing positive CLV after HCA/σ
+recalibration.** Until that number is positive, Sleeve C's model edge remains
+unproven.
 
 **Recommended allocation on current evidence: $0 live; research-only.**
 

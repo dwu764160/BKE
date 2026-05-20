@@ -52,9 +52,103 @@ REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Core simulation constants
 SIGMA_LEAGUE = 3.0
-HOME_COURT_ADVANTAGE = 2.0
+HOME_COURT_ADVANTAGE = 2.0  # legacy flat default; overridden per-team via REST_HCA_COEFFICIENTS
 SEASON_SIMULATIONS = 10_000
 SIMULATION_RANDOM_SEED = 42
+
+# ── Fitted rest / HCA coefficients (from src/data_compute/fit_rest_hca_coefficients.py) ──
+# Loaded from reports/rest_hca_coefficients.json if present; otherwise falls back to
+# the flat defaults above (HOME_COURT_ADVANTAGE, no B2B/rest adjustments).
+#
+# Application: for a game with home team H, away team A, on date D:
+#   mu_margin = (mu_home + adj_home) - (mu_away + adj_away) + team_hca(H)
+#   adj_home  = B2B_PENALTY_HOME * is_b2b_home + REST_DAY_BONUS_HOME * days_rest_home
+#   adj_away  = (independent away-team adjustment; sign already encoded in fitted coefs)
+import json as _json
+
+REST_HCA_COEFFICIENTS_PATH = REPORTS_DIR / "rest_hca_coefficients.json"
+TEAM_PACE_PATH = REPORTS_DIR / "team_pace.json"
+
+
+def _load_rest_hca_coefficients() -> dict:
+    """Load fitted rest+HCA coefficients with safe fallback to flat defaults."""
+    if not REST_HCA_COEFFICIENTS_PATH.exists():
+        return {
+            "league_avg_hca": HOME_COURT_ADVANTAGE,
+            "b2b_penalty_home": 0.0,
+            "b2b_penalty_away": 0.0,
+            "rest_day_bonus_home": 0.0,
+            "rest_day_bonus_away": 0.0,
+            "team_hca": {},
+            "loaded": False,
+        }
+    try:
+        data = _json.loads(REST_HCA_COEFFICIENTS_PATH.read_text())
+        data["loaded"] = True
+        return data
+    except Exception:
+        return {
+            "league_avg_hca": HOME_COURT_ADVANTAGE,
+            "b2b_penalty_home": 0.0,
+            "b2b_penalty_away": 0.0,
+            "rest_day_bonus_home": 0.0,
+            "rest_day_bonus_away": 0.0,
+            "team_hca": {},
+            "loaded": False,
+        }
+
+
+def _load_team_pace() -> dict:
+    """Load fitted per-team-season pace with safe fallback."""
+    if not TEAM_PACE_PATH.exists():
+        return {
+            "league_avg_pace": DEFAULT_PACE_PER_48,
+            "team_pace": {},
+            "loaded": False,
+        }
+    try:
+        data = _json.loads(TEAM_PACE_PATH.read_text())
+        data["loaded"] = True
+        return data
+    except Exception:
+        return {
+            "league_avg_pace": DEFAULT_PACE_PER_48,
+            "team_pace": {},
+            "loaded": False,
+        }
+
+
+REST_HCA = _load_rest_hca_coefficients()
+TEAM_PACE = _load_team_pace()
+
+# Convenience extracts (module-level, used by validate_forecast.py and team aggregation)
+B2B_PENALTY_HOME = float(REST_HCA.get("b2b_penalty_home", 0.0))
+B2B_PENALTY_AWAY = float(REST_HCA.get("b2b_penalty_away", 0.0))
+REST_DAY_BONUS_HOME = float(REST_HCA.get("rest_day_bonus_home", 0.0))
+REST_DAY_BONUS_AWAY = float(REST_HCA.get("rest_day_bonus_away", 0.0))
+LEAGUE_AVG_HCA_FITTED = float(REST_HCA.get("league_avg_hca", HOME_COURT_ADVANTAGE))
+TEAM_HCA: dict = dict(REST_HCA.get("team_hca", {}))
+
+
+def get_team_hca(team_abbr: str) -> float:
+    """Return team-specific HCA (shrunk toward league mean for low-sample teams).
+
+    Falls back to LEAGUE_AVG_HCA_FITTED, then HOME_COURT_ADVANTAGE if no fit available.
+    """
+    if team_abbr in TEAM_HCA:
+        return float(TEAM_HCA[team_abbr])
+    return LEAGUE_AVG_HCA_FITTED if REST_HCA.get("loaded") else HOME_COURT_ADVANTAGE
+
+
+def get_team_pace(season: str, team_abbr: str) -> float:
+    """Return team-season pace, fallback to season league avg, then DEFAULT_PACE_PER_48."""
+    season_paces = TEAM_PACE.get("team_pace", {}).get(str(season), {})
+    if team_abbr in season_paces:
+        return float(season_paces[team_abbr])
+    season_avg = TEAM_PACE.get("league_avg_pace_per_season", {}).get(str(season))
+    if season_avg is not None:
+        return float(season_avg)
+    return float(TEAM_PACE.get("league_avg_pace", DEFAULT_PACE_PER_48))
 
 # Parallel simulation models
 SIM_MODEL_MARGIN = "margin"

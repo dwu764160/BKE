@@ -348,6 +348,8 @@ def compute_offensive_mean(
     archetype_percentiles: Dict[str, Dict[str, float]],
     use_interaction: bool = True,
     use_structure: bool = True,
+    spacing_3pa_threshold: Optional[float] = None,
+    spacing_efg_threshold: Optional[float] = None,
 ) -> Dict[str, float]:
     """
     Compute offensive mean model for one team-season.
@@ -452,10 +454,14 @@ def compute_offensive_mean(
         structure_details["playmaking_adj"] = playmaking_adj
         structure_term += playmaking_adj
 
-        # 2.3.4 Spacing Credibility
+        # 2.3.4 Spacing Credibility — season-relative when override provided
+        # Fixed-value fallback preserves historical behavior; passing season percentiles
+        # auto-adjusts to league 3PT evolution year-over-year.
+        _3pa_thresh = spacing_3pa_threshold if spacing_3pa_threshold is not None else SPACING_3PA_RATE_THRESHOLD
+        _efg_thresh = spacing_efg_threshold if spacing_efg_threshold is not None else max(SPACING_3P_PCT_THRESHOLD, 0.52)
         shooters = players[
-            (players["behavioral_three_point_rate"] > SPACING_3PA_RATE_THRESHOLD) &
-            (players["behavioral_efg"] > max(SPACING_3P_PCT_THRESHOLD, 0.52)) &
+            (players["behavioral_three_point_rate"] > _3pa_thresh) &
+            (players["behavioral_efg"] > _efg_thresh) &
             (players["mpg"] > SPACING_MPG_THRESHOLD) &
             (players["minute_share"] > 0.08)
         ]
@@ -1080,6 +1086,30 @@ def main(
         else:
             print(f"  Insufficient merge ({len(fit_df)} rows); using DEFAULT_TEAM_SCALE={DEFAULT_TEAM_SCALE}")
 
+    # ── Compute per-season spacing thresholds (season-relative percentiles) ──
+    # SPACING_3PA_RATE_THRESHOLD (fixed 0.30) and SPACING_3P_PCT_THRESHOLD (fixed 0.35)
+    # are replaced per-season by the P40 of 3PA rate and P35 of EFG among players
+    # with non-trivial minute share (>0.05). This auto-calibrates as league 3PT volume
+    # evolves: a "spacer" stays in roughly the top 60% of 3PA rate every season instead
+    # of being defined against a static fixed value.
+    season_spacing_thresholds: Dict[str, Dict[str, float]] = {}
+    for season_id, season_df in profiles.groupby("season"):
+        qualifiers = season_df[season_df.get("minute_share", 0.0).fillna(0.0) > 0.05]
+        if len(qualifiers) >= 30:
+            p40_3pa = float(qualifiers["behavioral_three_point_rate"].quantile(0.40))
+            p35_efg = float(qualifiers["behavioral_efg"].quantile(0.35))
+            # Floor at sensible minimums so a weak-shooting season doesn't drop the bar too low
+            p40_3pa = max(p40_3pa, 0.20)
+            p35_efg = max(p35_efg, 0.48)
+        else:
+            p40_3pa = SPACING_3PA_RATE_THRESHOLD
+            p35_efg = max(SPACING_3P_PCT_THRESHOLD, 0.52)
+        season_spacing_thresholds[str(season_id)] = {
+            "spacing_3pa_threshold": p40_3pa,
+            "spacing_efg_threshold": p35_efg,
+        }
+        print(f"  Season {season_id}: spacing thresholds 3PA={p40_3pa:.3f}, EFG={p35_efg:.3f} (n_qual={len(qualifiers)})")
+
     # ── Process each team-season ──────────────────────────────────
     teams = profiles.groupby(team_key)
     team_rows = []
@@ -1092,12 +1122,15 @@ def main(
         tp["off_primary_archetype"] = tp["off_primary_archetype_mapped"]
 
         # ── Offense ──
+        season_thresh = season_spacing_thresholds.get(str(season), {})
         off_result = compute_offensive_mean(
             tp, league_avg_tov, league_avg_ftr,
             league_avg_trans, league_avg_trans_ppp,
             archetype_percentiles,
             use_interaction=use_interaction,
             use_structure=use_structure,
+            spacing_3pa_threshold=season_thresh.get("spacing_3pa_threshold"),
+            spacing_efg_threshold=season_thresh.get("spacing_efg_threshold"),
         )
 
         # ── Defense ──

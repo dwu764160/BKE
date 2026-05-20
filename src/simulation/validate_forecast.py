@@ -215,11 +215,21 @@ def compute_calibration(
 # ═════════════════════════════════════════════════════════════════════
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--features-path", type=Path, default=None,
+                        help="Override projected_team_features.parquet path")
+    parser.add_argument("--exclude-seasons", nargs="*", default=[],
+                        help="Season strings to skip (e.g. 2019-20 2020-21)")
+    args = parser.parse_args()
+
     print("Phase 0 Walk-Forward Forecast Validation")
     print("=" * 50)
 
     config = SimConfig()
-    forecast_params = load_forecast_team_params()
+    forecast_params = load_forecast_team_params(features_path=args.features_path)
+    for s in args.exclude_seasons:
+        forecast_params.pop(s, None)
     available_seasons = sorted(forecast_params.keys())
 
     if not available_seasons:
