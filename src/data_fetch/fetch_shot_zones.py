@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 DATA_DIR = Path("data/tracking")
 CACHE_DIR = Path("data/tracking_cache")
-SEASONS = ["2022-23", "2023-24", "2024-25"]
+
+from src.modeling.model_config import SEASONS
 
 SHOT_ZONE_NAMES = [
     "Restricted Area",

@@ -19,8 +19,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 DATA_DIR = Path("data/official_stats")
-CACHE_DIR = Path("data/tracking_cache") # Reuse cache logic
-SEASONS = ["2022-23", "2023-24", "2024-25"]
+CACHE_DIR = Path("data/tracking_cache")  # Reuse cache logic
+
+from src.modeling.model_config import SEASONS
 
 
 def _extract_result_payload(json_data):

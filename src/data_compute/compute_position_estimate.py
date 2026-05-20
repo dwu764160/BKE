@@ -18,19 +18,39 @@ Outputs:
 =============================================================================
 """
 
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.modeling.model_config import SEASONS
 
 DATA_DIR = Path("data")
 HISTORICAL_DIR = DATA_DIR / "historical"
 OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-SEASONS = ["2022-23", "2023-24", "2024-25"]
 POSITION_SLOTS = ["PG", "SG", "SF", "PF", "C"]
+
+# Canonical position band mappings — single source of truth.
+# position_band_5 == primary_position_estimate. position_band_3 collapses to smalls/wings/bigs.
+POSITION_BAND_5_VALUES = ("Guard", "Guard-Forward", "Forward", "Forward-Center", "Center")
+POSITION_BAND_3_MAP = {
+    "Guard": "smalls",
+    "Guard-Forward": "wings",
+    "Forward": "wings",
+    "Forward-Center": "bigs",
+    "Center": "bigs",
+}
+
+
+def position_band_3_from_band_5(band_5: str) -> str:
+    """Map canonical 5-band position to 3-band grouping.
+
+    Importable from any downstream script — single canonical mapping.
+    """
+    return POSITION_BAND_3_MAP.get(str(band_5 or "").strip(), "wings")
 
 
 def _clock_to_seconds(clock_val):
@@ -253,6 +273,8 @@ def compute_position_estimate_for_season(season: str, bios: pd.DataFrame) -> pd.
     entropy_terms[positive_mask] = probs[positive_mask] * np.log2(probs[positive_mask])
     pivot["position_entropy"] = -entropy_terms.sum(axis=1)
     pivot["primary_position_estimate"] = pivot.apply(_derive_primary_position, axis=1)
+    pivot["position_band_5"] = pivot["primary_position_estimate"]
+    pivot["position_band_3"] = pivot["position_band_5"].map(position_band_3_from_band_5)
     pivot["position_estimate_method"] = "lineup_height_rank_v1"
 
     return pivot
@@ -302,13 +324,18 @@ def apply_bio_fallbacks(position_df: pd.DataFrame, season_index: pd.DataFrame, b
     if "primary_position_estimate" in merged.columns and "primary_position" in merged.columns:
         merged["primary_position_estimate"] = merged["primary_position_estimate"].fillna(merged["primary_position"])
 
+    # Recompute canonical bands after fallbacks so every row has them populated.
+    merged["position_band_5"] = merged["primary_position_estimate"]
+    merged["position_band_3"] = merged["position_band_5"].map(position_band_3_from_band_5)
+
     merged["height_inches"] = pd.to_numeric(merged["height_inches"], errors="coerce")
     merged["height_inches"] = merged["height_inches"].fillna(78)
 
     final_cols = [
         "PLAYER_ID", "PLAYER_NAME", "SEASON", "GP", "MIN",
         "primary_position", "height_inches",
-        "primary_position_estimate", "position_estimate_method",
+        "primary_position_estimate", "position_band_5", "position_band_3",
+        "position_estimate_method",
         "total_position_seconds", "position_entropy",
         "pct_pg", "pct_sg", "pct_sf", "pct_pf", "pct_c",
         "pct_guards_own", "pct_forwards_own", "pct_centers_own",

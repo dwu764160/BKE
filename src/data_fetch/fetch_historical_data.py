@@ -259,7 +259,10 @@ def fetch_player_game_logs(seasons):
         return pd.DataFrame()
 
 if __name__ == "__main__":
-    seasons = ["2022-23", "2023-24", "2024-25"]
+    import sys
+    from pathlib import Path as _Path
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+    from src.modeling.model_config import SEASONS as seasons
     # Test fetching 10 players from 2023-24 season
     #fetch_ten_players_game_logs("2023-24")
 

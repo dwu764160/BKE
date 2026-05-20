@@ -39,7 +39,9 @@ DATA_DIR = ROOT_DIR / "data" / "historical"
 CACHE_DIR = ROOT_DIR / "data" / "tracking_cache"
 HEADERS_PATH = ROOT_DIR / "data" / "nba_headers.json"
 
-SEASONS = ["2022-23", "2023-24", "2024-25"]
+import sys
+sys.path.insert(0, str(ROOT_DIR))
+from src.modeling.model_config import SEASONS
 ENDPOINT = "https://stats.nba.com/stats/leaguedashplayerclutch"
 
 DEFAULT_HEADERS = {

@@ -55,7 +55,9 @@ HISTORICAL_DIR = DATA_DIR / "historical"
 OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-SEASONS = ["2022-23", "2023-24", "2024-25"]
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.modeling.model_config import SEASONS
 
 # Minimum requirements
 MIN_MINUTES = 400

@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 DATA_DIR = Path("data/historical")
 OUTPUT_DIR = Path("data/historical")
-SEASONS = ["2022-23", "2023-24", "2024-25"]
+
+from src.modeling.model_config import SEASONS
 
 
 def _extract_result_payload(json_data):

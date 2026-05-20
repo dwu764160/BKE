@@ -77,9 +77,29 @@ BKE_V30_DEFENSE_SHRINKAGE_JSON = os.path.join(REPORTS_DIR, "dbke_v30_defense_shr
 TRACKING_DIR = "data/tracking"
 
 # ---------------------------------------------------------------------------
-# Seasons
+# Seasons — single source of truth for all pipeline scripts
 # ---------------------------------------------------------------------------
+# To add a new season: update SEASONS here only. All scripts import from here.
+#
+# Prerequisite for adding a season to SEASONS:
+#   1. possessions_clean_{season}.parquet exists (PBP fetch + normalization done)
+#   2. RAPM pipeline runs clean for that season
+#   3. Player archetypes and position estimates computed
+#
+# Backfill status (as of 2026-05-20):
+#   Box scores + team game logs fetched:  2017-18 through 2021-22
+#   PBP / possessions still needed:       2017-18 through 2021-22
+#   BKE tier for older seasons:           rapm_only (tracking unavailable)
+#
 SEASONS: List[str] = ["2022-23", "2023-24", "2024-25"]
+
+# COVID-disrupted seasons: included in RAPM (with reduced decay weight 0.25),
+# excluded from game model training and HCA calibration.
+COVID_SEASONS: List[str] = ["2019-20", "2020-21"]
+
+# Pipeline-stage subsets
+SEASONS_GAME_MODEL: List[str] = [s for s in SEASONS if s not in set(COVID_SEASONS)]
+SEASONS_RAPM: List[str] = SEASONS  # all seasons feed RAPM pooling
 
 # ---------------------------------------------------------------------------
 # Qualification filters

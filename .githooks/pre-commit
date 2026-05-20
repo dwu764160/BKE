@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACM)"
+
+if [[ -z "${staged_files}" ]]; then
+  exit 0
+fi
+
+while IFS= read -r file; do
+  [[ -z "${file}" ]] && continue
+
+  if [[ "${file}" == *"node_modules/"* ]]; then
+    echo "ERROR: node_modules content is staged: ${file}" >&2
+    echo "Add dependency folders to .gitignore and unstage this path." >&2
+    exit 1
+  fi
+
+  if [[ "${file}" == *.env.example ]]; then
+    continue
+  fi
+
+  added_lines="$(git diff --cached -U0 -- "${file}" | grep '^+' | grep -v '^+++' || true)"
+  if [[ -z "${added_lines}" ]]; then
+    continue
+  fi
+
+  if echo "${added_lines}" | grep -Ei '(discord[_-]?token|api[_-]?key|secret|password|token)\s*=\s*[^[:space:]]{12,}' >/dev/null; then
+    echo "ERROR: potential secret detected in staged changes for ${file}" >&2
+    echo "Review and move secrets to local .env files before committing." >&2
+    exit 1
+  fi
+
+  if echo "${added_lines}" | grep -E 'M[A-Za-z0-9]{23}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,}' >/dev/null; then
+    echo "ERROR: potential Discord token-like value detected in ${file}" >&2
+    exit 1
+  fi
+done <<< "${staged_files}"
+
+exit 0
