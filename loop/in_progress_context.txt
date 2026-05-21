@@ -1,3 +1,81 @@
+2026-05-21 — Phase 1 complete + Phase 4 archetype backfill + validation plan
+===============================================================================
+
+Completed in this pass:
+
+Phase 1 + Phase 3A — COMPLETE
+  - Track A (RAPM): Validated slope 0.52-0.59 is acceptable ridge behavior. No code change.
+  - Track B (BPM): Restored 4 B-REF formula constants; removed player-specific hacks (Step 7c);
+    filled pre-2022 AST=0 from official box stats. BPM now 99-100% filled all 8 seasons.
+  - Track C (traded players): Documented as GAP-011, deep fix deferred.
+  - Phase 3A A2: B2B/rest refitted on 6 non-COVID seasons. league_avg_hca=2.147, DEN=3.79, BKN=0.99.
+  - Phase 3A A3: HCA per-team fitted; COVID seasons excluded from fitting.
+  - Walk-forward Brier baseline: 0.2420 (8,284 games, 7 transitions; best 2023-24 at 0.2273).
+
+Phase 0 — player_profile_aggregate rebuild DONE
+  - `build_profile_aggregate.py` rebuilt: 5,848 rows, all 8 seasons (was 1,971 / 3 seasons).
+  - `player_impact_profiles.parquet`: 6,048 rows confirmed.
+  - Remaining NOT DONE: BKE v27 re-run, BKE v30 re-run, team_feature_aggregation re-run,
+    external RAPM benchmarks.
+
+Phase 4 — Archetype validation started
+  Sub-tasks completed:
+    4.0 Archetype backfill (all 8 seasons):
+      - Ran compute_player_archetypes.py and compute_defensive_archetypes_v2.py for 2017-18
+        through 2024-25. Pre-2022 had None for all archetype columns; now classified.
+      - 3,394 player-seasons classified (non-Insufficient) across 8 seasons.
+      - Pre-2022 coverage: 52-77% classified per season (synergy/tracking data absent;
+        classification relies on box score + official advanced stats only).
+    4.1 Minutes threshold change:
+      - MIN_MINUTES: 500 → 200, MIN_GP: 20 → 10, MIN_MPG: 15.0 → 8.0 (both scripts).
+      - 2022-23 Insufficient Minutes: 222 (43%) → 117 (22%).
+      - League-average reference pool for BPM/z-scores still uses ≥500 min (not changed).
+
+  Key bugs fixed during backfill:
+    1. Pre-2022 box score format: complete_player_season_stats stores per-GAME values for
+       pre-2022 (MIN=32.9 MPG) vs season totals for 2022+ (MIN=2055). Fixed with
+       `if features['MIN'].median() < 50: multiply by GP`.
+    2. Missing synergy/tracking columns pre-2022: synergy playtype + tracking data only
+       exists 2022-25. Fixed by pre-filling optional columns with 0.0 defaults.
+    3. PLAYER_ID type mismatch: synergy int64 vs box score object. Fixed with .astype(str).
+    4. BKE spine coalesce: bke_v28_decomposition.parquet has stale None/old "Insufficient
+       Minutes" labels embedded. Fixed in build_profile_aggregate.py: fresh archetype values
+       now preferred (src.where(src.notna(), col) pattern).
+
+  Sanity checks (selected):
+    - Jokić: BDC all 8 seasons ✓
+    - LeBron: BDC all 8 seasons ✓
+    - Gobert: PnR Rolling Big + Rim Protector all 8 ✓
+    - Gary Payton II: PnR Rolling Big when healthy, POA Defender ✓ (position-agnostic design)
+    - Curry: BDC + Gravity Engine all healthy seasons ✓
+    - Chris Paul: BDC → Ballhandler in 2023-24/2024-25 (career arc captured) ✓
+
+Documentation updated:
+  - docs/reference/basketball-intuitions.md: Position-agnostic design paragraph added §4;
+    "Heliocentric Guard" removed from primary archetype table (it is a secondary tag).
+  - docs/reference/data-pipeline-dependency.md: NEW FILE — full pipeline dependency chart
+    (Layers 0-12), ASCII dependency graph, re-run order table.
+  - docs/plans/archetype_validation_plan.md: FULLY REWRITTEN — sub-tasks 4.0-4.6 with
+    status, secondary tag proposal (12 offensive + 10 defensive), player tier design,
+    soft probability adoption (deferred to Phase 2), archetype pair OLS (4.6 last).
+
+Pending (Phase 4 remaining):
+  - 4.2: Secondary tag vocabulary — proposed list awaiting user approval to lock in.
+  - 4.3: Validation tracks — new script src/modeling/validate_archetypes.py (not yet written).
+  - 4.4: Player tier column — implementation in build_profile_aggregate.py (not yet written).
+  - 4.5: Soft probability for Phase 2 minute model (deferred).
+  - 4.6: Archetype pair OLS — last, after Track 1 diagonal ≥ 75%.
+
+Files changed this session:
+  - src/data_compute/compute_player_archetypes.py (threshold + pre-2022 fixes)
+  - src/data_compute/compute_defensive_archetypes_v2.py (threshold + pre-2022 fixes)
+  - src/profile_aggregate/build_profile_aggregate.py (archetype coalesce)
+  - src/data_compute/compute_linear_metrics.py (BPM formula restoration, AST fill)
+  - docs/reference/basketball-intuitions.md (position-agnostic §4)
+  - docs/reference/data-pipeline-dependency.md (NEW)
+  - docs/plans/archetype_validation_plan.md (full rewrite)
+  - docs/plans/master_improvement_plan.md (Phase 0 + Phase 4 status updated)
+
 2026-03-11 — Simulation realism upgrade completed
 ===============================================================================
 

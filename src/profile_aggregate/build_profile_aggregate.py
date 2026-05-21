@@ -535,11 +535,26 @@ def main() -> None:
     # 3. Offensive archetypes (adds tracking detail not in decomp)
     arche = _load_archetypes()
     spine = _smart_merge(spine, arche, merge_key, "arche", how="left")
+    # BKE decomp spine carries stale archetype labels (None for pre-2022, and
+    # "Insufficient Minutes" from the old 500-min threshold for 2022+). After
+    # _smart_merge the fresh values from player_archetypes.parquet land as
+    # arche_primary_archetype / arche_secondary_archetype. Prefer the fresh file
+    # value whenever it is non-null — this overwrites both None and stale labels.
+    for _col, _src in [("primary_archetype", "arche_primary_archetype"),
+                       ("secondary_archetype", "arche_secondary_archetype"),
+                       ("defensive_archetype", "arche_defensive_archetype")]:
+        if _src in spine.columns and _col in spine.columns:
+            spine[_col] = spine[_src].where(spine[_src].notna(), spine[_col])
     print(f"  [3] + Archetypes: {len(spine.columns)} cols")
 
     # 4. Defensive archetypes
     def_arche = _load_def_archetypes()
     spine = _smart_merge(spine, def_arche, merge_key, "defarche", how="left")
+    # Same coalesce for defensive_archetype
+    if "defarche_defensive_archetype" in spine.columns and "defensive_archetype" in spine.columns:
+        spine["defensive_archetype"] = spine["defensive_archetype"].where(
+            spine["defensive_archetype"].notna(), spine["defarche_defensive_archetype"]
+        )
     print(f"  [4] + Def archetypes: {len(spine.columns)} cols")
 
     # 5. Position estimates

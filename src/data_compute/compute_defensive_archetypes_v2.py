@@ -60,8 +60,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.modeling.model_config import SEASONS
 
 # Minimum requirements
-MIN_MINUTES = 400
-MIN_GP = 15
+MIN_MINUTES = 200
+MIN_GP = 10
 
 
 # =============================================================================
@@ -303,6 +303,15 @@ def compute_features(
         return pd.DataFrame()
 
     features = bx.copy()
+
+    # Pre-2022 complete_player_season_stats stores per-game values (MIN=32.9 MPG).
+    # Post-2022 stores season totals. Detect by median MIN < 50 → per-game format.
+    _per_game_cols = ['MIN', 'PTS', 'AST', 'REB', 'OREB', 'DREB', 'STL', 'BLK', 'TOV',
+                      'FGA', 'FGM', 'FG3A', 'FG3M', 'FTA', 'FTM']
+    if features['MIN'].median() < 50 and 'GP' in features.columns:
+        for _col in _per_game_cols:
+            if _col in features.columns:
+                features[_col] = features[_col] * features['GP']
 
     # Merge matchup versatility
     if not vers.empty:
@@ -1309,6 +1318,9 @@ def main():
             continue
 
         results = classify_defenders(features)
+        if results.empty or "defensive_archetype" not in results.columns:
+            print("  No qualified defenders classified.")
+            continue
         all_results.append(results)
 
         arch_dist = results[

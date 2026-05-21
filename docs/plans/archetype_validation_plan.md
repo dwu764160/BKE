@@ -1,15 +1,16 @@
 # Archetype Validation Plan
 
-> **Status:** Brainstormed, not yet implemented. Decisions finalized 2026-05-19.
-> **Scope:** Validate that offensive (11) and defensive (5) archetype classifications are
-> stable, internally consistent, and meaningful. Add safeguards where they aren't.
-> **Does not change:** Archetype definitions or basketball philosophy.
+> **Status:** Revised 2026-05-21. Phase 4 scope updated based on session discussion.
+> **Scope:** Validate, document, and improve offensive and defensive archetype classifications
+> before Phase 2 (minute model rebuild) uses archetypes as features.
+> **Does not change:** Core archetype definitions or basketball philosophy.
+> **Position-agnostic design is intentional** — see `docs/reference/basketball-intuitions.md §4`.
 
 ---
 
 ## Why This Plan Exists
 
-The archetype system is downstream of nothing and upstream of everything:
+The archetype system is upstream of everything:
 - **Position-conditional z-scoring** uses archetype for cohort selection (Dims 4, 5, 6, 8)
 - **Layer 2 role utilization** measures efficiency against archetype baseline
 - **Layer 3 elevation** measures how much a player exceeds archetype expectations
@@ -18,188 +19,228 @@ The archetype system is downstream of nothing and upstream of everything:
 - **Minute model features** include archetype probability embeddings
 
 If archetype assignments are noisy or year-over-year unstable, every downstream model inherits
-that noise. The investigation found:
-- 100+ feature classification with percentile-based thresholds → fragile to small shifts
-- Heuristic-driven assignment order (BDC checked before Ballhandler, etc.) → swapping checks reclassifies 5-10% of players
+that noise. Known issues going into this phase:
+- 32% "Insufficient Minutes" (threshold was 500 min — lowered to 200)
+- Hard binary classification gates → 3,498 players at max certainty (1.0 entropy)
+- No secondary archetype documentation
+- Archetypes only backfilled for 2022-23 to 2024-25 (3 seasons)
 - No external ground truth validation
 - No stability metrics published
 
-This plan establishes whether archetypes are trustworthy inputs to the rest of the system,
-and adds safeguards where they aren't.
+---
+
+## Sub-Task Ordering
+
+```
+4.0  Archetype backfill → all 8 seasons           [COMPLETE]
+4.1  Threshold lower → 200 min                    [COMPLETE — code change applied]
+4.2  Secondary archetype documentation             [IN PROGRESS — see §Secondary Tags below]
+4.3  Validation tracks (4 parallel)               [PENDING]
+4.4  Player tier system                            [PENDING]
+4.5  Soft probability adoption                     [PENDING — design only, no new model]
+4.6  Archetype pair validation + matrix OLS        [LAST — after everything else]
+```
 
 ---
 
-## Investigation Tracks (Run in Parallel)
+## 4.0 — Archetype Backfill (Prerequisite, Done)
+
+Pre-2022 seasons (2017-18 through 2021-22) had `None` for all archetype columns.
+Ran `compute_player_archetypes.py` and `compute_defensive_archetypes_v2.py` for all 8 seasons.
+All downstream artifacts rebuilt (impact profiles + aggregate).
+
+---
+
+## 4.1 — Minutes Threshold Change (Done)
+
+Changed in `src/data_compute/compute_player_archetypes.py`:
+
+| Parameter | Before | After |
+|---|---|---|
+| `MIN_MINUTES` | 500 | 200 |
+| `MIN_GP` | 20 | 10 |
+| `MIN_MPG` | 15.0 | 8.0 |
+
+**Note:** League-average reference pool for BPM and z-scores remains ≥500 min to prevent
+fringe-player noise from corrupting the reference distribution. The 200 min threshold only
+controls the "Insufficient Minutes" classification gate.
+
+---
+
+## 4.2 — Secondary Archetype Documentation
+
+Secondary tags are human-readable explainers for primary archetype assignments. They:
+- Clarify *what kind* of a given primary archetype a player is
+- Have **no computational effect** — z-scores, interaction matrix, and model features all
+  use primary archetype only
+- Are not assigned to every player — only where a meaningful sub-role exists
+
+### Offensive Secondary Tags (12 tags)
+
+| Tag | Applied to | What it means |
+|---|---|---|
+| **Heliocentric** | Ball Dominant Creator | Runs entire offense through themselves at extreme rate; defense schemes around stopping them specifically |
+| **Post Creator** | Ball Dominant Creator, Interior Scorer | Creates primarily from post position; high post-up possession% |
+| **Gravity Engine** | Ball Dominant Creator, Perimeter Scorer | Elite shooter whose mere presence forces defensive attention; opens teammates even when not shooting |
+| **Downhill Driver** | Ball Dominant Creator | Creates primarily by attacking the rim; high drives, high fouls drawn, less perimeter creation |
+| **Pick-and-Roll Architect** | Ballhandler | Offense primarily runs through PnR initiations; playmaking happens in the act of rolling or kicking |
+| **Volume Scorer** | All-Around Scorer, Ballhandler | Shot attempts/min well above archetype average; creates own shot at high frequency |
+| **Midrange Specialist** | All-Around Scorer, Interior Scorer, Perimeter Scorer | Mid-range heavy shot profile; elbow pull-ups and floaters are primary creation modes |
+| **Lob Threat** | PnR Rolling Big, Off-Ball Finisher | Finishes primarily through alley-oop/lob plays; rim gravity creates spacing for others |
+| **Transition Runner** | PnR Rolling Big, Off-Ball Finisher, Off-Ball Movement Shooter | Gets up the floor in transition quickly; significant fast-break possession share |
+| **Playmaking Big** | PnR Rolling Big, PnR Popping Big, Connector | Passes out of rolls/pops for assist opportunities; decision-maker in the short roll |
+| **Elite Shooter** | Off-Ball Stationary Shooter, Off-Ball Movement Shooter | Top-tier 3PT efficiency (≥38%) on significant volume; automatic from distance |
+| **Paint Presence** | Interior Scorer | Inside-the-arc shot heavy; primarily two-point focused with minimal three-point activity |
+
+### Defensive Secondary Tags (10 tags)
+
+| Tag | Applied to | What it means |
+|---|---|---|
+| **Primary Stopper** | POA Defender, Wing Stopper, Versatile Defender | Assigned to opponent's best offensive player; defensive responsibility is scheme-defining |
+| **Help Specialist** | Any defensive archetype | Value comes from help rotations and off-ball positioning; not dominant on-ball |
+| **Switchable** | Versatile Defender, Mobile Big | Credibly defends 2+ position groups without causing mismatches |
+| **Ball Hawk** | POA Defender, Off-Ball Chaser | High steal rate; gambles for turnovers, creates transition opportunities |
+| **Active Hands** | Any defensive archetype | High deflections and tips; disrupts passes and creates loose balls without gambling for steals |
+| **Screen Navigator** | POA Defender, Off-Ball Chaser | Excels at fighting through or going over screens; stays attached to shooters off the ball |
+| **Hustle Defender** | Any defensive archetype | Charges drawn, dives, high effort stats; defensive value through activity, not athleticism |
+| **Interior Anchor** | Mobile Big, Dropping Big | Rim-area defensive authority without being primarily a shot-blocker; organizes paint defense |
+| **Defensive Liability** | Any defensive archetype | Clear exploitable weakness; opponents target this player in isolation or pick coverage |
+| **Shot Blocker** | Rim Protector, Mobile Big | High block rate as a secondary trait in non-primary rim-protector archetypes |
+
+### Tags Removed from Prior (Vibe-Coded) Version
+
+| Old Tag | Reason Removed |
+|---|---|
+| `Heliocentric Guard` | Renamed `Heliocentric` — position-agnostic design |
+| `Post Hub` | Renamed `Post Creator` — clearer scope |
+| `High Volume` | Renamed `Volume Scorer` — more descriptive |
+| `Midrange Scorer` | Renamed `Midrange Specialist` — avoids confusion with primary archetype names |
+| `Rim Finisher` | Renamed `Lob Threat` — more specific to the behavior |
+| `Inside-the-Arc` | Renamed `Paint Presence` — clearer meaning |
+| `Transition Player` | Renamed `Transition Runner` — more descriptive |
+| `Primary Scorer` | Removed — redundant with BDC definition |
+| `Offensive Hub` | Merged into `Playmaking Big` — unclear distinction |
+| `Hockey Assist Specialist` | Removed — 0 instances, too niche to maintain |
+| `Perimeter Defender` | Removed from offensive list — wrong taxonomy |
+| `Rebounder` | Removed from offensive list — wrong taxonomy |
+| `Primary` (defensive) | Renamed `Primary Stopper` |
+| `Liability` (defensive) | Renamed `Defensive Liability` |
+| `Helper` + `Help` (defensive) | Merged into `Help Specialist` |
+| `Hustler` (defensive) | Renamed `Hustle Defender` |
+| `Interior` (defensive) | Renamed `Interior Anchor` |
+
+---
+
+## 4.3 — Validation Tracks (Run in Parallel)
 
 ### Track 1: Year-over-Year Stability
 
 **Question:** When a player appears in consecutive seasons, how often does their archetype change?
 
 **Methodology:**
-For each player who appears in seasons N and N+1:
-- Record archetype_N and archetype_N+1 (both offensive and defensive)
-- Build 11×11 transition matrix (offensive) and 5×5 transition matrix (defensive)
-- Diagonal entries: % of players who kept the same archetype
-- Off-diagonal: which archetypes commonly transition to which
+For each player in seasons N and N+1 (7 transition pairs after 8-season backfill):
+- Build 11×11 transition matrix (offensive) and 9×9 (defensive)
+- Diagonal = % of players who kept the same archetype
 
-**Expected healthy result:**
-- Diagonal ≥ 75% for offensive archetypes (most players don't fundamentally change role year-over-year)
-- Diagonal ≥ 85% for defensive archetypes (defense is more positional, less volatile)
-- Off-diagonal transitions should be "adjacent" (BDC ↔ Heliocentric Guard is fine; BDC ↔ Off-Ball Finisher is suspicious)
+**Gate:** Diagonal ≥ 75% offensive, ≥ 85% defensive.
+**Red flag:** Diagonal < 60% → archetypes are noisy features for the minute model.
 
-**Red flag patterns:**
-- Diagonal < 60% → archetypes are not stable, downstream features are noisy
-- Non-adjacent transitions (e.g., Interior Scorer → Movement Shooter) common → classifier is forcing assignments without confidence
-
-**Output:** `reports/archetype_stability.json` with transition matrices + diagonal rates
+**Output:** `reports/archetype_stability.json`
 
 ---
 
-### Track 2: Threshold Sensitivity Analysis
+### Track 2: Threshold Sensitivity
 
-**Question:** How fragile is the classifier to small threshold perturbations?
+**Question:** How fragile is classification to small threshold shifts?
 
-**Methodology:**
-Bootstrap the percentile thresholds by ±2 percentile points and re-run classification:
-```python
-# Baseline: P80 for BDC gate
-# Perturbed: P78, P82
-# Run classifier with each variant
-# Measure: what % of players get reclassified
-```
-
-For each archetype, compute:
-- Fragility score = % of assignments that change under ±2pp perturbation
-- Players most affected (those near boundaries)
-
-**Expected healthy result:**
-- Fragility < 10% per archetype
-- Affected players cluster at boundaries (acceptable — they're genuinely borderline)
-
-**Red flag pattern:**
-- Fragility > 20% → classifier is overfit to specific threshold values
-- Specific archetypes show high fragility → those thresholds need reconsideration
-
-**Output:** `reports/archetype_sensitivity.json` with per-archetype fragility scores
+**Methodology:** Re-run classifier with percentile thresholds ±2pp.
+**Gate:** < 10% fragility per archetype.
+**Output:** `reports/archetype_sensitivity.json`
 
 ---
 
 ### Track 3: Internal Coherence
 
-**Question:** Do players within the same archetype actually look similar?
+**Question:** Do players in the same archetype actually look similar?
 
-**Methodology:**
-For each archetype, compute the within-archetype distribution of key role features:
-- Heliocentric Guards should have similar high usage, high assist rate, on-ball creation
-- Off-Ball Finishers should have similar low usage, high rim rate, low 3PT volume
-- Etc.
-
-For each archetype, compute:
-- Within-archetype standard deviation of usage, AST%, 3PT rate, rim rate
-- Compare to overall qualified-player standard deviation
-- Ratio = within_archetype_std / overall_std
-
-**Expected healthy result:**
-- Within-archetype std should be < 0.5x overall std for the archetype's defining features
-- (Heliocentric Guards should have tight usage distribution)
-
-**Red flag pattern:**
-- Within-archetype std ≈ overall std → archetype isn't capturing a coherent role
-- High variance specifically on the archetype's defining feature → classification is grouping unlike players
-
-**Output:** `reports/archetype_coherence.json` per-archetype feature distributions
+**Methodology:** Within-archetype std / overall std on defining features.
+**Gate:** Ratio < 0.5x on each archetype's defining feature.
+**Output:** `reports/archetype_coherence.json`
 
 ---
 
-### Track 4: Manual Spot-Check Sample
+### Track 4: Manual Spot-Check
 
-**Question:** Do the classifications match basketball common sense?
-
-**Methodology:**
-Sample 30 random players per archetype (across all 3 seasons), print:
-- Player name, season, team
-- Assigned archetype
-- Key features (usage, AST%, 3PT rate, position, height)
-
-Have a basketball-literate reviewer (you) flag any obvious misclassifications.
-
-**Output:** `reports/archetype_manual_sample.csv` for review, plus annotated results
+**Methodology:** Sample 30 players per archetype across 8 seasons. Review: does
+classification match basketball common sense? Flag any systematic errors.
+**Output:** `reports/archetype_manual_sample.csv`
 
 ---
 
-## Remediation (Based on Investigation Findings)
+## 4.4 — Player Tier System
 
-### If Stability Track Fails (diagonal < 70%):
+A semantic label summarizing current-season talent level for each player-season row.
+Attached to `player_profile_aggregate.parquet` as a new `player_tier` column.
 
-**Add temporal smoothing to archetype assignment**
+**Design principles:**
+- **BKE-anchored** (not raw RAPM or BPM — avoids double-counting upstream inputs)
+- **Within-season percentile** thresholds so tiers are relative, not absolute
+- **Minutes threshold** for minimum qualification (below threshold → "Fringe")
+- **Current season only** — no lookback smoothing
+- **Semantic, not numeric** — once the tier is set, downstream uses the label
 
-For players with prior-season classification, blend current-season scores with prior:
-```python
-# Per archetype:
-smoothed_score = 0.7 * current_season_score + 0.3 * prior_season_score
-# Then classify based on smoothed scores
-```
+| Tier | Criteria | Approx. count/season |
+|---|---|---|
+| **Superstar** | BKE ≥ 95th pctile AND ≥ 800 min | ~25 players |
+| **All-Star** | BKE ≥ 82nd pctile AND ≥ 600 min | ~50 players |
+| **Starter** | BKE ≥ 55th pctile AND ≥ 600 min | ~150 players |
+| **Rotation Player** | BKE ≥ 30th pctile AND ≥ 300 min | ~200 players |
+| **Reserve** | ≥ 200 min (classified) AND below Rotation threshold | ~200 players |
+| **Fringe** | < 200 min (Insufficient Minutes class) | ~200+ players |
 
-This reduces year-to-year flipping caused by small statistical noise while still allowing
-genuine role changes (a player who clearly transitions roles will accumulate prior-season
-score in the new archetype over time).
+**Why BKE and not BPM/RAPM:** BKE is our composite portable talent score — it already
+synthesizes RAPM (25%), playtype efficiency (20%), and 9 dimensions (55%). Using BKE for
+tiers avoids feeding the same raw signal into multiple downstream features separately.
 
-For rookies (no prior season): use current-season-only classification with a confidence flag.
-
-### If Sensitivity Track Fails (fragility > 20%):
-
-**Add archetype confidence scores**
-
-Currently, archetype is a categorical assignment. Replace with:
-- Primary archetype (current behavior)
-- Confidence score (0-1, based on how close to threshold boundaries the player is)
-
-Downstream code can:
-- Use hard assignment as before (preserves current behavior)
-- Optionally weight features by confidence (improves robustness)
-- Flag low-confidence players (< 0.6) for review
-
-Confidence is computed from distance to thresholds:
-```python
-confidence = min(
-    (player_score - threshold_for_assigned) / (threshold_for_assigned - threshold_for_next_archetype),
-    1.0
-)
-```
-
-### If Coherence Track Fails (within-archetype std ≈ overall std):
-
-**Investigate the specific archetype's threshold logic**
-
-This is more invasive — it means the archetype isn't capturing what we think it is.
-Revisit the threshold definitions for that specific archetype based on which features
-are showing high variance. This is iterative and requires basketball judgment.
-
-### If Manual Sample Reveals Systematic Errors:
-
-**Refine threshold logic for the specific failure mode**
-
-Example: if many "Wing Stoppers" are actually offensive wings with mediocre defense,
-the defensive archetype gates need to be tighter on actual defensive impact, not just
-defensive position.
+**Implementation:** New function in `build_profile_aggregate.py` or
+`build_player_impact_profiles.py` that assigns tier after all BKE scores are computed.
 
 ---
 
-## Validation Output Schema
+## 4.5 — Soft Probability Adoption
 
-After investigation, archetypes are tagged with:
+The PEC columns already produce 11-dimensional archetype probability vectors
+(`pec_off_prob_emb_*` columns in the aggregate). Currently downstream code uses only
+`argmax` (hard primary label).
 
-```python
-{
-    "player_id": str,
-    "season": str,
-    "primary_archetype": str,
-    "archetype_confidence": float,  # 0-1
-    "prior_archetype": str | None,  # for stability tracking
-    "is_stable": bool,  # True if prior == current OR confidence > 0.7
-    "smoothed": bool,  # True if temporal smoothing was applied
-}
-```
+**What changes:**
+- Primary archetype label stays the same (argmax doesn't change)
+- Phase 2 minute model uses the full probability vector as features instead of one-hot encoding
+- Cohort z-scoring can optionally become weighted (player partially belongs to two cohorts)
+
+**What does NOT change:**
+- Existing archetype assignments — no player gets reclassified
+- The interaction matrix (still keyed on primary archetype)
+- The secondary tags
+
+**Implementation:** Deferred to Phase 2 — the minute model rebuild is where this pays off.
+
+---
+
+## 4.6 — Archetype Pair Validation (Last)
+
+After 4.0-4.5 are complete and archetypes are verified stable across 8 seasons:
+
+Use 8 seasons of historical lineup data (from `possessions_clean_*.parquet`) to measure
+actual on-court offensive efficiency for each of the 121 archetype pair combinations.
+Fit OLS regression: `team_ORtg ~ Σ archetype_pair_counts`.
+
+Replaces the current untested 121-pair interaction matrix with empirically fitted values.
+
+**Gate before running:** Track 1 diagonal ≥ 75% (archetypes must be stable inputs before
+building a matrix on top of them).
+
+**Output:** `reports/archetype_pair_interactions.json` — new interaction matrix
 
 ---
 
@@ -207,31 +248,17 @@ After investigation, archetypes are tagged with:
 
 | File | Change |
 |---|---|
-| `src/data_compute/compute_player_archetypes.py` | Add confidence score output; optionally temporal smoothing |
-| `src/data_compute/compute_defensive_archetypes_v2.py` | Same |
-| `src/modeling/validate_archetypes.py` | **New** — runs all 4 tracks, outputs JSON reports |
-| `src/player_eval/build_player_impact_profiles.py` | Propagate archetype_confidence into profile schema |
-
----
-
-## Verification
-
-1. Run `python3 src/modeling/validate_archetypes.py` → produces 4 JSON reports
-2. Read `reports/archetype_stability.json` — diagonal rates per archetype
-3. Read `reports/archetype_sensitivity.json` — fragility scores
-4. Read `reports/archetype_coherence.json` — within-archetype distributions
-5. Review `reports/archetype_manual_sample.csv` — sanity check
-6. Make remediation decision per archetype based on findings
+| `src/data_compute/compute_player_archetypes.py` | Threshold lowered to 200/10/8; secondary tag vocabulary updated |
+| `src/data_compute/compute_defensive_archetypes_v2.py` | Defensive secondary tag vocabulary updated |
+| `src/player_eval/build_player_impact_profiles.py` | Add `player_tier` column |
+| `src/modeling/validate_archetypes.py` | **New** — runs Tracks 1-4, outputs JSON reports |
+| `docs/reference/basketball-intuitions.md` | Section 4: position-agnostic text + secondary tag tables |
 
 ---
 
 ## Dependencies & Sequencing
 
-**Can start:** After Plan 1 (data pipeline audit) completes — needs clean RAPM and BPM data
-because archetype features depend on them.
-
-**Must complete before:** Plan 3 Phase B (interaction matrix OLS), because validating the
-matrix requires knowing the inputs (archetype pair counts) are stable.
-
-**Output feeds:** Minute model rebuild (Plan 2), team feature aggregation, all downstream
-modeling.
+**Can start:** Phase 1 complete (clean RAPM + BPM).
+**Must complete before:** Phase 2 (minute model) — uses archetype probability embeddings as features.
+**Archetype pair validation (4.6) must complete before:** Phase 3B — interaction matrix OLS
+needs stable archetype-pair counts as inputs.

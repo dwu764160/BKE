@@ -85,12 +85,27 @@ Archetypes serve two functions: (1) cohort-conditional z-scoring (compare player
 peers doing similar things) and (2) team structure modeling (what mix of roles produces
 functional lineups).
 
+### Position-Agnostic Design
+
+**Archetypes describe basketball role, not listed position.** A player classified as
+"PnR Rolling Big" is someone who rolls to the rim in pick-and-roll actions — regardless
+of whether the NBA lists them as a Guard, Forward, or Center. Gary Payton II (listed SG)
+as a PnR Rolling Big is correct classification, not an error.
+
+This is intentional and a key advantage over position-conditional systems. Position-priors
+would prevent the model from capturing positional versatility, role evolution, and
+non-traditional deployments. The position bands (Section 5) exist for z-score cohort
+normalization only — they do not constrain archetype assignment.
+
+> **Secondary archetype tags** (documented in the subsection below) further clarify *what
+> kind* of a given primary archetype a player is. They have no computational effect —
+> they are human-readable explainers only.
+
 ### Offensive Archetypes (11 types)
 
 | Archetype | Prototypical role |
 |---|---|
 | **Ball Dominant Creator** | Primary ball-handler, creates heavily off-dribble |
-| **Heliocentric Guard** | Guard who runs the offense through themselves (sub-type) |
 | **Ballhandler** | Secondary creator, initiates offense without as much scoring responsibility |
 | **All-Around Scorer** | Scores from multiple areas, both off the ball and on |
 | **Interior Scorer** | Post-up, paint, rim-finishing focus |

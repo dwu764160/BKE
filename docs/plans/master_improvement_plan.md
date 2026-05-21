@@ -46,7 +46,7 @@ Phase 5  Walk-forward harness                   [PENDING — measurement gate]
 | RAPM re-run (8-season pooled) | DONE | `player_rapm.parquet` — 20,506 rows, all 8 seasons |
 | Impact profiles re-run | DONE | `player_impact_profiles.parquet` — 6,048 rows, all 8 seasons |
 | BKE v28 decomposition re-run | DONE | `bke_v28_decomposition.parquet` — 5,848 rows, all 8 seasons |
-| `player_profile_aggregate.parquet` rebuild | **NOT DONE** | Still 3 seasons only (1,971 rows) |
+| `player_profile_aggregate.parquet` rebuild | **DONE** | 5,848 rows, all 8 seasons (2026-05-21) |
 | BKE v27 scores re-run | **NOT DONE** | Still 3 seasons only (950 players) |
 | BKE v30 defense shrinkage re-run | **NOT DONE** | Still 3 seasons only |
 | `team_feature_aggregation.py` re-run | **NOT DONE** | Needs rebuilt aggregate as input |
@@ -103,16 +103,30 @@ These are structural fixes that downstream everything (minute model, simulation)
 
 ## Phase 4 — Archetype Validation
 
-**Status:** PENDING  
-**Prerequisites:** Phase 1 complete (clean pipeline output)  
+**Status:** IN PROGRESS (2026-05-21)  
+**Prerequisites:** Phase 1 complete (clean pipeline output) ✓  
 **Detail doc:** `docs/plans/archetype_validation_plan.md`
 
-**Three tracks (run in parallel, validation only — no production code changes):**
-- Track 1: Year-over-year stability (transition matrix across consecutive seasons)
-- Track 2: Threshold sensitivity analysis (how much does swapping check order change assignments)
-- Track 3: External archetype comparison (cross-validate against basketball-reference role labels)
+### Sub-task Checklist
 
-Output: stability report + safeguard recommendations. If archetypes are noisy, fixes go in before Phase 2.
+| Sub-task | Status | Notes |
+|---|---|---|
+| 4.0 Archetype backfill (all 8 seasons) | **DONE** | `compute_player_archetypes.py` + `compute_defensive_archetypes_v2.py` run on all 8 seasons; 3,394 classified rows |
+| 4.1 Minutes threshold → 200 min / 10 GP / 8 MPG | **DONE** | Lowered in both archetype scripts; 2022-23 Insufficient dropped from 43% → 22% |
+| 4.2 Secondary archetype documentation | **IN PROGRESS** | Proposed tag list in `archetype_validation_plan.md §4.2` — awaiting user approval to lock in |
+| 4.3 Validation tracks (stability, sensitivity, coherence, manual) | PENDING | New script: `src/modeling/validate_archetypes.py` |
+| 4.4 Player tier system | PENDING | BKE-anchored within-season percentile; new column in `build_profile_aggregate.py` |
+| 4.5 Soft probability adoption | PENDING — deferred to Phase 2 | Full PEC prob vector as minute model features; no reclassification |
+| 4.6 Archetype pair validation + OLS matrix | LAST | After stability confirmed (Track 1 diagonal ≥ 75%) |
+
+**Key fixes applied (2026-05-21):**
+- Pre-2022 box score format detection (per-game MIN → season total via ×GP)
+- Missing synergy/tracking columns pre-filled with 0.0 for pre-2022 seasons
+- PLAYER_ID type normalization (int64 vs object merge fix)
+- BKE spine coalesce: fresh archetype values now preferred over stale "Insufficient Minutes" labels from old 500-min threshold
+
+**What must complete before Phase 2:**
+- Sub-tasks 4.0, 4.1 (done), 4.2 (tag lock-in), 4.3 (stability gate — diagonal ≥ 75%), 4.4 (tier column)
 
 ---
 

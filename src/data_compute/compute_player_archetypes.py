@@ -66,9 +66,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 # ---------- Static thresholds (only where percentiles don't apply) ----------
 STATIC = {
-    'MIN_MINUTES': 500,
-    'MIN_GP': 20,
-    'MIN_MPG': 15.0,
+    'MIN_MINUTES': 200,
+    'MIN_GP': 10,
+    'MIN_MPG': 8.0,
     # BDC subtypes (structural, not volume-based)
     'HELIOCENTRIC_ON_BALL': 0.30,   # ON_BALL_CREATION >= this → Heliocentric Guard
     'POST_HUB_POSS': 0.10,          # POSTUP_POSS_PCT >= this AND must be dominant mode
@@ -320,20 +320,34 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
         return pd.DataFrame()
 
     features = bx.copy()
+    # Normalize PLAYER_ID to string in all frames before merging to avoid int/str type conflicts
+    features['PLAYER_ID'] = features['PLAYER_ID'].astype(str)
+
+    # Pre-2022 complete_player_season_stats stores per-game values (MIN=32.9 MPG, AST=2.3 APG).
+    # Post-2022 stores season totals (MIN=2055, AST=203). Detect by median MIN < 50 → per-game.
+    _per_game_cols = ['MIN', 'PTS', 'AST', 'REB', 'OREB', 'DREB', 'STL', 'BLK', 'TOV',
+                      'FGA', 'FGM', 'FG3A', 'FG3M', 'FTA', 'FTM']
+    if features['MIN'].median() < 50 and 'GP' in features.columns:
+        for _col in _per_game_cols:
+            if _col in features.columns:
+                features[_col] = features[_col] * features['GP']
 
     # Merge synergy data
     if not syn.empty:
+        syn['PLAYER_ID'] = syn['PLAYER_ID'].astype(str)
         syn_cols = [c for c in syn.columns if c not in ['PLAYER_NAME', 'SEASON'] or c == 'PLAYER_ID']
         features = features.merge(syn[syn_cols], on='PLAYER_ID', how='left')
 
     # Merge tracking data
     if not trk.empty:
+        trk['PLAYER_ID'] = trk['PLAYER_ID'].astype(str)
         trk_cols = [c for c in trk.columns if c not in ['PLAYER_NAME', 'SEASON', 'GP', 'MIN'] or c == 'PLAYER_ID']
         features = features.merge(trk[trk_cols], on='PLAYER_ID', how='left')
 
     # Merge shot zone data
     if shot_zones is not None and not shot_zones.empty:
         sz = shot_zones.copy()
+        sz['PLAYER_ID'] = sz['PLAYER_ID'].astype(str)
         sz_cols = [c for c in sz.columns if c == 'PLAYER_ID' or c not in features.columns]
         features = features.merge(sz[sz_cols], on='PLAYER_ID', how='left')
 
@@ -348,6 +362,31 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
                   'MIDRANGE_FG_PCT', 'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA')]
     for col in zone_cols:
         features[col] = features[col].fillna(0)
+
+    # Ensure optional synergy/tracking columns exist with 0 defaults.
+    # Pre-2022 seasons have no tracking/synergy data; these cols won't be
+    # merged in above, so features.get(col, 0) would return int 0 — a Series
+    # operation on it then fails. Explicit pre-fill avoids scattered checks.
+    _optional_zero_cols = [
+        'ISOLATION_POSS_PCT', 'PRBALLHANDLER_POSS_PCT', 'POSTUP_POSS_PCT',
+        'TRANSITION_POSS_PCT', 'SPOTUP_POSS_PCT', 'OFFSCREEN_POSS_PCT',
+        'HANDOFF_POSS_PCT', 'CUT_POSS_PCT', 'PRROLLMAN_POSS_PCT', 'OFFREBOUND_POSS_PCT',
+        'ISOLATION_PPP', 'PRBALLHANDLER_PPP', 'POSTUP_PPP', 'PRROLLMAN_PPP',
+        'SPOTUP_PPP', 'TRANSITION_PPP', 'CUT_PPP',
+        'SECONDARY_AST', 'POTENTIAL_AST', 'TOUCHES', 'AVG_SEC_PER_TOUCH',
+        'AVG_DRIB_PER_TOUCH', 'FRONT_CT_TOUCHES', 'DRIVES', 'DRIVE_PTS',
+        'DRIVE_FG_PCT', 'DRIVE_AST', 'DRIVE_TOV', 'PASSES_MADE',
+        'AST_POINTS_CREATED', 'DIST_MILES', 'AVG_SPEED',
+        'AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ', 'CORNER3_FREQ',
+        'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ', 'AT_RIM_FG_PCT', 'MIDRANGE_FG_PCT',
+        'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA',
+        'CATCH_SHOOT_FGM', 'CATCH_SHOOT_FGA', 'CATCH_SHOOT_FG_PCT',
+        'CATCH_SHOOT_PTS', 'CATCH_SHOOT_FG3M', 'CATCH_SHOOT_FG3A', 'CATCH_SHOOT_FG3_PCT',
+        'OREB_CONTEST', 'DREB_CONTEST', 'REB_CONTEST',
+    ]
+    for _col in _optional_zero_cols:
+        if _col not in features.columns:
+            features[_col] = 0.0
 
     # ==========================================================================
     # COMPUTE DERIVED FEATURES
