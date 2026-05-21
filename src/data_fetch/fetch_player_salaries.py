@@ -80,6 +80,11 @@ def get_espn_player_salaries():
     Returns a DataFrame with columns: player_name, team, salary, season
     """
     season_map = {
+        '2017-18': '2018',
+        '2018-19': '2019',
+        '2019-20': '2020',
+        '2020-21': '2021',
+        '2021-22': '2022',
         '2022-23': '2023',
         '2023-24': '2024',
         '2024-25': '2025',
@@ -149,7 +154,7 @@ def main():
     id_map = _load_player_id_name_map()
     id_map["norm_name"] = id_map["DISPLAY_FIRST_LAST"].apply(normalize_name)
 
-    print(f"Fetching all player salary data from ESPN for 2022-23 to 2025-26...")
+    print(f"Fetching all player salary data from ESPN for 2017-18 to 2025-26...")
     salary_df = get_espn_player_salaries()
     if salary_df.empty:
         print("No salary data fetched.")

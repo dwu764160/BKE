@@ -167,6 +167,7 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
     player1_id = _first_present(row, [
         "player1_id", "PLAYER1_ID", "player1Id", "person1Id", "person1_id", "personId", "player1"
     ])
+    player1_name = _first_present(row, ["PLAYER1_NAME", "player1_name", "playerName", "playerNameI"])
     player2_id = _first_present(row, [
         "player2_id", "PLAYER2_ID", "player2Id", "person2Id", "person2_id", "assistPlayerId", 
         "assistPersonId", "foulDrawnPersonId", "player2" # Added assistPersonId, foulDrawnPersonId
@@ -176,7 +177,7 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "blockPersonId", "player3" # Added blockPersonId
     ])
     team_id = _first_present(row, [
-        "team_id", "TEAM_ID", "teamId", "TEAMID", "team"
+        "PLAYER1_TEAM_ID", "team_id", "TEAM_ID", "teamId", "TEAMID", "team"
     ])
     
     # 2. Fallback to Raw Text
@@ -216,6 +217,7 @@ def normalize_pbp_row(row: Dict[str, Any]) -> Dict[str, Any]:
         "event_type": final_event_type,
         "raw_text": raw_text,
         "player1_id": player1_id,
+        "player1_name": player1_name,
         "player2_id": player2_id,
         "player3_id": player3_id,
         "team_id": team_id

@@ -65,10 +65,14 @@ def _is_home_from_matchup(matchup: str) -> int:
     return -1  # unknown
 
 
+COVID_SEASONS = {"2019-20", "2020-21"}  # bubble/truncated — no real HCA
+
+
 def load_games() -> pd.DataFrame:
     df = pd.read_parquet(GAME_LOGS_PATH)
     df = df.copy()
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+    df = df[~df["SEASON"].isin(COVID_SEASONS)].copy()
     df = df.sort_values(["TEAM_ID", "GAME_DATE"])
 
     # Days rest per team (NaN for first game → fill with 3, clip to [0, 7])

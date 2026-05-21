@@ -583,7 +583,9 @@ def main() -> None:
     )
     stats["player_id"] = _norm_player_id(stats["player_id"])
     stats["season"] = stats["season"].astype(str)
-    # For traded players (TEAM_COUNT > 1), keep only the TOT or highest-minute row
+    # Box stats have one row per player-season (max-minutes team, no TOT rows in source).
+    # For traded players, GP/MIN reflect the primary team only — full-season aggregation
+    # is unavailable without re-fetching. See GAP-011 in docs/stats-gap.md.
     stats["_tc"] = pd.to_numeric(stats.get("TEAM_COUNT"), errors="coerce").fillna(1)
     stats["minutes_box"] = pd.to_numeric(stats["minutes_box"], errors="coerce")
     stats = stats.sort_values("minutes_box", ascending=False).drop_duplicates(

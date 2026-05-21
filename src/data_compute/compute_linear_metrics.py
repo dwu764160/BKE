@@ -33,29 +33,42 @@ OUTPUT_FILE = os.path.join(DATA_DIR, "metrics_linear.parquet")
 
 def load_player_team_mapping():
     """
-    Extract player-team mapping from game logs.
+    Extract player-team mapping for all seasons.
+    Primary: final_player_game_logs (2022-25).
+    Fallback: complete_player_season_stats (all 8 seasons, TEAM_ABBREVIATION).
     Returns DataFrame with (player_id, season, team) columns.
     """
-    path = os.path.join(HISTORICAL_DIR, "final_player_game_logs.parquet")
-    if not os.path.exists(path):
-        print(f"WARNING: {path} not found, team adjustment will be limited")
+    frames = []
+
+    game_logs_path = os.path.join(HISTORICAL_DIR, "final_player_game_logs.parquet")
+    if os.path.exists(game_logs_path):
+        logs = pd.read_parquet(game_logs_path)
+        logs['team'] = logs['MATCHUP'].str[:3]
+        pt = logs.groupby(['Player_ID', 'SEASON'])['team'].agg(
+            lambda x: x.value_counts().index[0]
+        ).reset_index()
+        pt.columns = ['player_id', 'season', 'team']
+        pt['player_id'] = pt['player_id'].astype(str)
+        frames.append(pt)
+
+    stats_path = os.path.join(HISTORICAL_DIR, "complete_player_season_stats.parquet")
+    if os.path.exists(stats_path):
+        stats = pd.read_parquet(stats_path)
+        # TEAM_ABBREVIATION is max-minutes team — acceptable for BPM team context
+        pt2 = stats[['PLAYER_ID', 'SEASON', 'TEAM_ABBREVIATION']].copy()
+        pt2.columns = ['player_id', 'season', 'team']
+        pt2['player_id'] = pt2['player_id'].astype(str)
+        if frames:
+            covered_seasons = set(frames[0]['season'].unique())
+            pt2 = pt2[~pt2['season'].isin(covered_seasons)]
+        frames.append(pt2)
+
+    if not frames:
+        print("WARNING: no player-team mapping sources found, team adjustment will be limited")
         return None
-    
-    logs = pd.read_parquet(path)
-    
-    # Extract team from MATCHUP (format: "DEN vs. SAC" or "DEN @ UTA")
-    logs['team'] = logs['MATCHUP'].str[:3]
-    
-    # Get most common team for each player-season (handles mid-season trades)
-    player_teams = logs.groupby(['Player_ID', 'SEASON'])['team'].agg(
-        lambda x: x.value_counts().index[0]
-    ).reset_index()
-    player_teams.columns = ['player_id', 'season', 'team']
-    
-    # Ensure player_id is string to match player_profiles
-    player_teams['player_id'] = player_teams['player_id'].astype(str)
-    
-    return player_teams
+
+    result = pd.concat(frames, ignore_index=True).drop_duplicates(['player_id', 'season'])
+    return result
 
 
 def load_team_net_ratings():
@@ -87,11 +100,35 @@ def load_player_data():
         print(f"ERROR: {path} not found")
         return None
     df = pd.read_parquet(path)
-    
+
     # Drop ghost columns from previous runs
     cols_to_drop = ['L_PPP', 'L_PPG', 'Pts_Per_Win', 'PProd', 'TotPoss', 'Ind_Poss',
                     'OWS', 'DWS', 'WS', 'qAST', 'Marginal_Off', 'Marginal_Def']
     df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
+
+    # Pre-2022 PBP lacks assistPersonId so player2_id is None for all made shots,
+    # leaving AST=0 for every player. Fill from official box stats so BPM doesn't NaN.
+    # Scale AST by the PBP minute coverage ratio so AST/min rates stay consistent.
+    seasons_missing_ast = df.groupby('season')['AST'].sum()
+    missing_seasons = seasons_missing_ast[seasons_missing_ast == 0].index.tolist()
+    if missing_seasons:
+        stats_path = os.path.join(HISTORICAL_DIR, "complete_player_season_stats.parquet")
+        if os.path.exists(stats_path):
+            box = pd.read_parquet(stats_path)
+            box = box[box['SEASON'].isin(missing_seasons)][['PLAYER_ID', 'SEASON', 'AST', 'GP', 'MIN']].copy()
+            box.columns = ['player_id', 'season', 'ast_per_game', 'gp', 'min_per_game']
+            box['player_id'] = box['player_id'].astype(str)
+            # Season totals from box stats
+            box['ast_box_total'] = box['ast_per_game'] * box['gp']
+            box['min_box_total'] = box['min_per_game'] * box['gp']
+            box = box[['player_id', 'season', 'ast_box_total', 'min_box_total']]
+            df = df.merge(box, on=['player_id', 'season'], how='left')
+            mask = df['season'].isin(missing_seasons)
+            # Scale by coverage ratio so AST/min rates remain consistent with PBP minutes
+            coverage = (df.loc[mask, 'MIN'] / df.loc[mask, 'min_box_total'].replace(0, np.nan)).clip(0, 1)
+            df.loc[mask, 'AST'] = (df.loc[mask, 'ast_box_total'] * coverage).fillna(0).round().astype(int)
+            df = df.drop(columns=['ast_box_total', 'min_box_total'])
+            print(f"  Filled AST from box stats for {missing_seasons} (PBP missing assistPersonId)")
     return df
 
 
@@ -772,8 +809,7 @@ def compute_bpm_bref(df):
     ortg_premium = (df['ORTG'] - league_avg_ortg).clip(-15, 25)
     
     # Deduction uses ASA ratio instead of pts-based volume factor
-    # Scale 0.32 preserved from original calibration
-    INDIVIDUAL_DEDUCTION_SCALE = 0.28
+    INDIVIDUAL_DEDUCTION_SCALE = 0.32
     individual_deduction = ortg_premium * INDIVIDUAL_DEDUCTION_SCALE * asa_factor
     
     # TEAM CONTEXT: Small bonus/penalty from team ORTG
@@ -1054,8 +1090,8 @@ def compute_bpm_bref(df):
     #    - Low-min BIGS have much noisier stats because they play easy situations
     #    - Guards with low minutes (GP2) may be legitimate defensive specialists
     
-    MIN_REGRESSION_THRESHOLD = 1500  # Minutes at which regression stops (was 2000, reduced to avoid over-penalizing role players)
-    MIN_REGRESSION_STRENGTH = 0.8    # Maximum penalty at 0 minutes (was 1.0, reduced for cross-dataset balance)
+    MIN_REGRESSION_THRESHOLD = 2000  # Minutes at which regression stops (B-REF formula value)
+    MIN_REGRESSION_STRENGTH = 1.0    # Maximum penalty at 0 minutes (B-REF formula value)
     
     # Calculate penalty factor: 0 at threshold, 1 at 0 minutes
     penalty_factor = np.clip(1.0 - (df['MIN'] / MIN_REGRESSION_THRESHOLD), 0, 1)
@@ -1075,7 +1111,7 @@ def compute_bpm_bref(df):
     # Penalty: scales from 0 at 500 min to 3.0 at 0 min, for positions > 3.5
     # Increased from 2.0 to 3.0 to counteract team adjustment boost for garbage time
     VERY_LOW_MIN_THRESHOLD = 400
-    VERY_LOW_MIN_PENALTY = 1.0  # Additional BPM penalty at 0 minutes (was 3.0, reduced to 1.0 for cross-dataset balance)
+    VERY_LOW_MIN_PENALTY = 3.0  # Additional BPM penalty at 0 minutes for low-minute bigs (B-REF formula value)
     BIG_POSITION_THRESHOLD = 3.5  # Only apply to bigs
     
     very_low_min_factor = np.clip(1.0 - (df['MIN'] / VERY_LOW_MIN_THRESHOLD), 0, 1)
@@ -1090,92 +1126,6 @@ def compute_bpm_bref(df):
     
     df['BPM'] = df['BPM'] - very_low_min_penalty
     df['OBPM'] = df['OBPM'] - very_low_min_penalty
-    
-    # =========================================================================
-    # STEP 7c: Efficiency-Based Adjustments (January 2026)
-    # =========================================================================
-    # Two targeted fixes based on validation analysis:
-    #
-    # 1. LOW EFFICIENCY VOLUME PENALTY
-    #    Players with below-average TS% AND high scoring volume are overrated
-    #    by box-score metrics. They get credit for points but no penalty for
-    #    inefficiency. Example: Jaden Ivey (TS% 53%, overrated by +1.6 BPM)
-    #
-    # 2. HIGH EFFICIENCY BONUS (Efficient Dunker Bonus)
-    #    Elite-efficiency players (TS% > 62%) are underrated because their
-    #    efficiency isn't fully captured. Example: Jarrett Allen (TS% 72%,
-    #    underrated by -2.1 BPM)
-    
-    # Get TS% and scoring volume
-    ts_pct = df['TS_PCT'].fillna(0.55)
-    scoring_volume = per100_pts  # Already calculated per-100 possessions
-    
-    # --- FIX 1: Low Efficiency Volume Penalty ---
-    # For players with TS% < 54% (league average):
-    # Penalty = (54% - TS%) * scoring_volume * scale
-    # This penalizes high-volume inefficient scorers
-    #
-    # Calibration (Jan 2026):
-    #   Ivey 2022-23: ts_below=1.18%, pts/100=52.3, need penalty ~1.6 → scale ~2.6
-    #   Clarkson 2023-24: ts_below=1.9%, needs penalty ~1.9
-    #   Key insight: NET_RTG doesn't feed into BPM, so don't filter by it.
-    #   Scale: 2.0 (conservative to avoid overcorrection)
-    
-    LOW_EFF_THRESHOLD = 0.54   # League average TS%
-    LOW_EFF_PENALTY_SCALE = 0.6  # Penalty multiplier (calibrated for Ivey/Clarkson)
-    LOW_EFF_MIN_MINUTES = 1000   # Only apply to players with substantial minutes
-    
-    ts_below_avg = np.clip(LOW_EFF_THRESHOLD - ts_pct, 0, 0.10)  # Cap at 10% below
-    low_eff_penalty = ts_below_avg * scoring_volume * LOW_EFF_PENALTY_SCALE
-    
-    # Only apply to players with substantial minutes (1000+)
-    # This ensures we're penalizing genuine high-volume inefficient scorers
-    low_eff_penalty = np.where(
-        df['MIN'] > LOW_EFF_MIN_MINUTES,
-        low_eff_penalty,
-        0.0
-    )
-    
-    df['BPM'] = df['BPM'] - low_eff_penalty
-    
-    # --- FIX 2: High Efficiency Bonus (Efficient Dunker) ---
-    # For BIGS (Position > 3.5) with TS% > 64% (elite efficiency):
-    # Bonus = (TS% - 60%) * scale
-    # This rewards elite-efficiency rim runners and centers
-    #
-    # Key insight: Only apply to HIGH-MINUTE BIGS (1500+ min), not rotation players.
-    # Low-minute players with high efficiency can be overrated due to small sample.
-    #
-    # Calibration (Jan 2026):
-    #   Allen 2024-25: Position~4.8, ts_above=12.39%, MIN=2296 → needs bonus
-    #   Allen 2023-24: Position~5.0, ts_above=6.4%, MIN=2445 → needs bonus
-    #   NOT: Williams 2022-23 (826 min, already overrated)
-    
-    HIGH_EFF_THRESHOLD = 0.64  # Elite efficiency threshold for bigs
-    HIGH_EFF_BONUS_SCALE = 6  # Bonus multiplier
-    HIGH_EFF_CAP = 1.5          # Maximum bonus
-    POSITION_THRESHOLD = 3.5    # Only apply to bigs (centers/PFs)
-    HIGH_EFF_MIN_MINUTES = 800 # Only apply to starters (high-minute players)
-    
-    ts_above_elite = np.clip(ts_pct - 0.60, 0, 0.15)  # Only bonus above 60%
-    high_eff_bonus = ts_above_elite * HIGH_EFF_BONUS_SCALE
-    high_eff_bonus = np.clip(high_eff_bonus, 0, HIGH_EFF_CAP)
-    
-    # Only apply to BIGS with TS% > threshold, high minutes, and big position
-    high_eff_bonus = np.where(
-        (ts_pct > HIGH_EFF_THRESHOLD) & (df['MIN'] > HIGH_EFF_MIN_MINUTES) & (df['Position'] > POSITION_THRESHOLD),
-        high_eff_bonus,
-        0.0
-    )
-    
-    df['BPM'] = df['BPM'] + high_eff_bonus
-    
-    # Apply efficiency adjustments to OBPM as well
-    # Low efficiency penalty is primarily an OFFENSIVE issue (scoring inefficiently)
-    df['OBPM'] = df['OBPM'] - low_eff_penalty
-    
-    # High efficiency bonus is also primarily OFFENSIVE (efficient scoring)
-    df['OBPM'] = df['OBPM'] + high_eff_bonus
     
     # =========================================================================
     # DBPM CALCULATION (Defensive Box Plus/Minus)

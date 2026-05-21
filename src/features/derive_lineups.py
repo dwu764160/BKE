@@ -82,31 +82,29 @@ def build_player_team_map(game_df):
 
     return pt_map
 
-def get_initial_lineup(period_events, team_id, pt_map):
+def get_initial_lineup(period_events, team_id, pt_map, name_to_id=None):
     if not team_id:
         return []
 
     starters = set()
     subs_in = set()
-    
+
     for _, row in period_events.iterrows():
         candidates = []
         if row.get('player1_id'): candidates.append(row['player1_id'])
         if row.get('player2_id'): candidates.append(row['player2_id'])
         if row.get('player3_id'): candidates.append(row['player3_id'])
-        
+
         team_candidates = [p for p in candidates if pt_map.get(p) == team_id and p != '0']
-        
+
         etype = row.get('event_type')
         desc = str(row.get('event_text', '')).upper()
         p1 = row.get('player1_id')
-        
-        # --- FIX: Ignore Bench/Team Events ---
+
         if 'TECHNICAL' in desc or 'EJECTION' in desc or 'VIOLATION' in desc:
             continue
         if 'DEFENSIVE 3 SECONDS' in desc:
             continue
-        # -------------------------------
 
         if etype == 'SUBSTITUTION':
             if p1 in team_candidates:
@@ -115,11 +113,21 @@ def get_initial_lineup(period_events, team_id, pt_map):
                 elif 'SUB OUT' in desc:
                     if p1 not in subs_in:
                         starters.add(p1)
+                elif ' FOR ' in desc:
+                    # Legacy: "SUB: X FOR Y" — p1 is Y (going OUT), X comes in
+                    if p1 not in subs_in:
+                        starters.add(p1)
+                    # Mark incoming player as non-starter so they're excluded from starters set
+                    if name_to_id is not None and 'SUB:' in desc:
+                        incoming_name = desc.split('SUB:')[1].split(' FOR ')[0].strip().split()[-1]
+                        incoming_id = name_to_id.get(incoming_name)
+                        if incoming_id:
+                            subs_in.add(incoming_id)
         else:
             for p in team_candidates:
                 if p not in subs_in:
                     starters.add(p)
-                    
+
     return list(starters)
 
 def process_game_period(df_gp, pt_map):
@@ -130,31 +138,62 @@ def process_game_period(df_gp, pt_map):
         return df_gp
 
     team_a, team_b = teams[0], teams[1]
-    
-    starters_a = get_initial_lineup(df_gp, team_a, pt_map)
-    starters_b = get_initial_lineup(df_gp, team_b, pt_map)
-    
+
+    # Build name→id map before starters detection so it can be used in get_initial_lineup
+    name_to_id = {}
+    for _, row in df_gp.iterrows():
+        p1 = row.get('player1_id')
+        p1_name = row.get('player1_name')
+        if p1 and p1 != '0' and p1_name:
+            last = str(p1_name).split()[-1].upper()
+            name_to_id[last] = p1
+
+    starters_a = get_initial_lineup(df_gp, team_a, pt_map, name_to_id)
+    starters_b = get_initial_lineup(df_gp, team_b, pt_map, name_to_id)
+
     current_a = set(starters_a)
     current_b = set(starters_b)
-    
+
     lineups_a = []
     lineups_b = []
-    
+
     for _, row in df_gp.iterrows():
         row_team = row.get('team_id')
         p1 = row.get('player1_id')
         etype = row.get('event_type')
         desc = str(row.get('event_text', '')).upper()
-        
+
         if etype == 'SUBSTITUTION':
             if p1 and p1 != '0':
                 if row_team == team_a:
-                    if 'SUB IN' in desc: current_a.add(p1)
-                    if 'SUB OUT' in desc and p1 in current_a: current_a.remove(p1)
+                    if 'SUB IN' in desc:
+                        current_a.add(p1)
+                    elif 'SUB OUT' in desc and p1 in current_a:
+                        current_a.remove(p1)
+                    elif ' FOR ' in desc:
+                        # Legacy: "SUB: Thompson FOR Love" — p1=Love(out), Thompson(in)
+                        if p1 in current_a:
+                            current_a.remove(p1)
+                        incoming_name = desc.split('SUB:')[1].split(' FOR ')[0].strip().split()[-1] if 'SUB:' in desc else None
+                        if incoming_name:
+                            incoming_id = name_to_id.get(incoming_name)
+                            if incoming_id:
+                                current_a.add(incoming_id)
                 elif row_team == team_b:
-                    if 'SUB IN' in desc: current_b.add(p1)
-                    if 'SUB OUT' in desc and p1 in current_b: current_b.remove(p1)
-        
+                    if 'SUB IN' in desc:
+                        current_b.add(p1)
+                    elif 'SUB OUT' in desc and p1 in current_b:
+                        current_b.remove(p1)
+                    elif ' FOR ' in desc:
+                        # Legacy: "SUB: Thompson FOR Love" — p1=Love(out), Thompson(in)
+                        if p1 in current_b:
+                            current_b.remove(p1)
+                        incoming_name = desc.split('SUB:')[1].split(' FOR ')[0].strip().split()[-1] if 'SUB:' in desc else None
+                        if incoming_name:
+                            incoming_id = name_to_id.get(incoming_name)
+                            if incoming_id:
+                                current_b.add(incoming_id)
+
         lineups_a.append(sorted(list(current_a)))
         lineups_b.append(sorted(list(current_b)))
 
