@@ -1,26 +1,63 @@
-TASK: Phase 2 Minute Model Rebuild
-SESSION: 2026-05-22 (Haiku 4.5)
-STATUS: Complete
+TASK: Phase 3B — BKE v3.2 PTS Architecture Optimization
+SESSION: 2026-05-22
+STATUS: Plan complete — ready for Opus execution
 
 OBJECTIVE:
-Refactor the minute model to use a temporal split, replace GBR with Ridge, and integrate
-into project_next_season.py to replace manual adjustments.
+Optimize the Portable Talent Score (PTS) as a standalone metric for:
+  1. Game outcome prediction (Brier, measured by validate_forecast.py)
+  2. Lineup-level plus-minus alignment (measured by new validate_lineup_pts.py)
 
-COMPLETED:
-✓ Created `build_temporal_training_set` in `train_minute_model.py`.
-✓ Migrated model from GBR to cross-validated Ridge pipeline with StandardScaler.
-✓ Implemented Rookie lookup table based on draft round and pick.
-✓ Stripped `project_minutes` in `project_next_season.py` of manual modifiers (age, impact, salary).
-✓ Validated performance: Integrated model achieves 0.80 correlation and 4.68 MAE on the holdout.
-✓ Generated detailed report in `reports/minute_model_rebuild_report_2026-05-22.md`.
+v3.2 Philosophy:
+  - PTS   → game model pipeline input + player ranking
+  - RDIS  → contextual production metric (not in pipeline; cosmetic/analytical only)
+  - BKE   → cosmetic display score only (no pipeline input)
 
-PENDING:
-- Phase 3B: Magnitude calibration (needs 5+ clean seasons)
+EXPERIMENT RESULTS (scripts/experiment_pts_rdis_blend.py — DONE):
+  Baseline (current BKE blend): Brier = 0.2400
+  Pure PTS (α=1.00):            Brier = 0.2248  (best; −0.0152)
+  Pure RDIS (α=0.00):           Brier = 0.2303
+  Continuity discount (B):      Worse than fixed split at same α
+  → Decision: use PTS only (α=1.00) for game model. RDIS does not improve Brier.
+  → Note: experiment PTS still has RAPM contamination. Clean PTS should do better.
 
-CHANGES MADE:
-- src/simulation/train_minute_model.py: Complete rewrite for temporal Ridge model.
-- src/player_eval/project_next_season.py: Replaced manual logic with integration of model predictions.
-- reports/minute_model_rebuild_report_2026-05-22.md: Added final report.
+PRIORITY ARCHITECTURE FIXES (must do before tuning):
+  Fix 1: Remove Layer 1A RAPM from PTS (src/modeling/layer1_portable_talent.py)
+  Fix 2: Replace Dim 6 DRAPM with matchup-level opponent eFG% (tracking/matchup data)
+  Fix 3: Prune Dim 5 to ball-pressure only (remove BLK%, loose balls)
+  Fix 4: Move Layer 1B (playtype efficiency) from PTS to RDIS
 
-NEXT:
-Begin Phase 3B: Magnitude calibration.
+KEY FILES TO MODIFY:
+  src/modeling/layer1_portable_talent.py    — Fixes 1, 2, 3
+  src/modeling/model_config.py              — Weight updates for all tuning candidates
+  src/profile_aggregate/team_feature_aggregation.py — Wire PTS into talent bases
+  scripts/validate_lineup_pts.py            — NEW: lineup-level validation script
+
+PLAN DOC: docs/plans/phase_3b_pts_rdis_split.md
+  - Section 5: Wide tuning candidate table (5A–5H) covering all adjustable parameters
+  - Method 2: Lineup-level script spec (pbp_with_lineups_{season}.parquet source)
+  - Optimization mandate: what Opus can/cannot change
+
+PENDING SUB-TASKS (in order):
+  3B.0 Write validate_lineup_pts.py (pbp_with_lineups source)
+  3B.1 Establish pre-fix baselines on both metrics
+  3B.2 Fix 1: Remove RAPM from Layer 1A; measure both metrics
+  3B.3 Fix 4: Move playtype efficiency to RDIS; measure both metrics
+  3B.4 Fix 2: Replace Dim 6 DRAPM (parallel with 3B.5)
+  3B.5 Fix 3: Prune Dim 5 (parallel with 3B.4)
+  3B.6 Dimension weight calibration via ridge regression
+  3B.7 Sweep Section 5 tuning candidates
+  3B.8 Adopt best config; update model_config.py
+  3B.9 Wire PTS into team_feature_aggregation.py
+  3B.10 Final validation; write report
+
+VALIDATION TARGETS:
+  Season-level Brier: < 0.220 (from 0.2248 PTS-only baseline)
+  Lineup Pearson r:   ≥ 0.25 (estimated current: ~0.10–0.15)
+  Braun percentile:   50th–70th within archetype (not 90th+)
+  Stars top-15:       Curry, Luka, KD in peak seasons without weighting hacks
+
+PREVIOUS COMPLETIONS:
+  Phase 2 (minute model): MAE=4.06, r²=0.671 — DONE
+  Phase 4 (archetypes): validated, INTERACTION_MATRIX eliminated — DONE
+  Phase 3A: HCA/B2B fitted empirically — DONE
+  Blend experiment: α grid + continuity sweep — DONE
