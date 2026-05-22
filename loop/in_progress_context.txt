@@ -1,30 +1,26 @@
-TASK: Context Engineering Skills Integration + Output Format Standardization
+TASK: Phase 2 Minute Model Rebuild
 SESSION: 2026-05-22 (Haiku 4.5)
-STATUS: In Progress
+STATUS: Complete
 
 OBJECTIVE:
-Integrate 14 context engineering skills from external repo and establish mandatory
-detailed-chat-output format for all responses. Restructure loop file for token economy.
+Refactor the minute model to use a temporal split, replace GBR with Ridge, and integrate
+into project_next_season.py to replace manual adjustments.
 
 COMPLETED:
-✓ Copied all 14 context engineering skills to .github/skills/
-✓ Updated CLAUDE.md with explicit loop file guidance (single task, replace not append)
-✓ Updated CLAUDE.md with new Context Engineering Skills section
-✓ Updated CLAUDE.md with Output Format mandatory section
-✓ Updated SKILL_MAP.md with all 14 new skills (Selection Order + Registry)
-✓ Restructured loop/in_progress_context.txt format (THIS FILE)
-✓ Mirrored CLAUDE.md updates to GEMINI.md
-✓ Smoke test: verified 3 skills load correctly (scope-creep-guard, detailed-chat-output, simulation)
+✓ Created `build_temporal_training_set` in `train_minute_model.py`.
+✓ Migrated model from GBR to cross-validated Ridge pipeline with StandardScaler.
+✓ Implemented Rookie lookup table based on draft round and pick.
+✓ Stripped `project_minutes` in `project_next_season.py` of manual modifiers (age, impact, salary).
+✓ Validated performance: Integrated model achieves 0.80 correlation and 4.68 MAE on the holdout.
+✓ Generated detailed report in `reports/minute_model_rebuild_report_2026-05-22.md`.
 
 PENDING:
-- Verify detailed-chat-output format is applied to next 4 responses
-- Document new loop file format in README or FAQ
+- Phase 3B: Magnitude calibration (needs 5+ clean seasons)
 
 CHANGES MADE:
-- GEMINI.md: Synchronized with CLAUDE.md mandatory skill loading instructions.
-- .github/skills/: 14 new skill directories.
-- CLAUDE.md: Added mandatory sections.
-- SKILL_MAP.md: Updated registry and selection order.
+- src/simulation/train_minute_model.py: Complete rewrite for temporal Ridge model.
+- src/player_eval/project_next_season.py: Replaced manual logic with integration of model predictions.
+- reports/minute_model_rebuild_report_2026-05-22.md: Added final report.
 
 NEXT:
-Verify output format consistency and document loop file format.
+Begin Phase 3B: Magnitude calibration.

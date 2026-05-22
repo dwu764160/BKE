@@ -1,7 +1,6 @@
 ---
 name: scope-creep-guard
 description: "Mandatory boundary guard for every task. Use to lock phase scope, constrain file touch surfaces, and prevent out-of-scope edits before completion."
-user-invocable: false
 ---
 
 # Scope Creep Guard

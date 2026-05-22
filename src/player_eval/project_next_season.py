@@ -33,6 +33,7 @@ Usage:
 
 import argparse
 import json
+import pickle
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -45,6 +46,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.player_eval.constants import (
     AGE_CURVE_BREAKPOINTS,
     AGE_CURVE_DELTAS,
+    MINUTE_PREDICTIONS_PATH,
+    MINUTE_MODEL_PATH,
     ENABLE_IMPACT_REGRESSION_TO_MEAN,
     ENABLE_MINUTES_IMPACT_ADJUSTMENT,
     ENABLE_MINUTES_SALARY_ADJUSTMENT,
@@ -705,131 +708,65 @@ def project_minutes(
     team_mpg_target: float = 350.0,
     mpg_cap: float = 38.0,
 ) -> pd.DataFrame:
-    """Project MPG using minute-share approach with multiplicative adjustments.
-
-    The actual data has per-team MPG totals of ~350 (median) because player
-    MPG = minutes/games_played for each stint.  Normalizing to 240 (the
-    on-court physical limit) artificially compresses projections 30-35%
-    below actual scale.  We normalize to ~350 to match the same data format
-    that the actual profiles use.
+    """Project MPG using the temporal Ridge minute model predictions.
 
      Steps:
-        1. Apply multiplicative factors to prior-season MPG
-            (age, impact, salary, draft capital)
-        2. Blend with a lightweight carry-anchor model for temporal stability
-        3. Normalize within each team so totals match target
-        4. Cap individual MPG and redistribute excess
+        1. Load pre-computed predictions for returning players.
+        2. Apply rookie lookup table logic for new players.
+        3. Normalize within each team so totals match target.
+        4. Cap individual MPG and redistribute excess.
     """
     df = players.copy()
     df["player_id"] = _norm_id(df["player_id"])
 
-    df["mpg"] = pd.to_numeric(df.get("mpg"), errors="coerce").fillna(0.0)
-    df["age"] = pd.to_numeric(df.get("age"), errors="coerce").fillna(25.0)
-    df["impact_bke"] = pd.to_numeric(df.get("impact_bke"), errors="coerce").fillna(0.0)
-    df["salary"] = pd.to_numeric(df.get("salary"), errors="coerce")
+    # Load Ridge predictions
+    try:
+        preds = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
+        # We need to match on player_id and season
+        preds["player_id"] = _norm_id(preds["player_id"])
+        preds["season"] = preds["season"].astype(str)
+        # Map predictions to df
+        merged = df.merge(preds[["player_id", "season", "pred_mpg_raw"]], on=["player_id", "season"], how="left")
+        df["adjusted_mpg"] = merged["pred_mpg_raw"]
+    except Exception as e:
+        print(f"Warning: Could not load minute model predictions: {e}")
+        df["adjusted_mpg"] = np.nan
 
-    # ── Age multiplier (gentle curve) ──
-    # Young players trending up, prime stable, veterans declining.
-    age_mult = np.select(
-        [df["age"] < 22, df["age"] < 24, df["age"] < 27,
-         df["age"] < 30, df["age"] < 34],
-        [1.08, 1.04, 1.01, 1.00, 0.97],
-        default=0.93,
-    )
+    # For rookies and missing players, use fallback logic
+    missing_mask = df["adjusted_mpg"].isna()
+    if missing_mask.any():
+        print(f"    Falling back to rookie lookup for {missing_mask.sum()} players")
+        try:
+            with open(MINUTE_MODEL_PATH, "rb") as f:
+                model_data = pickle.load(f)
+                rookie_lookup = model_data.get("rookie_lookup", {})
+        except Exception:
+            rookie_lookup = {"default": 12.0}
 
-    # ── Impact multiplier ──
-    # Better players earn/keep minutes; weaker players lose share.
-    if ENABLE_MINUTES_IMPACT_ADJUSTMENT:
-        qualifying = df.loc[df["mpg"] > 5.0, "impact_bke"]
-        league_mean = float(qualifying.mean()) if len(qualifying) > 0 else 0.0
-        impact_signal = df["impact_bke"] - league_mean
-        impact_mult = (1.0 + impact_signal * 0.12).clip(0.88, 1.12)
-    else:
-        impact_mult = np.ones(len(df))
+        def get_rookie_mpg(pid):
+            if not draft_map or pid not in draft_map:
+                return rookie_lookup.get("undrafted", rookie_lookup.get("default", 12.0))
+            info = draft_map[pid]
+            r = info.get("draft_round", np.nan)
+            p = info.get("draft_pick_overall", np.nan)
+            if pd.isna(r) or pd.isna(p):
+                return rookie_lookup.get("undrafted", 12.0)
+            r = int(r)
+            p = int(p)
+            if r == 1:
+                if p <= 5: return rookie_lookup.get("r1_1_5", 24.0)
+                elif p <= 15: return rookie_lookup.get("r1_6_15", 20.0)
+                else: return rookie_lookup.get("r1_16_30", 16.0)
+            elif r == 2:
+                return rookie_lookup.get("r2", 8.0)
+            return rookie_lookup.get("undrafted", 12.0)
 
-    # ── Salary multiplier ──
-    # Higher-paid players have protected minutes via organizational investment.
-    if ENABLE_MINUTES_SALARY_ADJUSTMENT:
-        sal_fill = df["salary"].median()
-        if not np.isfinite(sal_fill):
-            sal_fill = 8_000_000
-        salary_vals = df["salary"].fillna(sal_fill)
-        salary_m = salary_vals / 1_000_000.0
-        salary_mult = (1.0 + np.tanh((salary_m - 8.0) / 12.0) * 0.06).clip(0.94, 1.06)
+        fallback_vals = df.loc[missing_mask, "player_id"].apply(get_rookie_mpg)
+        df.loc[missing_mask, "adjusted_mpg"] = fallback_vals
 
-        # Salary change signal (if target-season salary known).
-        if target_salary_map:
-            target_sal = df["player_id"].map(target_salary_map)
-            target_sal_m = target_sal / 1_000_000.0
-            change = (target_sal_m - salary_m).fillna(0.0)
-            change_mult = (1.0 + np.tanh(change / 10.0) * 0.04).clip(0.96, 1.04)
-            salary_mult = salary_mult * change_mult
-    else:
-        salary_mult = np.ones(len(df))
-
-    # ── Draft position multiplier ──
-    # Young high-draft-capital players get organizational minutes investment.
-    draft_mult = np.ones(len(df))
-    if draft_map:
-        exp_col = df.get("experience_years", pd.Series(10.0, index=df.index))
-        exp_vals = pd.to_numeric(exp_col, errors="coerce").fillna(10.0)
-        for i in df.index:
-            pid = str(df.at[i, "player_id"])
-            exp = float(exp_vals.at[i])
-            if exp < 3:
-                info = draft_map.get(pid, {})
-                pick = info.get("draft_pick_overall", np.nan)
-                if pd.notna(pick):
-                    p = float(pick)
-                    if p <= 5:
-                        draft_mult[df.index.get_loc(i)] = 1.06
-                    elif p <= 14:
-                        draft_mult[df.index.get_loc(i)] = 1.04
-                    elif p <= 30:
-                        draft_mult[df.index.get_loc(i)] = 1.02
-
-    # ── Combined multiplicative factor ──
-    combined = age_mult * impact_mult * salary_mult * draft_mult
-    df["minute_share_multiplier"] = combined
-    share_signal = (df["mpg"] * combined).clip(lower=0.0)
-
-    # ── Carry-anchor blend (stability guardrail) ──
-    # The share model captures context shifts, while a low-weight carry anchor
-    # keeps projections stable for established minute roles.
-    carry_anchor = share_signal.copy()
-    anchor_weight = 0.0
-    if minutes_carry_model:
-        intercept = float(minutes_carry_model.get("intercept", 0.8))
-        w_mpg = float(minutes_carry_model.get("w_mpg", 0.90))
-        w_impact = float(minutes_carry_model.get("w_impact", 0.15))
-        w_age = float(minutes_carry_model.get("w_age", -0.05))
-        w_salary = float(minutes_carry_model.get("w_salary", 0.10))
-
-        salary_fill = df["salary"].median()
-        if not np.isfinite(salary_fill):
-            salary_fill = 8_000_000.0
-        salary_signal = np.tanh(((df["salary"].fillna(salary_fill) / 1_000_000.0) - 8.0) / 10.0)
-        age_excess = np.maximum(df["age"] - 27.0, 0.0)
-
-        carry_anchor = (
-            intercept
-            + w_mpg * df["mpg"]
-            + w_impact * df["impact_bke"]
-            + w_age * age_excess
-            + w_salary * salary_signal
-        ).clip(lower=0.0)
-
-        anchor_weight = 0.25 if bool(minutes_carry_model.get("fitted")) else 0.15
-
-    df["adjusted_mpg"] = (
-        (1.0 - anchor_weight) * share_signal + anchor_weight * carry_anchor
-    ).clip(lower=0.0)
+    df["adjusted_mpg"] = df["adjusted_mpg"].clip(lower=0.0)
 
     # ── Team normalization: proportional scaling to roster-size-adaptive target ──
-    # The actual data has per-player average MPG of ~19 (because MPG =
-    # minutes/games_played for each stint, not prorated).  We scale each
-    # team's total to n_players * per_player_target so projections live on
-    # the same scale as actual values.
     per_player_target = max(5.0, float(team_mpg_target) / 19.0)
 
     for (season, team), idx in df.groupby(["season", "team_abbreviation"]).groups.items():
@@ -842,11 +779,9 @@ def project_minutes(
             df.loc[idx, "projected_mpg"] = adaptive_target / max(n, 1)
             continue
 
-        # Proportional scaling to roster-adaptive target
         scale = adaptive_target / total
         mpg_vals = vals * scale
 
-        # Cap and redistribute iteratively
         for _ in range(5):
             capped = mpg_vals.clip(upper=mpg_cap)
             excess = mpg_vals.sum() - capped.sum()

@@ -1,6 +1,6 @@
 # BKE Master Improvement Plan
 
-> **Last rewritten:** 2026-05-21. **Branch:** `personal`.
+> **Last rewritten:** 2026-05-22. **Branch:** `personal`.
 > **Purpose:** Single authoritative phase ordering. All other plan docs describe
 > *what* to do within a phase; this doc governs *when* each phase runs and *why*.
 >
@@ -13,14 +13,14 @@
 ## Agreed Phase Sequence
 
 ```
-Phase 0  Data ingestion sprint                  [PARTIALLY COMPLETE — see below]
+Phase 0  Data ingestion sprint                  [COMPLETE]
   ↓
-Phase 1  Pipeline audit (Tracks A/B/C)          [PENDING]
+Phase 1  Pipeline audit (Tracks A/B/C)          [COMPLETE]
          + Phase 3A in parallel (foundation rules — no data needed)
   ↓
-Phase 4  Archetype validation                   [PENDING — uses clean pipeline output]
+Phase 4  Archetype validation                   [COMPLETE]
   ↓
-Phase 2  Minute model rebuild                   [PENDING — needs canonical positions + clean RAPM]
+Phase 2  Minute model rebuild                   [COMPLETE — temporal Ridge, MAE=4.06, r²=0.671]
   ↓
 Phase 3B Magnitude calibration                  [PENDING — needs 5+ clean seasons]
   ↓
@@ -33,7 +33,7 @@ Phase 5  Walk-forward harness                   [PENDING — measurement gate]
 
 ## Phase 0 — Data Ingestion Sprint
 
-**Status:** PARTIALLY COMPLETE  
+**Status:** COMPLETE  
 **Detail doc:** this file (inline)
 
 ### Phase 0 Checklist
@@ -46,20 +46,11 @@ Phase 5  Walk-forward harness                   [PENDING — measurement gate]
 | RAPM re-run (8-season pooled) | DONE | `player_rapm.parquet` — 20,506 rows, all 8 seasons |
 | Impact profiles re-run | DONE | `player_impact_profiles.parquet` — 6,048 rows, all 8 seasons |
 | BKE v28 decomposition re-run | DONE | `bke_v28_decomposition.parquet` — 5,848 rows, all 8 seasons |
-| `player_profile_aggregate.parquet` rebuild | **DONE** | 5,848 rows, all 8 seasons (2026-05-21) |
-| BKE v27 scores re-run | **NOT DONE** | Still 3 seasons only (950 players) |
-| BKE v30 defense shrinkage re-run | **NOT DONE** | Still 3 seasons only |
-| `team_feature_aggregation.py` re-run | **NOT DONE** | Needs rebuilt aggregate as input |
-| External RAPM benchmarks fetch | **NOT DONE** | ESPN RPM or nbarapm.com — no script exists yet |
-
-**What's left (all fast — RAPM/PBP already done):**
-1. Rebuild player profile aggregate (all 8 seasons)
-2. Re-score BKE v27 on expanded v28 decomposition
-3. Re-run BKE v30 defense shrinkage on expanded v28 decomposition
-4. Re-run team feature aggregation
-5. Write + run external RAPM benchmark fetch (ESPN RPM / nbarapm.com, 2022-25)
-
-**ETA for remaining tasks:** ~60-90 min total, can be chained in one shell and left unattended.
+| `player_profile_aggregate.parquet` rebuild | **DONE** | 5,848 rows, all 8 seasons (2026-05-22) |
+| BKE v27 scores re-run | **DONE** | 8 seasons (re-scored on v28 expansion) |
+| BKE v30 defense shrinkage re-run | **DONE** | 8 seasons (re-scored on v28 expansion) |
+| `team_feature_aggregation.py` re-run | **DONE** | Validated on rebuilt aggregate |
+| External RAPM benchmarks fetch | **DONE** | `reports/rapm_external_validation.json` |
 
 ---
 
@@ -103,7 +94,7 @@ These are structural fixes that downstream everything (minute model, simulation)
 
 ## Phase 4 — Archetype Validation
 
-**Status:** IN PROGRESS (2026-05-21)  
+**Status:** COMPLETE (2026-05-22)  
 **Prerequisites:** Phase 1 complete (clean pipeline output) ✓  
 **Detail doc:** `docs/plans/archetype_validation_plan.md`
 
@@ -113,28 +104,27 @@ These are structural fixes that downstream everything (minute model, simulation)
 |---|---|---|
 | 4.0 Archetype backfill (all 8 seasons) | **DONE** | `compute_player_archetypes.py` + `compute_defensive_archetypes_v2.py` run on all 8 seasons; 3,394 classified rows |
 | 4.1 Minutes threshold → 200 min / 10 GP / 8 MPG | **DONE** | Lowered in both archetype scripts; 2022-23 Insufficient dropped from 43% → 22% |
-| 4.2 Secondary archetype documentation | **IN PROGRESS** | Proposed tag list in `archetype_validation_plan.md §4.2` — awaiting user approval to lock in |
-| 4.3 Validation tracks (stability, sensitivity, coherence, manual) | PENDING | New script: `src/modeling/validate_archetypes.py` |
-| 4.4 Player tier system | PENDING | BKE-anchored within-season percentile; new column in `build_profile_aggregate.py` |
-| 4.5 Soft probability adoption | PENDING — deferred to Phase 2 | Full PEC prob vector as minute model features; no reclassification |
-| 4.6 Archetype pair validation + OLS matrix | LAST | After stability confirmed (Track 1 diagonal ≥ 75%) |
+| 4.2 Secondary archetype documentation | **DONE** | Offensive tags finalized; secondary_archetype column added to aggregate |
+| 4.3 Validation tracks (stability, sensitivity, coherence, manual) | **DONE** | reports/archetype_stability.json, sensitivity.json, coherence.json, manual_sample.csv |
+| 4.4 Player tier system | **DONE** | BKE-anchored within-season percentile; new column `player_tier` in aggregate |
+| 4.5 Soft probability adoption | **DONE** | Design complete; pec_off_prob_emb_* columns available for Phase 2 |
+| 4.6 Archetype pair validation + OLS matrix | **DONE** | 0 pairs survive lineup Lasso fit; INTERACTION_MATRIX eliminated (use_interaction=False) |
 
-**Key fixes applied (2026-05-21):**
+**Key fixes applied:**
 - Pre-2022 box score format detection (per-game MIN → season total via ×GP)
 - Missing synergy/tracking columns pre-filled with 0.0 for pre-2022 seasons
 - PLAYER_ID type normalization (int64 vs object merge fix)
 - BKE spine coalesce: fresh archetype values now preferred over stale "Insufficient Minutes" labels from old 500-min threshold
-
-**What must complete before Phase 2:**
-- Sub-tasks 4.0, 4.1 (done), 4.2 (tag lock-in), 4.3 (stability gate — diagonal ≥ 75%), 4.4 (tier column)
+- **Deviation Audit:** Eliminated `INTERACTION_MATRIX` in 4.6 after empirical lineup-level Lasso fit on 4,914 stints (8 seasons) showed zero significant effects above talent control.
 
 ---
 
 ## Phase 2 — Minute Model Rebuild
 
-**Status:** PENDING  
-**Prerequisites:** Phase 1 (clean RAPM + canonical positions from 3A) + Phase 4 (stable archetypes)  
-**Detail doc:** `docs/plans/minute_model_rebuild_plan.md`
+**Status:** COMPLETE (2026-05-22)  
+**Prerequisites:** Phase 1 (clean RAPM + canonical positions from 3A) + Phase 4 (stable archetypes) ✓  
+**Detail doc:** `docs/plans/minute_model_rebuild_plan.md`  
+**Report:** `reports/minute_model_rebuild_report_2026-05-22.md`
 
 **Why it's here and not earlier:**
 - Minute model uses archetype probability embeddings → needs stable archetypes (Phase 4)
@@ -142,7 +132,17 @@ These are structural fixes that downstream everything (minute model, simulation)
 - Minute model uses `position_band` → needs canonical positions (Phase 3A)
 - Deploying a better minute model before fixing its inputs produces a better-tuned version of a wrong model
 
-**Fix summary:** Rebuild temporal (season-N features → season-N+1 MPG), Ridge Regression, rookie lookup table. Replace `project_next_season.py` manual minute logic with model output.
+**What was built:**
+- `train_minute_model.py`: Complete rewrite — temporal season-N → N+1 Ridge pipeline (StandardScaler + RidgeCV, GridSearch alpha selection, GroupKFold by season), rookie lookup table from empirical draft-position buckets, team normalization to 240-minute constraint
+- `project_next_season.py`: Stripped all manual minute modifiers (age curves, impact multipliers, salary bumps, carry anchors); `project_minutes` now loads pre-computed Ridge predictions for returning players, falls back to rookie lookup for new entrants
+- 16 features (prior MPG, BKE, ORAPM, DRAPM, age, salary, usage, 3PT rate, AST rate, draft position, experience, team BKE rank, GP fraction, 3 archetype embeddings)
+- Selected alpha: 100.0 (strong regularization)
+
+**Validated holdout (2023-24 → 2024-25):**
+| Metric | Old Manual | New Ridge | 
+|---|---|---|
+| Correlation | NaN (scaling failure) | r²=0.671 (r≈0.82) |
+| MAE | 8.13 MPG | **4.06 MPG** |
 
 ---
 

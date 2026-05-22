@@ -42,3 +42,17 @@ N/A — this skill is always required.
 - Changes are mapped to concrete files.
 - Verification status is explicit.
 - Any risks and follow-up actions are clear.
+
+## Skills Used
+
+Always include a dedicated section listing all skills invoked during the task (mandatory and domain-specific). Format as a numbered list, one per line, with optional brief context if the skill application was non-obvious.
+
+Example:
+```
+1. scope-creep-guard — locked phase boundaries and file allow-list
+2. detailed-chat-output — structured this response
+3. audit-eval — verified player eval pipeline correctness
+4. documentation-cohesion — updated README for Phase 2 changes
+```
+
+This ensures transparency about what governance and domain tools guided the work.
