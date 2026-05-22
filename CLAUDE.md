@@ -14,6 +14,13 @@ Guidance for Claude Code sessions working in this repository.
   (dated, append-only narrative snapshots), not in tracked JSON.
 - Do not edit `loop/*DO_NOT_CHANGE*.txt` checkbox formats — automation parses
   them.
+- **`loop/in_progress_context.txt` is NOT append-only.** It holds ONE task at a time
+  (current work description) to save tokens on context. Replace it entirely when
+  starting a new task; do NOT append session entries. When a task is complete,
+  replace with the next task description.
+- **Multiple versions exist** for BKE scoring, archetype scripts, and data artifacts.
+  Before touching any versioned file, read `docs/multiple-versions.md` for the canonical
+  truth on which version is production.
 - Tests: `pytest -q` (currently only data-free `tests/test_simulation_core.py`,
   3 checks).
 
@@ -88,6 +95,28 @@ This repo has a dual skill library: **portable governance skills** (workflow, sa
 | Simulation pipeline changes | `simulation/SKILL.md` |
 | Forecast/projection/lineup/minute model changes | `forecast/SKILL.md` |
 | Modeling/RAPM/BKE metric changes | `audit-model/SKILL.md` |
+
+### Context Engineering Skills (2026-05-22 addition)
+
+14 context engineering skills from [muratcankoylan/agent-skills-for-context-engineering](https://github.com/muratcankoylan/agent-skills-for-context-engineering) are integrated to optimize context window usage:
+
+**Foundational:** `context-fundamentals`, `context-degradation`, `context-compression`
+**Architectural:** `memory-systems`, `filesystem-context`, `multi-agent-patterns`, `tool-design`
+**Operational:** `context-optimization`, `latent-briefing`, `evaluation`, `advanced-evaluation`
+**Development:** `project-development`, `bdi-mental-states`, `hosted-agents`
+
+Load these when working on session management, tool design, multi-agent coordination, or context optimization tasks.
+
+### Output Format — Mandatory
+
+Every response MUST follow the **detailed-chat-output** structure:
+
+1. **Outcome** — Lead with what was accomplished (1–2 sentences).
+2. **Changes** — Concrete file edits and imports (file paths + line numbers).
+3. **Verification** — Test results, passes, or "not verified" callout.
+4. **Next Steps** — What comes next or what's pending.
+
+Read `loop/in_progress_context.txt` at the start of each session for current task context.
 
 ## Self-Improvement System
 

@@ -41,6 +41,23 @@ All agents must do these steps before using or editing skills:
 24. [self-improvement](self-improvement/SKILL.md) — end-of-session skill quality evaluation (BKE-specific)
 25. [skill-curator](skill-curator/SKILL.md) — skill deduplication, overlap detection, catalog maintenance
 
+### Context Engineering (load for context optimization and multi-agent tasks)
+
+26. [context-fundamentals](context-fundamentals/SKILL.md) — understand context windows, agent design, attention mechanics
+27. [context-degradation](context-degradation/SKILL.md) — recognize and avoid context failure patterns
+28. [context-compression](context-compression/SKILL.md) — design and evaluate compression strategies
+29. [context-optimization](context-optimization/SKILL.md) — apply compaction, masking, caching strategies
+30. [memory-systems](memory-systems/SKILL.md) — design short/long-term and graph-based memory
+31. [filesystem-context](filesystem-context/SKILL.md) — use filesystems for dynamic context discovery
+32. [multi-agent-patterns](multi-agent-patterns/SKILL.md) — orchestrator, peer-to-peer, hierarchical patterns
+33. [tool-design](tool-design/SKILL.md) — build tools that agents use effectively
+34. [evaluation](evaluation/SKILL.md) — build evaluation frameworks for agent systems
+35. [advanced-evaluation](advanced-evaluation/SKILL.md) — LLM-as-a-Judge techniques
+36. [project-development](project-development/SKILL.md) — design LLM projects end-to-end
+37. [bdi-mental-states](bdi-mental-states/SKILL.md) — transform context into agent mental states (BDI ontology)
+38. [hosted-agents](hosted-agents/SKILL.md) — build background agents with sandboxed VMs
+39. [latent-briefing](latent-briefing/SKILL.md) — share orchestrator state via KV cache compaction
+
 ## Skill Registry
 
 | Skill | Path | Purpose | Load When |
@@ -70,6 +87,20 @@ All agents must do these steps before using or editing skills:
 | frontend-sync | [frontend-sync/SKILL.md](frontend-sync/SKILL.md) | Sync viewers to backend | Backend schema changes |
 | self-improvement | [self-improvement/SKILL.md](self-improvement/SKILL.md) | Session-end skill evaluation | End of interactive session |
 | skill-curator | [skill-curator/SKILL.md](skill-curator/SKILL.md) | Skill deduplication/curation | Skill catalog maintenance |
+| context-fundamentals | [context-fundamentals/SKILL.md](context-fundamentals/SKILL.md) | Understand context windows and agent design | Context or architecture questions |
+| context-degradation | [context-degradation/SKILL.md](context-degradation/SKILL.md) | Recognize context failure patterns | Debugging context issues |
+| context-compression | [context-compression/SKILL.md](context-compression/SKILL.md) | Design compression strategies | Session optimization |
+| context-optimization | [context-optimization/SKILL.md](context-optimization/SKILL.md) | Apply optimization techniques | Context usage optimization |
+| memory-systems | [memory-systems/SKILL.md](memory-systems/SKILL.md) | Memory system architecture | Memory or persistence design |
+| filesystem-context | [filesystem-context/SKILL.md](filesystem-context/SKILL.md) | Use filesystems for context | File-based context discovery |
+| multi-agent-patterns | [multi-agent-patterns/SKILL.md](multi-agent-patterns/SKILL.md) | Multi-agent coordination | Multi-agent or orchestration |
+| tool-design | [tool-design/SKILL.md](tool-design/SKILL.md) | Design effective agent tools | Tool creation or improvement |
+| evaluation | [evaluation/SKILL.md](evaluation/SKILL.md) | Build evaluation frameworks | Skill or system evaluation |
+| advanced-evaluation | [advanced-evaluation/SKILL.md](advanced-evaluation/SKILL.md) | LLM-as-a-Judge techniques | Comparative skill evaluation |
+| project-development | [project-development/SKILL.md](project-development/SKILL.md) | Design LLM projects | LLM project architecture |
+| bdi-mental-states | [bdi-mental-states/SKILL.md](bdi-mental-states/SKILL.md) | BDI cognitive ontology | Formal reasoning or beliefs |
+| hosted-agents | [hosted-agents/SKILL.md](hosted-agents/SKILL.md) | Sandboxed background agents | Background agent implementation |
+| latent-briefing | [latent-briefing/SKILL.md](latent-briefing/SKILL.md) | KV cache optimization | Cache-level context tuning |
 
 ## Maintenance Rules
 
@@ -165,4 +196,46 @@ skillMap:
     - name: skill-curator
       path: .github/skills/skill-curator/SKILL.md
       type: governance
+    - name: context-fundamentals
+      path: .github/skills/context-fundamentals/SKILL.md
+      type: context-engineering
+    - name: context-degradation
+      path: .github/skills/context-degradation/SKILL.md
+      type: context-engineering
+    - name: context-compression
+      path: .github/skills/context-compression/SKILL.md
+      type: context-engineering
+    - name: context-optimization
+      path: .github/skills/context-optimization/SKILL.md
+      type: context-engineering
+    - name: memory-systems
+      path: .github/skills/memory-systems/SKILL.md
+      type: context-engineering
+    - name: filesystem-context
+      path: .github/skills/filesystem-context/SKILL.md
+      type: context-engineering
+    - name: multi-agent-patterns
+      path: .github/skills/multi-agent-patterns/SKILL.md
+      type: context-engineering
+    - name: tool-design
+      path: .github/skills/tool-design/SKILL.md
+      type: context-engineering
+    - name: evaluation
+      path: .github/skills/evaluation/SKILL.md
+      type: context-engineering
+    - name: advanced-evaluation
+      path: .github/skills/advanced-evaluation/SKILL.md
+      type: context-engineering
+    - name: project-development
+      path: .github/skills/project-development/SKILL.md
+      type: context-engineering
+    - name: bdi-mental-states
+      path: .github/skills/bdi-mental-states/SKILL.md
+      type: context-engineering
+    - name: hosted-agents
+      path: .github/skills/hosted-agents/SKILL.md
+      type: context-engineering
+    - name: latent-briefing
+      path: .github/skills/latent-briefing/SKILL.md
+      type: context-engineering
 ```
