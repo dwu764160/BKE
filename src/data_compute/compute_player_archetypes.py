@@ -73,6 +73,11 @@ STATIC = {
     'HELIOCENTRIC_ON_BALL': 0.30,   # ON_BALL_CREATION >= this → Heliocentric Guard
     'POST_HUB_POSS': 0.10,          # POSTUP_POSS_PCT >= this AND must be dominant mode
     'POST_HUB_DOMINANT': 0.15,       # POST >= this always qualifies as Post Hub
+    # Secondary tag gates
+    'LOB_THREAT_AT_RIM': 0.65,      # AT_RIM_FREQ >= 65% → Lob Threat (PnR Rolling Big)
+    'PLAYMAKING_BIG_AST': 2.0,      # AST_PER36 >= 2.0 → Playmaking Big (PnR bigs)
+    'ELITE_SHOOTER_FG3_PCT': 0.38,  # FG3_PCT >= 0.38 for Elite Shooter
+    'ELITE_SHOOTER_FG3A': 4.0,      # FG3A_PER36 >= 4.0 volume floor for Elite Shooter
     # (original POST_HUB_POSS line replaced)
     # Movement Shooter ratio (loosened from 0.40 in v4.2)
     'MOVEMENT_RATIO_MIN': 0.30,     # movement / (movement + spotup) >= 0.30
@@ -811,20 +816,20 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             result['primary_archetype'] = 'Ball Dominant Creator'
             result['role_confidence'] = float(min(1.0, np.sqrt(composite / 0.6)))
 
-            # --- BDC Subtypes (priority: Post Hub > Gravity Engine > Heliocentric) ---
+            # --- BDC Subtypes (priority: Post Creator > Gravity Engine > Heliocentric > Downhill Driver) ---
             is_post_hub = (
                 (post_up >= STATIC['POST_HUB_DOMINANT']) or
                 (post_up >= STATIC['POST_HUB_POSS'] and post_up >= on_ball)
             )
             if is_post_hub:
-                result['secondary_archetype'] = 'Post Hub'
+                result['secondary_archetype'] = 'Post Creator'
             elif (fg3a_per36 >= p.get('HIGH_FG3A', 7.0) and
                   (ts >= p.get('HIGH_EFFICIENCY', 0.60) or fg3_pct >= p.get('HIGH_FG3_PCT', 0.37))):
                 result['secondary_archetype'] = 'Gravity Engine'
             elif ball_dom >= p.get('BD_HELIOCENTRIC', 0.41):
-                result['secondary_archetype'] = 'Heliocentric Guard'
-            elif is_high_scorer:
-                result['secondary_archetype'] = 'Primary Scorer'
+                result['secondary_archetype'] = 'Heliocentric'
+            elif at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+                result['secondary_archetype'] = 'Downhill Driver'
 
             result['role_effectiveness'] = compute_role_effectiveness(row, 'Ball Dominant Creator', p)
             return result
@@ -846,12 +851,12 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             (post_up >= STATIC['POST_HUB_POSS'] and post_up >= on_ball)
         )
         if is_post_hub:
-            result['secondary_archetype'] = 'Post Hub'
+            result['secondary_archetype'] = 'Post Creator'
         elif (fg3a_per36 >= p.get('HIGH_FG3A', 7.0) and
               (ts >= p.get('HIGH_EFFICIENCY', 0.60) or fg3_pct >= p.get('HIGH_FG3_PCT', 0.37))):
             result['secondary_archetype'] = 'Gravity Engine'
-        else:
-            result['secondary_archetype'] = 'Offensive Hub'
+        elif at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
+            result['secondary_archetype'] = 'Downhill Driver'
 
         result['role_effectiveness'] = compute_role_effectiveness(row, 'Ball Dominant Creator', p)
         return result
@@ -863,7 +868,7 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     if (is_elite_playmaker and post_up >= STATIC['POST_HUB_POSS'] and
         not is_ball_dominant_high):
         result['primary_archetype'] = 'Ball Dominant Creator'
-        result['secondary_archetype'] = 'Post Hub'
+        result['secondary_archetype'] = 'Post Creator'
         pm_cap = max(p.get('ELITE_PLAYMAKER', 6.0), 4.0)
         result['role_confidence'] = float(min(1.0,
             np.sqrt(ast_per36 / pm_cap) * 0.6 + np.sqrt(post_up / 0.15) * 0.4
@@ -885,10 +890,12 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             np.sqrt(pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.5 +
             np.sqrt(ast_per36 / pm_cap) * 0.5
         ))
-        if is_elite_scorer:
-            result['secondary_archetype'] = 'High Volume'
+        if post_up >= STATIC['POST_HUB_POSS']:
+            result['secondary_archetype'] = 'Post Creator'
+        elif is_elite_scorer:
+            result['secondary_archetype'] = 'Volume Scorer'
         elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-            result['secondary_archetype'] = 'Midrange Scorer'
+            result['secondary_archetype'] = 'Midrange Specialist'
         result['role_effectiveness'] = compute_role_effectiveness(row, 'All-Around Scorer', p)
         return result
 
@@ -930,15 +937,10 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                 result['role_confidence'] = float(min(1.0,
                     np.sqrt(ball_dom / bd_cap) * 0.6 + (fg2a_rate / 0.85) * 0.4
                 ))
-                # Subtype: Rim Finisher vs Midrange Scorer (P70) vs Inside-the-Arc (P50-P70)
-                if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
-                    result['secondary_archetype'] = 'Rim Finisher'
+                if post_up >= STATIC['POST_HUB_POSS']:
+                    result['secondary_archetype'] = 'Post Creator'
                 elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-                    result['secondary_archetype'] = 'Midrange Scorer'
-                elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-                    result['secondary_archetype'] = 'Inside-the-Arc'
-                elif is_high_scorer:
-                    result['secondary_archetype'] = 'High Volume'
+                    result['secondary_archetype'] = 'Midrange Specialist'
                 result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
                 return result
             # else: rim-dependent non-star → falls through to PnR Big / Off-Ball
@@ -948,8 +950,6 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             result['role_confidence'] = float(min(1.0,
                 np.sqrt(ball_dom / bd_cap) * 0.6 + ((1 - fg2a_rate) / 0.65) * 0.4
             ))
-            if is_high_scorer:
-                result['secondary_archetype'] = 'High Volume'
             result['role_effectiveness'] = compute_role_effectiveness(row, 'Perimeter Scorer', p)
             return result
 
@@ -962,12 +962,12 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                     np.sqrt(ball_dom / bd_cap) * 0.5 +
                     np.sqrt(pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.5
                 ))
-                if is_high_scorer:
-                    result['secondary_archetype'] = 'High Volume'
+                if post_up >= STATIC['POST_HUB_POSS']:
+                    result['secondary_archetype'] = 'Post Creator'
+                elif is_high_scorer:
+                    result['secondary_archetype'] = 'Volume Scorer'
                 elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-                    result['secondary_archetype'] = 'Midrange Scorer'
-                elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-                    result['secondary_archetype'] = 'Inside-the-Arc'
+                    result['secondary_archetype'] = 'Midrange Specialist'
                 result['role_effectiveness'] = compute_role_effectiveness(row, 'All-Around Scorer', p)
                 return result
             # Falls through to lower archetypes if scoring too low
@@ -1001,14 +1001,10 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                 (pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.3
         )
             result['role_confidence'] = float(min(0.80, raw_conf))  # capped
-            if at_rim_freq >= p.get('HIGH_AT_RIM', 0.30):
-                result['secondary_archetype'] = 'Rim Finisher'
+            if post_up >= STATIC['POST_HUB_POSS']:
+                result['secondary_archetype'] = 'Post Creator'
             elif midrange_freq >= p.get('HIGH_MIDRANGE', 0.15):
-                result['secondary_archetype'] = 'Midrange Scorer'
-            elif midrange_freq >= p.get('MODERATE_MIDRANGE', 0.08):
-                result['secondary_archetype'] = 'Inside-the-Arc'
-            elif is_high_scorer:
-                result['secondary_archetype'] = 'High Volume'
+                result['secondary_archetype'] = 'Midrange Specialist'
             result['role_effectiveness'] = compute_role_effectiveness(row, 'Interior Scorer', p)
             return result
 
@@ -1033,10 +1029,6 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             result['primary_archetype'] = 'Connector'
             pm_cap = max(p.get('PLAYMAKER', 5.0), 3.0)
             result['role_confidence'] = float(min(1.0, np.sqrt(ast_per36 / pm_cap)))
-            if row.get('REB_PER36', 0) and row.get('REB_PER36', 0) > 8:
-                result['secondary_archetype'] = 'Playmaking Big'
-            elif sec_ast >= 0.8:
-                result['secondary_archetype'] = 'Hockey Assist Specialist'
             result['role_effectiveness'] = compute_role_effectiveness(row, 'Connector', p)
             return result
 
@@ -1069,10 +1061,20 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
         prm_cap = max(p.get('HIGH_PRROLLMAN', 0.06) * 2.5, 0.15)
         result['role_confidence'] = float(min(1.0, np.sqrt(prrollman / prm_cap)))
         if not pnr_big_strict:
-            # Cap confidence for prominent-path (not dominant PnR usage)
             result['role_confidence'] = float(min(0.85, result['role_confidence']))
-        if transition > 0.15:
-            result['secondary_archetype'] = 'Transition Player'
+        if result['primary_archetype'] == 'PnR Rolling Big':
+            if at_rim_freq >= STATIC['LOB_THREAT_AT_RIM']:
+                result['secondary_archetype'] = 'Lob Threat'
+            elif ast_per36 >= STATIC['PLAYMAKING_BIG_AST']:
+                result['secondary_archetype'] = 'Playmaking Big'
+            elif transition > 0.15:
+                result['secondary_archetype'] = 'Transition Runner'
+        else:  # PnR Popping Big
+            if (fg3_pct >= STATIC['ELITE_SHOOTER_FG3_PCT'] and
+                    fg3a_per36 >= STATIC['ELITE_SHOOTER_FG3A']):
+                result['secondary_archetype'] = 'Elite Shooter'
+            elif ast_per36 >= STATIC['PLAYMAKING_BIG_AST']:
+                result['secondary_archetype'] = 'Playmaking Big'
         result['role_effectiveness'] = compute_role_effectiveness(row, result['primary_archetype'], p)
         return result
 
@@ -1093,16 +1095,12 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
                 result['primary_archetype'] = 'PnR Rolling Big'
             prm_cap = max(p.get('HIGH_PRROLLMAN', 0.06) * 2.5, 0.15)
             result['role_confidence'] = float(min(0.80, np.sqrt(prrollman / prm_cap)))
-            if transition > 0.15:
-                result['secondary_archetype'] = 'Transition Player'
             result['role_effectiveness'] = compute_role_effectiveness(row, result['primary_archetype'], p)
             return result
 
         result['primary_archetype'] = 'Off-Ball Finisher'
         ob_cap = max(cut_pnrrm_gate * 1.5, 0.25)
         result['role_confidence'] = float(min(1.0, np.sqrt(offball_finish_score / ob_cap)))
-        if transition > 0.15:
-            result['secondary_archetype'] = 'Transition Player'
         result['role_effectiveness'] = compute_role_effectiveness(row, 'Off-Ball Finisher', p)
         return result
 
@@ -1136,8 +1134,6 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
             np.sqrt(ball_dom / bd_cap) * 0.5 +
             np.sqrt(pts_per36 / max(p.get('ELITE_SCORING', 21.0), 15.0)) * 0.5
         ))
-        if is_high_scorer:
-            result['secondary_archetype'] = 'High Volume'
         result['role_effectiveness'] = compute_role_effectiveness(row, 'Perimeter Scorer', p)
         return result
 
@@ -1148,8 +1144,6 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     if spotup >= spotup_gate:
         result['primary_archetype'] = 'Off-Ball Stationary Shooter'
         result['role_confidence'] = float(min(1.0, np.sqrt(spotup / max(spotup_gate * 1.4, 0.35))))
-        if fg3_pct > 0.38:
-            result['secondary_archetype'] = 'Elite Shooter'
         result['role_effectiveness'] = compute_role_effectiveness(row, 'Off-Ball Stationary Shooter', p)
         return result
 

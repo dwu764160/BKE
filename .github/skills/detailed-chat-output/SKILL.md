@@ -23,7 +23,7 @@ N/A — this skill is always required.
 
 ## Deliverables
 
-- response order: outcome, changes, verification, residual risk or next steps
+- response order: summary, outcome, changes, verification, residual risks, next steps
 - direct file references for edited files
 - concise but complete rationale for non-obvious decisions
 - explicit callout of anything not verified
@@ -37,7 +37,8 @@ N/A — this skill is always required.
 
 ## Verification Checklist
 
-- The answer includes outcome first.
+- The answer includes summary first.
+- The answer includes outcome second.
 - Changes are mapped to concrete files.
 - Verification status is explicit.
-- Any risks or follow-up actions are clear.
+- Any risks and follow-up actions are clear.

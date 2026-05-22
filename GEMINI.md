@@ -1,6 +1,8 @@
-# CLAUDE.md — BKE (Basketball KPI Engine)
+# GEMINI.md — BKE (Basketball KPI Engine)
 
-Guidance for Claude Code sessions working in this repository.
+**CRITICAL INSTRUCTION: Always check `CLAUDE.md` for updates and ensure this `GEMINI.md` file remains synchronized with it.**
+
+Guidance for Gemini CLI and Claude Code sessions working in this repository.
 
 ## Repo essentials
 

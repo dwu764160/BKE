@@ -545,6 +545,16 @@ def main() -> None:
                        ("defensive_archetype", "arche_defensive_archetype")]:
         if _src in spine.columns and _col in spine.columns:
             spine[_col] = spine[_src].where(spine[_src].notna(), spine[_col])
+    # Secondary archetype: if fresh primary is non-null, the fresh secondary (even if None)
+    # should overwrite the stale spine value — otherwise old tags persist when new
+    # classification correctly assigns no secondary.
+    if "arche_primary_archetype" in spine.columns and "secondary_archetype" in spine.columns:
+        fresh_has_primary = spine["arche_primary_archetype"].notna()
+        fresh_secondary = spine.get("arche_secondary_archetype")
+        if fresh_secondary is not None:
+            spine.loc[fresh_has_primary, "secondary_archetype"] = spine.loc[
+                fresh_has_primary, "arche_secondary_archetype"
+            ]
     print(f"  [3] + Archetypes: {len(spine.columns)} cols")
 
     # 4. Defensive archetypes
@@ -665,6 +675,26 @@ def main() -> None:
         min_col = "MIN" if "MIN" in spine.columns else "min"
         team_min_sum = spine.groupby(["season", team_col])[min_col].transform("sum")
         spine["agg_minute_share"] = mins / team_min_sum.replace(0, np.nan)
+
+    # ── Player tier (BKE-anchored, within-season) ──────────────────────
+    # Tiers: Superstar / All-Star / Starter / Rotation Player / Reserve / Fringe
+    # Percentiles computed within each season among BKE-scored players only.
+    _score_col = 'total_impact_score' if 'total_impact_score' in spine.columns else None
+    _min_col = 'min' if 'min' in spine.columns else ('MIN' if 'MIN' in spine.columns else None)
+    if _score_col and _min_col:
+        _mins = pd.to_numeric(spine[_min_col], errors='coerce').fillna(0)
+        _scores = pd.to_numeric(spine[_score_col], errors='coerce')
+        _pctl = spine.groupby('season')[_score_col].rank(pct=True, na_option='keep')
+        has_score = _scores.notna()
+        _tier = pd.Series('Fringe', index=spine.index, dtype=object)
+        _tier.loc[~has_score & (_mins >= 200)] = 'Reserve'
+        _tier.loc[has_score & (_mins >= 200)] = 'Reserve'
+        _tier.loc[has_score & (_mins >= 300) & (_pctl >= 0.30)] = 'Rotation Player'
+        _tier.loc[has_score & (_mins >= 600) & (_pctl >= 0.55)] = 'Starter'
+        _tier.loc[has_score & (_mins >= 600) & (_pctl >= 0.82)] = 'All-Star'
+        _tier.loc[has_score & (_mins >= 800) & (_pctl >= 0.95)] = 'Superstar'
+        spine['player_tier'] = _tier
+        print(f"  player_tier distribution:\n{spine['player_tier'].value_counts().to_string()}")
 
     # ── Final dedup & sort ─────────────────────────────────────────────
     spine = _dedup(spine)

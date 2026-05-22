@@ -147,7 +147,11 @@ OFF_ARCHETYPES = [
     "off_ball_stationary_shooter", # OBS
 ]
 
-# Numeric interaction values
+# Numeric interaction values — RETAINED for historical reference only.
+# 4.6 v2 (2026-05-21) eliminated the hand-coded INTERACTION_MATRIX after empirical
+# Lasso fit on 4,914 lineup-stints (8 seasons, talent-controlled) found ZERO pair
+# effects above the cross-validated significance threshold. Constants left in place
+# in case future research wants to re-introduce specific pairs.
 V_PP = +0.10   # ++
 V_P  = +0.06   # +
 V_MP = +0.03   # mild +
@@ -156,90 +160,29 @@ V_MM = -0.03   # mild -
 V_N  = -0.10   # --
 V_0  = 0.00    # n/a
 
-# Symmetric interaction matrix (upper triangle)
-# Row/Col order matches OFF_ARCHETYPES
-# Values represent synergy/redundancy between archetype PAIRS
-INTERACTION_MATRIX = {
-    # (i, j) -> (base_value, conditional_flag)
-    # conditional_flag: None = always apply, "both_low_i" = only if both below threshold,
-    #                   "j_low" = only if player j below threshold
-    ("ball_dominant_creator", "ball_dominant_creator"):    (V_M,  "both_low"),
-    ("ball_dominant_creator", "all_around_scorer"):        (V_MM, "j_low"),
-    ("ball_dominant_creator", "ballhandler"):              (V_MM, None),
-    ("ball_dominant_creator", "interior_scorer"):          (V_P,  None),
-    ("ball_dominant_creator", "perimeter_scorer"):         (V_MP, None),
-    ("ball_dominant_creator", "connector"):                (V_P,  None),
-    ("ball_dominant_creator", "pnr_rolling_big"):          (V_PP, None),
-    ("ball_dominant_creator", "pnr_popping_big"):          (V_P,  None),
-    ("ball_dominant_creator", "off_ball_finisher"):        (V_P,  None),
-    ("ball_dominant_creator", "off_ball_movement_shooter"): (V_PP, None),
-    ("ball_dominant_creator", "off_ball_stationary_shooter"): (V_P, None),
-
-    ("all_around_scorer", "all_around_scorer"):            (V_MM, "both_low"),
-    ("all_around_scorer", "ballhandler"):                  (V_0,  None),
-    ("all_around_scorer", "interior_scorer"):              (V_MP, None),
-    ("all_around_scorer", "perimeter_scorer"):             (V_MP, None),
-    ("all_around_scorer", "connector"):                    (V_P,  None),
-    ("all_around_scorer", "pnr_rolling_big"):              (V_MP, None),
-    ("all_around_scorer", "pnr_popping_big"):              (V_MP, None),
-    ("all_around_scorer", "off_ball_finisher"):            (V_MP, None),
-    ("all_around_scorer", "off_ball_movement_shooter"):    (V_P,  None),
-    ("all_around_scorer", "off_ball_stationary_shooter"):  (V_MP, None),
-
-    ("ballhandler", "ballhandler"):                        (V_M,  "both_low"),
-    ("ballhandler", "interior_scorer"):                    (V_MP, None),
-    ("ballhandler", "perimeter_scorer"):                   (V_MP, None),
-    ("ballhandler", "connector"):                          (V_P,  None),
-    ("ballhandler", "pnr_rolling_big"):                    (V_PP, None),
-    ("ballhandler", "pnr_popping_big"):                    (V_P,  None),
-    ("ballhandler", "off_ball_finisher"):                  (V_MP, None),
-    ("ballhandler", "off_ball_movement_shooter"):          (V_P,  None),
-    ("ballhandler", "off_ball_stationary_shooter"):        (V_MP, None),
-
-    ("interior_scorer", "interior_scorer"):                (V_M,  None),
-    ("interior_scorer", "perimeter_scorer"):               (V_MP, None),
-    ("interior_scorer", "connector"):                      (V_MP, None),
-    ("interior_scorer", "pnr_rolling_big"):                (V_MM, None),
-    ("interior_scorer", "pnr_popping_big"):                (V_MP, None),
-    ("interior_scorer", "off_ball_finisher"):              (V_N,  None),
-    ("interior_scorer", "off_ball_movement_shooter"):      (V_MP, None),
-    ("interior_scorer", "off_ball_stationary_shooter"):    (V_0,  None),
-
-    ("perimeter_scorer", "perimeter_scorer"):              (V_MM, "both_low"),
-    ("perimeter_scorer", "connector"):                     (V_P,  None),
-    ("perimeter_scorer", "pnr_rolling_big"):               (V_MP, None),
-    ("perimeter_scorer", "pnr_popping_big"):               (V_MP, None),
-    ("perimeter_scorer", "off_ball_finisher"):             (V_0,  None),
-    ("perimeter_scorer", "off_ball_movement_shooter"):     (V_M,  "j_low"),
-    ("perimeter_scorer", "off_ball_stationary_shooter"):   (V_MM, None),
-
-    ("connector", "connector"):                            (V_MP, None),
-    ("connector", "pnr_rolling_big"):                      (V_P,  None),
-    ("connector", "pnr_popping_big"):                      (V_P,  None),
-    ("connector", "off_ball_finisher"):                    (V_MP, None),
-    ("connector", "off_ball_movement_shooter"):            (V_P,  None),
-    ("connector", "off_ball_stationary_shooter"):          (V_MP, None),
-
-    ("pnr_rolling_big", "pnr_rolling_big"):               (V_N,  None),
-    ("pnr_rolling_big", "pnr_popping_big"):               (V_MP, None),
-    ("pnr_rolling_big", "off_ball_finisher"):              (V_MM, None),
-    ("pnr_rolling_big", "off_ball_movement_shooter"):      (V_P,  None),
-    ("pnr_rolling_big", "off_ball_stationary_shooter"):    (V_MP, None),
-
-    ("pnr_popping_big", "pnr_popping_big"):               (V_MM, None),
-    ("pnr_popping_big", "off_ball_finisher"):              (V_0,  None),
-    ("pnr_popping_big", "off_ball_movement_shooter"):      (V_MP, None),
-    ("pnr_popping_big", "off_ball_stationary_shooter"):    (V_MP, None),
-
-    ("off_ball_finisher", "off_ball_finisher"):            (V_N,  None),
-    ("off_ball_finisher", "off_ball_movement_shooter"):    (V_MP, None),
-    ("off_ball_finisher", "off_ball_stationary_shooter"):  (V_0,  None),
-
-    ("off_ball_movement_shooter", "off_ball_movement_shooter"): (V_MM, None),
-    ("off_ball_movement_shooter", "off_ball_stationary_shooter"): (V_0, None),
-
-    ("off_ball_stationary_shooter", "off_ball_stationary_shooter"): (V_MM, None),
-}
+# INTERACTION_MATRIX — EMPTY by empirical decision (Phase 4.6 v2, 2026-05-21).
+#
+# The original 66-entry hand-coded matrix was tested against 8 seasons of NBA lineup
+# data (4,914 lineup-stints, 2017-25, talent-controlled via season-z-scored oRAPM).
+# Lasso regression with cross-validated alpha returned ZERO surviving pairs above the
+# significance threshold. Strict-data sensitivity check at ≥200 possessions
+# (1,895 lineups) and an alternative oBPM talent control confirmed the result.
+#
+# Interpretation: after controlling for individual player talent and the existing
+# defensive composition penalties, archetype-pair composition contributes negligible
+# predictive value for offensive efficiency. Pair-based interaction effects either
+# do not exist at the population level, or are already absorbed by context-aware
+# talent metrics like oRAPM.
+#
+# The matrix is left as an empty dict so that _get_interaction_value() returns
+# (V_0=0.0, None) for any pair via its fallback path. Constants V_PP..V_N retained
+# above for historical/research reference. The use_interaction flag in main() now
+# defaults to False (the interaction loop is computationally wasteful when all
+# values are 0).
+#
+# Findings: reports/archetype_interaction_fit_v2.json
+# Fit script: src/modeling/fit_archetype_interactions_v2.py
+INTERACTION_MATRIX: dict = {}
 
 
 def _get_interaction_value(arch_i: str, arch_j: str) -> Tuple[float, Optional[str]]:
@@ -852,7 +795,7 @@ def _ablation_report(
 # ═════════════════════════════════════════════════════════════════════
 
 def main(
-    use_interaction: bool = True,
+    use_interaction: bool = False,   # Empirically eliminated in 4.6 v2 — see INTERACTION_MATRIX comment
     use_structure: bool = True,
     use_defense: bool = True,
     use_volatility: bool = True,

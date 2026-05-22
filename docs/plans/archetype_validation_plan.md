@@ -1,6 +1,6 @@
 # Archetype Validation Plan
 
-> **Status:** Revised 2026-05-21. Phase 4 scope updated based on session discussion.
+> **Status:** COMPLETE 2026-05-21. All sub-tasks 4.0–4.6 done. 4.5 deferred to Phase 2.
 > **Scope:** Validate, document, and improve offensive and defensive archetype classifications
 > before Phase 2 (minute model rebuild) uses archetypes as features.
 > **Does not change:** Core archetype definitions or basketball philosophy.
@@ -34,11 +34,11 @@ that noise. Known issues going into this phase:
 ```
 4.0  Archetype backfill → all 8 seasons           [COMPLETE]
 4.1  Threshold lower → 200 min                    [COMPLETE — code change applied]
-4.2  Secondary archetype documentation             [IN PROGRESS — see §Secondary Tags below]
-4.3  Validation tracks (4 parallel)               [PENDING]
-4.4  Player tier system                            [PENDING]
-4.5  Soft probability adoption                     [PENDING — design only, no new model]
-4.6  Archetype pair validation + matrix OLS        [LAST — after everything else]
+4.2  Secondary archetype documentation             [COMPLETE — offensive tags finalized, defensive tags eliminated]
+4.3  Validation tracks (4 parallel)               [COMPLETE — reports/archetype_stability/sensitivity/coherence.json, archetype_manual_sample.csv]
+4.4  Player tier system                            [COMPLETE — player_tier column in player_profile_aggregate.parquet]
+4.5  Soft probability adoption                     [DEFERRED — design only, no new model; Phase 2 minute model rebuild]
+4.6  Archetype pair validation + matrix OLS        [COMPLETE — 0 pairs survive; INTERACTION_MATRIX eliminated (use_interaction=False)]
 ```
 
 ---
@@ -229,18 +229,81 @@ The PEC columns already produce 11-dimensional archetype probability vectors
 
 ## 4.6 — Archetype Pair Validation (Last)
 
-After 4.0-4.5 are complete and archetypes are verified stable across 8 seasons:
+**Status (2026-05-21):** v1 ran on team-season aggregates (240 obs, Ridge). Pivot to v2.
 
-Use 8 seasons of historical lineup data (from `possessions_clean_*.parquet`) to measure
-actual on-court offensive efficiency for each of the 121 archetype pair combinations.
-Fit OLS regression: `team_ORtg ~ Σ archetype_pair_counts`.
+### v1 — Team-season Ridge (rejected as final, kept as record)
+- 240 obs (8 seasons × 30 teams). NET_RTG outcome. Ridge α=26.83.
+- R²: 0.771 (talent-only) → 0.832 (full). Only 3/66 pairs had tight bootstrap CIs.
+- Conclusion: underpowered for 66 features. Most pairs are noise after talent control.
+- Archived: `src/modeling/fit_archetype_interactions_v1_team_season.py`.
+- Findings JSON: `reports/archetype_interaction_fit.json`.
 
-Replaces the current untested 121-pair interaction matrix with empirically fitted values.
+### v2 — Lineup-level Lasso with forward stepwise verify (COMPLETE)
 
-**Gate before running:** Track 1 diagonal ≥ 75% (archetypes must be stable inputs before
-building a matrix on top of them).
+**Outcome:** INTERACTION_MATRIX eliminated entirely. After fitting on 4,914 lineup-stints
+across 8 seasons with talent control, **zero pairs survived** Lasso significance selection.
+Decision per user (2026-05-21): if no significant pairs emerge after expanding the
+dataset, eliminate the matrix completely.
 
-**Output:** `reports/archetype_pair_interactions.json` — new interaction matrix
+**Why pivoted:** team-season has only 240 obs vs. 62,812 lineup-stints (8 seasons, after
+re-running compute_advanced_metrics.py against the full historical possessions backfill).
+The dense 66-pair matrix is over-parameterized for either dataset; the lineup approach
+gave ~20× more usable observations.
+
+**Data:** `data/processed/metrics_lineups.parquet` (29,024 lineup-stints × {ORTG, total_poss,
+lineup_ids}, 2022-25). Filter ≥100 possessions → 2,390 lineups; lineup ORTG std drops from
+37.16 (<100 poss) to 14.67 (100-200 poss).
+
+**Outcome:** lineup ORTG, season-mean centered.
+- Defense stays untouched. The defensive system in `team_feature_aggregation.py:520-604`
+  is composition-based (presence/absence of rim & POA anchors, diversity bonus, liability
+  penalty) — pair interactions there would mostly add noise.
+
+**Talent control:** sum of oRAPM over 5 lineup players (sklearn pipeline with talent as
+unpenalized control, Lasso applied to residuals).
+
+**Sample weight:** `sqrt(total_poss)` to prevent a handful of 3,000-poss lineups from
+dominating.
+
+**Pipeline:**
+1. LassoCV (5-fold, alpha grid 1e-4 → 10) on standardized pair features → candidate set
+   of pairs with |β| > 1e-6.
+2. Forward stepwise verify on candidate set: start talent-only, add by largest ΔCV R²,
+   stop when next addition gains < 0.0005.
+3. Bootstrap (500) for surviving pairs only — flag any pair whose 95% CI spans 0.
+4. Rescale `V_AB = β / 75` (derived: pipeline applies `V × S_A × S_B × (1/0.2) × 0.75 × TEAM_SCALE`,
+   where baseline pair weight = 0.2, LAMBDA = 0.75, TEAM_SCALE = 20).
+
+**Output:** `INTERACTION_MATRIX` becomes a sparse dict (~5-15 entries). Missing pairs
+implicitly default to 0.0 via existing fallback in `_get_interaction_value()`.
+
+**Conditional flags (`both_low`, `j_low`):** Dropped in v2. The fit operates on actual
+lineups so empirical β already reflects average talent. If a surviving pair has a sensible
+conditional gate, we add it back manually during basketball-review.
+
+**Output files:**
+- `src/modeling/fit_archetype_interactions_v1_team_season.py` — v1 archived
+- `src/modeling/fit_archetype_interactions_v2.py` — v2 fit script (lineup-level)
+- `reports/archetype_interaction_fit_v2.json` — final result (0 surviving pairs)
+- `src/profile_aggregate/team_feature_aggregation.py` — INTERACTION_MATRIX = {}, use_interaction default flipped to False
+- `data/processed/metrics_lineups.parquet` — regenerated across 8 seasons (62,812 stints, was 29,024)
+
+**Key empirical findings:**
+- Talent R² ceiling (lineup oRAPM sum, z-scored within season): 0.20 at ≥100 poss, 0.29 at ≥200 poss
+- Pair contribution above talent: 0 surviving pairs (Lasso α=10, max in grid, zeroed everything)
+- Robustness checks confirmed result:
+  - 8 seasons + ≥100 poss (4,914 lineups): 0 pairs
+  - 8 seasons + ≥200 poss (1,895 lineups): 0 pairs
+  - 3 seasons (2022-25) + ≥100 poss + oRAPM control: 2 pairs (PnR Popping × OB Stationary, Connector × Connector) — neither survived dataset expansion
+- Pipeline verification: full model holdout R on 2024-25 = 0.96 with interaction=False, identical to interaction=True before (interaction was contributing ~0 anyway)
+
+**Bug fixed during this work:**
+- Pre-2022 lineup data existed in `data/historical/possessions_clean_*.parquet` but had never
+  been processed into `metrics_lineups.parquet` (still showed only 3 seasons). Re-ran
+  `src/data_compute/compute_advanced_metrics.py` to backfill all 8 seasons.
+- oRAPM has inconsistent cross-season calibration: 2019-22 use a compressed scale
+  (std~0.9) vs. 2017-18/2022-25 (std~2.1). Fixed in fit script via within-season z-scoring.
+  This calibration drift in oRAPM is a follow-up flag for the RAPM pipeline (Phase 1 GAP).
 
 ---
 

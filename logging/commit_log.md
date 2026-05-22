@@ -72,3 +72,243 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - A src/player_eval/calibrate_team_scale.py
       - A src/player_eval/year_to_year_bke_deltas.py
       - A src/simulation/validate_forecast.py
+
+### 2026-05-21 18:30:47Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 0535c5c02b18a33b35d2a7a8e108d1ed6402892a..e56f0a00a8cede04dbcfbc5f0912658304ff6181
+- Commits:
+  - 3688dfa feat: walk-forward harness, data backfill, calibration scripts, docs reorganization
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-20T03:33:37-05:00
+    - Purpose: Phase 0 (COMPLETE):
+    - Files:
+      - A .githooks/pre-commit
+      - A .githooks/pre-push
+      - A .github/skills/SKILL_MAP.md
+      - A .github/skills/detailed-chat-output/SKILL.md
+      - A .github/skills/documentation-cohesion/SKILL.md
+      - A .github/skills/manual-testing-guides/SKILL.md
+      - A .github/skills/remote-commit-logging/SKILL.md
+      - A .github/skills/repo-workflow/SKILL.md
+      - A .github/skills/scope-creep-guard/SKILL.md
+      - A .github/skills/self-improvement-loop/SKILL.md
+      - A .github/skills/skill-improvement-loop/SKILL.md
+      - A .github/skills/skill-map-governance/SKILL.md
+      - A .github/skills/verification-gate/SKILL.md
+      - A .github/skills/workflow-logging/SKILL.md
+      - M CLAUDE.md
+      - A docs/findings/calibration_findings_2026-05-20.md
+      - A docs/findings/model_weaknesses_report.md
+      - D docs/for-alpha-thesis.md
+      - A docs/integration/for-alpha-thesis.md
+      - A docs/plans/archetype_validation_plan.md
+      - A docs/plans/basketball_intuition_plan.md
+      - A docs/plans/data_pipeline_audit_plan.md
+      - A docs/plans/master_improvement_plan.md
+      - A docs/plans/minute_model_rebuild_plan.md
+      - A docs/plans/walk_forward_harness_plan.md
+      - A docs/reference/basketball-intuitions.md
+      - A docs/reference/player-stats-index.md
+      - A docs/reference/team-stats-index.md
+      - A docs/reference/tracking_availability.md
+      - A logging/commit_log.md
+      - A logging/progress_log.md
+      - A scripts/analyze-patterns.sh
+      - A scripts/implicit-skill-smoke-test.sh
+      - A scripts/notify-approval.sh
+      - A scripts/notify.sh
+      - A scripts/post-edit-check.sh
+      - A scripts/session-end.sh
+      - A scripts/update-skill-memory.sh
+      - M src/data_compute/compute_defensive_archetypes.py
+      - M src/data_compute/compute_defensive_archetypes_v2.py
+      - M src/data_compute/compute_player_archetypes.py
+      - M src/data_compute/compute_position_estimate.py
+      - A src/data_fetch/fetch_backfill_box_scores.py
+      - M src/data_fetch/fetch_box_scores_complete.py
+      - M src/data_fetch/fetch_defensive_metrics.py
+      - M src/data_fetch/fetch_historical_data.py
+      - M src/data_fetch/fetch_matchup_data.py
+      - M src/data_fetch/fetch_official_stats.py
+      - A src/data_fetch/fetch_pbp/fetch_pbp_statsapi.py
+      - M src/data_fetch/fetch_player_clutch_stats.py
+      - M src/data_fetch/fetch_shot_zones.py
+      - M src/data_fetch/fetch_tracking_data.py
+      - A src/data_fetch/probe_tracking_availability.py
+      - M src/modeling/model_config.py
+      - A src/player_eval/calibrate_team_scale.py
+      - A src/player_eval/year_to_year_bke_deltas.py
+      - A src/simulation/validate_forecast.py
+  - d948215 feat: data backfill 2017-22, walk-forward Brier baseline, bug fixes
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-20T17:46:44-05:00
+    - Purpose: Phase 2 data backfill complete: 8 seasons (2017-18 → 2024-25) of
+    - Files:
+      - M docs/integration/for-alpha-thesis.md
+      - M logging/commit_log.md
+      - A src/data_compute/fit_rest_hca_coefficients.py
+      - A src/data_compute/fit_team_pace.py
+      - M src/modeling/model_config.py
+      - M src/player_eval/build_player_impact_profiles.py
+      - M src/profile_aggregate/team_feature_aggregation.py
+      - M src/simulation/game_model.py
+      - M src/simulation/simulation_config.py
+      - M src/simulation/validate_forecast.py
+  - db0f4de feat: Phase 1 pipeline audit + Phase 3A foundation rules
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-21T02:55:45-05:00
+    - Purpose: Track A (RAPM): Validated pooled_split RAPM alpha=200 is acceptable (slope 0.52-0.59
+    - Files:
+      - M aggregate/player_profile_aggregate.parquet
+      - M docs/plans/master_improvement_plan.md
+      - A docs/stats-gap.md
+      - M src/data_compute/compute_linear_metrics.py
+      - M src/data_compute/fit_rest_hca_coefficients.py
+      - A src/data_fetch/fetch_external_rapm_benchmarks.py
+      - A src/data_fetch/fetch_missing_player_profiles.py
+      - M src/data_fetch/fetch_player_salaries.py
+      - M src/data_normalize/pbp_parser.py
+      - M src/features/derive_lineups.py
+      - M src/player_eval/build_player_impact_profiles.py
+  - e56f0a0 planned archetype validation
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-21T13:30:41-05:00
+    - Purpose: This commit adds 9, modifies 8 across .claude, aggregate, docs, loop, memory, src.
+    - Files:
+      - A .claude/config
+      - A .claude/debugging_log.md
+      - A .claude/notification_log.txt
+      - A .claude/pending-improvements.md
+      - A .claude/settings.json
+      - A .claude/skill_memory_cursor.tmp
+      - M aggregate/player_profile_aggregate.parquet
+      - M docs/plans/archetype_validation_plan.md
+      - M docs/plans/master_improvement_plan.md
+      - M docs/reference/basketball-intuitions.md
+      - A docs/reference/data-pipeline-dependency.md
+      - M loop/in_progress_context.txt
+      - A memory/debugging_patterns.md
+      - A memory/skill_effectiveness.md
+      - M src/data_compute/compute_defensive_archetypes_v2.py
+      - M src/data_compute/compute_player_archetypes.py
+      - M src/profile_aggregate/build_profile_aggregate.py
+
+### 2026-05-21 18:31:21Z - Push to deploy
+- Remote URL: https://github.com/Daniel-Wu-Github/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 3688dfa28c68d9f38e1b50f216bcb6dcb38063f6..e56f0a00a8cede04dbcfbc5f0912658304ff6181
+- Commits:
+  - d948215 feat: data backfill 2017-22, walk-forward Brier baseline, bug fixes
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-20T17:46:44-05:00
+    - Purpose: Phase 2 data backfill complete: 8 seasons (2017-18 → 2024-25) of
+    - Files:
+      - M docs/integration/for-alpha-thesis.md
+      - M logging/commit_log.md
+      - A src/data_compute/fit_rest_hca_coefficients.py
+      - A src/data_compute/fit_team_pace.py
+      - M src/modeling/model_config.py
+      - M src/player_eval/build_player_impact_profiles.py
+      - M src/profile_aggregate/team_feature_aggregation.py
+      - M src/simulation/game_model.py
+      - M src/simulation/simulation_config.py
+      - M src/simulation/validate_forecast.py
+  - db0f4de feat: Phase 1 pipeline audit + Phase 3A foundation rules
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-21T02:55:45-05:00
+    - Purpose: Track A (RAPM): Validated pooled_split RAPM alpha=200 is acceptable (slope 0.52-0.59
+    - Files:
+      - M aggregate/player_profile_aggregate.parquet
+      - M docs/plans/master_improvement_plan.md
+      - A docs/stats-gap.md
+      - M src/data_compute/compute_linear_metrics.py
+      - M src/data_compute/fit_rest_hca_coefficients.py
+      - A src/data_fetch/fetch_external_rapm_benchmarks.py
+      - A src/data_fetch/fetch_missing_player_profiles.py
+      - M src/data_fetch/fetch_player_salaries.py
+      - M src/data_normalize/pbp_parser.py
+      - M src/features/derive_lineups.py
+      - M src/player_eval/build_player_impact_profiles.py
+  - e56f0a0 planned archetype validation
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-21T13:30:41-05:00
+    - Purpose: This commit adds 9, modifies 8 across .claude, aggregate, docs, loop, memory, src.
+    - Files:
+      - A .claude/config
+      - A .claude/debugging_log.md
+      - A .claude/notification_log.txt
+      - A .claude/pending-improvements.md
+      - A .claude/settings.json
+      - A .claude/skill_memory_cursor.tmp
+      - M aggregate/player_profile_aggregate.parquet
+      - M docs/plans/archetype_validation_plan.md
+      - M docs/plans/master_improvement_plan.md
+      - M docs/reference/basketball-intuitions.md
+      - A docs/reference/data-pipeline-dependency.md
+      - M loop/in_progress_context.txt
+      - A memory/debugging_patterns.md
+      - A memory/skill_effectiveness.md
+      - M src/data_compute/compute_defensive_archetypes_v2.py
+      - M src/data_compute/compute_player_archetypes.py
+      - M src/profile_aggregate/build_profile_aggregate.py
+
+### 2026-05-22 04:03:22Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: e56f0a00a8cede04dbcfbc5f0912658304ff6181..f5fb1ddf2a8aa7aa8005f750918c6943f95bd3fe
+- Commits:
+  - f5fb1dd feat: Integrate 13 context engineering skills + establish mandatory output format
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-21T23:03:05-05:00
+    - Purpose: Add comprehensive context engineering skill library from muratcankoylan/agent-skills-for-context-engineering:
+    - Files:
+      - M .github/skills/SKILL_MAP.md
+      - A .github/skills/advanced-evaluation/SKILL.md
+      - A .github/skills/advanced-evaluation/references/bias-mitigation.md
+      - A .github/skills/advanced-evaluation/references/evaluation-pipeline.md
+      - A .github/skills/advanced-evaluation/references/implementation-patterns.md
+      - A .github/skills/advanced-evaluation/references/metrics-guide.md
+      - A .github/skills/advanced-evaluation/scripts/evaluation_example.py
+      - A .github/skills/bdi-mental-states/SKILL.md
+      - A .github/skills/bdi-mental-states/references/bdi-ontology-core.md
+      - A .github/skills/bdi-mental-states/references/framework-integration.md
+      - A .github/skills/bdi-mental-states/references/rdf-examples.md
+      - A .github/skills/bdi-mental-states/references/sparql-competency.md
+      - A .github/skills/context-compression/SKILL.md
+      - A .github/skills/context-compression/references/evaluation-framework.md
+      - A .github/skills/context-compression/scripts/compression_evaluator.py
+      - A .github/skills/context-compression/tests/test_compression_evaluator.py
+      - A .github/skills/context-degradation/SKILL.md
+      - A .github/skills/context-degradation/references/patterns.md
+      - A .github/skills/context-degradation/scripts/degradation_detector.py
+      - A .github/skills/context-fundamentals/SKILL.md
+      - A .github/skills/context-fundamentals/references/context-components.md
+      - A .github/skills/context-fundamentals/scripts/context_manager.py
+      - A .github/skills/context-optimization/SKILL.md
+      - A .github/skills/context-optimization/references/optimization_techniques.md
+      - A .github/skills/context-optimization/scripts/compaction.py
+      - A .github/skills/evaluation/SKILL.md
+      - A .github/skills/evaluation/references/metrics.md
+      - A .github/skills/evaluation/scripts/evaluator.py
+      - A .github/skills/filesystem-context/SKILL.md
+      - A .github/skills/filesystem-context/references/implementation-patterns.md
+      - A .github/skills/filesystem-context/scripts/filesystem_context.py
+      - A .github/skills/latent-briefing/SKILL.md
+      - A .github/skills/latent-briefing/references/attention-matching-formulation.md
+      - A .github/skills/memory-systems/SKILL.md
+      - A .github/skills/memory-systems/references/implementation.md
+      - A .github/skills/memory-systems/scripts/memory_store.py
+      - A .github/skills/multi-agent-patterns/SKILL.md
+      - A .github/skills/multi-agent-patterns/references/frameworks.md
+      - A .github/skills/multi-agent-patterns/scripts/coordination.py
+      - A .github/skills/project-development/SKILL.md
+      - A .github/skills/project-development/references/case-studies.md
+      - A .github/skills/project-development/references/pipeline-patterns.md
+      - A .github/skills/project-development/scripts/pipeline_template.py
+      - A .github/skills/tool-design/SKILL.md
+      - A .github/skills/tool-design/references/architectural_reduction.md
+      - A .github/skills/tool-design/references/best_practices.md
+      - A .github/skills/tool-design/scripts/description_generator.py
+      - M CLAUDE.md
+      - M loop/in_progress_context.txt

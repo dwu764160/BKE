@@ -107,9 +107,9 @@ SEASONS_RAPM: List[str] = SEASONS  # all seasons feed RAPM pooling
 # ---------------------------------------------------------------------------
 # Qualification filters
 # ---------------------------------------------------------------------------
-MIN_MINUTES = 500
-MIN_GP = 20
-MIN_MPG = 15.0
+MIN_MINUTES = 200
+MIN_GP = 10
+MIN_MPG = 8.0
 MIN_POSSESSIONS = 500  # minimum possessions for RAPM reliability
 
 # ---------------------------------------------------------------------------

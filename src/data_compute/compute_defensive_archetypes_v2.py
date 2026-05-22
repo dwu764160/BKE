@@ -630,73 +630,8 @@ def _pick_with_margin(scores: dict[str, float], rotational_role: str | None):
 
 
 def _pick_secondary(archetype, row):
-    """Pick behavior-only secondary tag for the given primary."""
-    vpctl = row["versatility_pctl"]
-    stl_pctl = row["stl_pctl"]
-    blk_pctl = row["blk_pctl"]
-    hustle_pctl = row["hustle_pctl"]
-    defl_pctl = row.get("deflections_pctl", 0.5)
-    screen_nav = row.get("screen_navigation_index_pctl", 0.5)
-    help_idx = row.get("help_activity_index_pctl", 0.5)
-
-    if archetype == "POA Defender":
-        if screen_nav >= 0.80:
-            return "Screen Navigator"
-        if stl_pctl >= 0.75 or defl_pctl >= 0.80:
-            return "Ball Hawk"
-        return "Primary"
-
-    if archetype == "Wing Stopper":
-        if vpctl >= 0.75:
-            return "Switchable"
-        if help_idx >= 0.75:
-            return "Helper"
-        return "Primary"
-
-    if archetype == "Off-Ball Chaser":
-        if stl_pctl >= 0.85 or defl_pctl >= 0.85:
-            return "Ball Hawk"
-        if hustle_pctl >= 0.75 or screen_nav >= 0.70:
-            return "Hustler"
-        return "Active Hands"
-
-    if archetype == "Versatile Defender":
-        if vpctl >= 0.85:
-            return "Switchable"
-        if help_idx >= 0.75:
-            return "Helper"
-        return "Switchable"
-
-    if archetype == "Rim Protector":
-        if vpctl >= 0.75:
-            return "Switchable"
-        if blk_pctl >= 0.90:
-            return "Shot Blocker"
-        return "Interior"
-
-    if archetype == "Dropping Big":
-        if blk_pctl >= 0.70:
-            return "Interior"
-        return "Help"
-
-    if archetype == "Mobile Big":
-        if vpctl >= 0.80:
-            return "Switchable"
-        if hustle_pctl >= 0.75:
-            return "Hustler"
-        return "Switchable"
-
-    if archetype == "Rotational Defender":
-        if help_idx >= 0.70:
-            return "Helper"
-        if vpctl >= 0.70:
-            return "Switchable"
-        return "Primary"
-
-    if archetype == "Low-Activity Defender":
-        return "Liability"
-
-    return "Primary"
+    """Defensive secondary tags eliminated — 9 primary archetypes are sufficient."""
+    return None
 
 
 def compute_defensive_effectiveness(row, archetype):

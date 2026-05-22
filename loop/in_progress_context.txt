@@ -13,22 +13,18 @@ COMPLETED:
 ✓ Updated CLAUDE.md with Output Format mandatory section
 ✓ Updated SKILL_MAP.md with all 14 new skills (Selection Order + Registry)
 ✓ Restructured loop/in_progress_context.txt format (THIS FILE)
+✓ Mirrored CLAUDE.md updates to GEMINI.md
+✓ Smoke test: verified 3 skills load correctly (scope-creep-guard, detailed-chat-output, simulation)
 
 PENDING:
-- Smoke test: verify 3 skills load correctly in sample task
-- Verify detailed-chat-output format is applied to next 5 responses
+- Verify detailed-chat-output format is applied to next 4 responses
 - Document new loop file format in README or FAQ
 
 CHANGES MADE:
-- .github/skills/: 14 new skill directories (advanced-evaluation, bdi-mental-states,
-  context-compression, context-degradation, context-fundamentals, context-optimization,
-  evaluation, filesystem-context, hosted-agents, latent-briefing, memory-systems,
-  multi-agent-patterns, project-development, tool-design)
-- CLAUDE.md: Added Output Format section (lines 110-119), added Context Engineering
-  Skills section (lines 99-109), clarified loop file usage (lines 13-16)
-- SKILL_MAP.md: Added Context Engineering section (lines 44-57), added 14 skills to
-  Skill Registry table (72 new rows), updated skill count from 25 to 39
+- GEMINI.md: Synchronized with CLAUDE.md mandatory skill loading instructions.
+- .github/skills/: 14 new skill directories.
+- CLAUDE.md: Added mandatory sections.
+- SKILL_MAP.md: Updated registry and selection order.
 
 NEXT:
-Replace this task entry when next task begins. Do not append — delete all and write
-the new task description only. This preserves token budget for context history.
+Verify output format consistency and document loop file format.
