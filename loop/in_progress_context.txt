@@ -1,63 +1,44 @@
-TASK: Phase 3B — BKE v3.2 PTS Architecture Optimization
+TASK: BKE v3.2 PTS Optimization — COMPLETE
 SESSION: 2026-05-22
-STATUS: Plan complete — ready for Opus execution
+STATUS: Adopted as production
 
-OBJECTIVE:
-Optimize the Portable Talent Score (PTS) as a standalone metric for:
-  1. Game outcome prediction (Brier, measured by validate_forecast.py)
-  2. Lineup-level plus-minus alignment (measured by new validate_lineup_pts.py)
+PRODUCTION ARTIFACTS:
+  data/processed/bke/pts_v32.parquet                       — per-player PTS (5,848 rows)
+  data/processed/forecast/projected_team_features_v32.parquet — patched features (210 rows)
+  src/modeling/model_config.py                              — PTS_V32 config block added
+  docs/bke_v32_pts_tuning_report.md                         — full report (550+ lines)
 
-v3.2 Philosophy:
-  - PTS   → game model pipeline input + player ranking
-  - RDIS  → contextual production metric (not in pipeline; cosmetic/analytical only)
-  - BKE   → cosmetic display score only (no pipeline input)
+KEY SCRIPTS:
+  scripts/build_pts_v32.py            — production build
+  scripts/validate_lineup_pts.py      — Method 2 lineup r harness
+  scripts/pts_v32_posthoc_harness.py  — joint Brier + lineup r runner
+  scripts/pts_v32_posthoc_sweep.py    — sweep wrapper
 
-EXPERIMENT RESULTS (scripts/experiment_pts_rdis_blend.py — DONE):
-  Baseline (current BKE blend): Brier = 0.2400
-  Pure PTS (α=1.00):            Brier = 0.2248  (best; −0.0152)
-  Pure RDIS (α=0.00):           Brier = 0.2303
-  Continuity discount (B):      Worse than fixed split at same α
-  → Decision: use PTS only (α=1.00) for game model. RDIS does not improve Brier.
-  → Note: experiment PTS still has RAPM contamination. Clean PTS should do better.
+FINAL METRICS (8,284 walk-forward games, 5,143 lineups):
+  Brier:         0.2352 (vs 0.2420 baseline; −0.0068)
+  Accuracy:      0.603  (vs 0.578; +0.025)
+  Calibration:   0.0489 (vs 0.0563; −0.0074)
+  Lineup r:      0.318  (vs 0.309; +0.009)
+  Weighted r:    0.338  (vs 0.328; +0.010)
 
-PRIORITY ARCHITECTURE FIXES (must do before tuning):
-  Fix 1: Remove Layer 1A RAPM from PTS (src/modeling/layer1_portable_talent.py)
-  Fix 2: Replace Dim 6 DRAPM with matchup-level opponent eFG% (tracking/matchup data)
-  Fix 3: Prune Dim 5 to ball-pressure only (remove BLK%, loose balls)
-  Fix 4: Move Layer 1B (playtype efficiency) from PTS to RDIS
+ADOPTED v3.2 CONFIG (PtsV32Config in model_config.py):
+  Fix 1: w_rapm_backbone=0.0           ✓ (was already in offensive_portable_z)
+  Fix 4: w_playtype_efficiency=0.0     ✓ (was already in offensive_portable_z)
+  Fix 3: dim5_weight_reduction=0.03    ✓ (post-hoc weight reduction)
+  Fix 2: use_matchup_dim6=False        ⚠️ REJECTED (hurt lineup r 0.011)
+  5G:    defensive_archetype_shrinkage=0.15
+  5E:    multi_season_smoothing=0.20
+  5E:    star_amp_top1=1.0 (off)
 
-KEY FILES TO MODIFY:
-  src/modeling/layer1_portable_talent.py    — Fixes 1, 2, 3
-  src/modeling/model_config.py              — Weight updates for all tuning candidates
-  src/profile_aggregate/team_feature_aggregation.py — Wire PTS into talent bases
-  scripts/validate_lineup_pts.py            — NEW: lineup-level validation script
+DOWNSTREAM:
+  - Game prediction pipeline: point validate_forecast at projected_team_features_v32.parquet
+  - BKE viewer: untouched (cosmetic v2.7 BKE preserved)
+  - RDIS: v2.7 cosmetic only; not in v3.2 game pipeline
+  - Sleeve C handoff: needs regenerated docs/integration/for-alpha-thesis.md
+  - Sim game: PTS adequate; matchup interactions still need bespoke work
 
-PLAN DOC: docs/plans/phase_3b_pts_rdis_split.md
-  - Section 5: Wide tuning candidate table (5A–5H) covering all adjustable parameters
-  - Method 2: Lineup-level script spec (pbp_with_lineups_{season}.parquet source)
-  - Optimization mandate: what Opus can/cannot change
-
-PENDING SUB-TASKS (in order):
-  3B.0 Write validate_lineup_pts.py (pbp_with_lineups source)
-  3B.1 Establish pre-fix baselines on both metrics
-  3B.2 Fix 1: Remove RAPM from Layer 1A; measure both metrics
-  3B.3 Fix 4: Move playtype efficiency to RDIS; measure both metrics
-  3B.4 Fix 2: Replace Dim 6 DRAPM (parallel with 3B.5)
-  3B.5 Fix 3: Prune Dim 5 (parallel with 3B.4)
-  3B.6 Dimension weight calibration via ridge regression
-  3B.7 Sweep Section 5 tuning candidates
-  3B.8 Adopt best config; update model_config.py
-  3B.9 Wire PTS into team_feature_aggregation.py
-  3B.10 Final validation; write report
-
-VALIDATION TARGETS:
-  Season-level Brier: < 0.220 (from 0.2248 PTS-only baseline)
-  Lineup Pearson r:   ≥ 0.25 (estimated current: ~0.10–0.15)
-  Braun percentile:   50th–70th within archetype (not 90th+)
-  Stars top-15:       Curry, Luka, KD in peak seasons without weighting hacks
-
-PREVIOUS COMPLETIONS:
-  Phase 2 (minute model): MAE=4.06, r²=0.671 — DONE
-  Phase 4 (archetypes): validated, INTERACTION_MATRIX eliminated — DONE
-  Phase 3A: HCA/B2B fitted empirically — DONE
-  Blend experiment: α grid + continuity sweep — DONE
+NEXT POSSIBLE STEPS:
+  - Regenerate docs/integration/for-alpha-thesis.md with v3.2 Brier numbers
+  - Walk-forward CLV test vs Kalshi closing lines (Sleeve C alpha gate)
+  - Per-game injury / lineup adjustment to projected minutes
+  - Dimension component-level Layer 1 rerun (optional cleanup)

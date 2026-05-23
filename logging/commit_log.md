@@ -480,3 +480,18 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - M readme.md
       - M src/player_eval/project_next_season.py
       - M src/simulation/train_minute_model.py
+
+### 2026-05-22 20:23:49Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: f0092d9292dbfead0266ffef89483019b937ad0e..f126d3c31635a40fe9d8c2121a38a60aed4c204a
+- Commits:
+  - f126d3c feat: Phase 3B plan — BKE v3.2 PTS/RDIS architecture split + blend experiment
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-22T15:23:42-05:00
+    - Purpose: v3.2 philosophy: PTS → game model pipeline + player ranking; RDIS → contextual
+    - Files:
+      - A docs/plans/phase_3b_pts_rdis_split.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/experiment_pts_rdis_blend.py

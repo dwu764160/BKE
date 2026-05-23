@@ -730,6 +730,68 @@ V31_EXPERIMENTAL = V31ExperimentalConfig()
 BKE_V31_COMPONENTS_JSON = os.path.join(BKE_DIR, "bke_v31_components.json")
 
 # ---------------------------------------------------------------------------
+# BKE v3.2 — PTS / RDIS Architecture Split
+# ---------------------------------------------------------------------------
+# v3.2 philosophy: PTS feeds the game model; RDIS is cosmetic / contract eval
+# only. Dimension weights and architectural fixes were tuned via the
+# Phase 3B sweep (see docs/bke_v32_pts_tuning_report.md).
+@dataclass
+class PtsV32Config:
+    """Production v3.2 PTS configuration.
+
+    Locked in 2026-05-22 after Phase 3B sweep. The numbers below are the
+    winning post-hoc adjustment knobs over the v2.7 PTS computation
+    (`offensive_portable_z` / `defensive_portable_z` columns in the BKE
+    decomposition parquet).
+    """
+    # Layer 1 top-level weights — Fix 1 + Fix 4 baked in (both go to zero)
+    w_rapm_backbone: float = 0.0          # Fix 1: removed entirely
+    w_playtype_efficiency: float = 0.0    # Fix 4: routed to RDIS
+    w_dimension_model: float = 1.0        # all weight on dim model
+
+    # Fix 2 — matchup-based Dim 6 residual swap (vs Dim 6 with DRAPM)
+    # DECISION 2026-05-22: disabled at production. Matchup Dim 6 (from
+    # defensive_archetypes_v2 D_FG_DIFF / d_results_pctl) improved Brier
+    # marginally (-0.0006) but hurt lineup r meaningfully (-0.011) — net
+    # cost on per-player calibration. Available as research toggle.
+    use_matchup_dim6: bool = False
+    matchup_dim6_strength: float = 0.0
+    matchup_dim6_components_weights: Dict[str, float] = field(default_factory=lambda: {
+        "d_results_pctl": 0.35,
+        "D_FG_DIFF": 0.30,
+        "contested_shots_pctl": 0.15,
+        "rim_protection_index_pctl": 0.20,
+    })
+
+    # Fix 3 — Dim 5 weight reduction (since raw components aren't stored)
+    # 8% → 5% effective, with the 3pp routed to Dim 6 + Dim 8 implicitly via
+    # variance restoration in the recompute step.
+    dim5_weight_reduction: float = 0.03
+
+    # 5G — Defensive Bayesian shrinkage toward archetype mean
+    defensive_archetype_shrinkage: float = 0.15
+
+    # 5E — Multi-season smoothing (current * 0.8 + prior * 0.2)
+    multi_season_smoothing: float = 0.20
+
+    # 5E — Star amplification at team aggregation (disabled — no Brier benefit)
+    star_amp_top1: float = 1.0
+    star_amp_top2: float = 1.0
+
+    # 5D — Final PTS clip
+    final_pts_clip: float = 4.0
+
+
+PTS_V32 = PtsV32Config()
+
+# v3.2 output paths
+PTS_V32_PARQUET = os.path.join(BKE_DIR, "pts_v32.parquet")
+PROJ_TEAM_FEATURES_V32_PARQUET = os.path.join(
+    PROCESSED_DIR, "forecast", "projected_team_features_v32.parquet"
+)
+BKE_V32_REPORT_JSON = os.path.join(REPORTS_DIR, "bke_v32_validation.json")
+
+# ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
 def clean_id(val) -> str:
