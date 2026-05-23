@@ -495,3 +495,72 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - M logging/commit_log.md
       - M loop/in_progress_context.txt
       - A scripts/experiment_pts_rdis_blend.py
+
+### 2026-05-23 07:44:08Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: f126d3c31635a40fe9d8c2121a38a60aed4c204a..765eed68cd2e26a5faee26a5e320674f0baed01c
+- Commits:
+  - 765eed6 PTS 4.0 pla
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-23T02:44:02-05:00
+    - Purpose: This commit adds 12, modifies 7 across .claude, docs, logging, loop, scripts, src.
+    - Files:
+      - M .claude/debugging_log.md
+      - M .claude/notification_log.txt
+      - M .claude/pending-improvements.md
+      - M .claude/skill_memory_cursor.tmp
+      - A docs/bke_v32_pts_tuning_report.md
+      - A docs/plans/pts_4_0_design.md
+      - A docs/v3_3_phase_a_validation.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/build_pts_v32.py
+      - A scripts/diagnose_brier_baseline.py
+      - A scripts/pts_v32_harness.py
+      - A scripts/pts_v32_posthoc_harness.py
+      - A scripts/pts_v32_posthoc_sweep.py
+      - A scripts/pts_v32_recompute.py
+      - A scripts/pts_v32_sweep.py
+      - A scripts/validate_lineup_pts.py
+      - A scripts/validate_lineup_pts_v2.py
+      - M src/modeling/model_config.py
+
+### 2026-05-23 07:44:16Z - Push to deploy
+- Remote URL: https://github.com/Daniel-Wu-Github/BKE.git
+- Remote ref: refs/heads/personal
+- Range: f0092d9292dbfead0266ffef89483019b937ad0e..765eed68cd2e26a5faee26a5e320674f0baed01c
+- Commits:
+  - f126d3c feat: Phase 3B plan — BKE v3.2 PTS/RDIS architecture split + blend experiment
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-22T15:23:42-05:00
+    - Purpose: v3.2 philosophy: PTS → game model pipeline + player ranking; RDIS → contextual
+    - Files:
+      - A docs/plans/phase_3b_pts_rdis_split.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/experiment_pts_rdis_blend.py
+  - 765eed6 PTS 4.0 pla
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-23T02:44:02-05:00
+    - Purpose: This commit adds 12, modifies 7 across .claude, docs, logging, loop, scripts, src.
+    - Files:
+      - M .claude/debugging_log.md
+      - M .claude/notification_log.txt
+      - M .claude/pending-improvements.md
+      - M .claude/skill_memory_cursor.tmp
+      - A docs/bke_v32_pts_tuning_report.md
+      - A docs/plans/pts_4_0_design.md
+      - A docs/v3_3_phase_a_validation.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/build_pts_v32.py
+      - A scripts/diagnose_brier_baseline.py
+      - A scripts/pts_v32_harness.py
+      - A scripts/pts_v32_posthoc_harness.py
+      - A scripts/pts_v32_posthoc_sweep.py
+      - A scripts/pts_v32_recompute.py
+      - A scripts/pts_v32_sweep.py
+      - A scripts/validate_lineup_pts.py
+      - A scripts/validate_lineup_pts_v2.py
+      - M src/modeling/model_config.py

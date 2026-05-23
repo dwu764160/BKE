@@ -800,3 +800,39 @@ def clean_id(val) -> str:
     if pd.isna(val):
         return "0"
     return str(val).replace(".0", "")
+
+# ---------------------------------------------------------------------------
+# PTS v4.0 Configurations
+# ---------------------------------------------------------------------------
+@dataclass
+class PtsV40MultiSeasonConfig:
+    tau_possessions: int = 800   # sweep winner: best joint_r + lowest Brier across 45 configs
+    geometric_decay: float = 0.70
+    k_max_prior: int = 3
+    rookie_poss_threshold: int = 500
+    poss_fallback: int = 1500  # when possessions_played NaN
+    archetype_mean_prior: bool = True  # rookies -> archetype cohort mean
+
+@dataclass
+class PtsV40DefenseConfig:
+    gamma_match: float = 0.45
+    gamma_lineup: float = 0.35
+    gamma_arch: float = 0.20
+    matchup_component_weights: Dict[str, float] = field(default_factory=lambda: {
+        "d_results_pctl": 0.40,                # sign +1 (higher pctl = better defense)
+        "D_FG_DIFF": -0.30,                    # sign -1 (lower DFG_DIFF = better defense; invert)
+        "contested_shots_pctl": 0.15,          # sign +1
+        "rim_protection_index_pctl": 0.15,     # sign +1
+    })
+    final_clip: float = 3.5
+    pre2022_fallback: bool = True
+
+@dataclass
+class PtsV40CompositeConfig:
+    defense_v40c_weight: float = 0.60
+    defense_v40a_weight: float = 0.40
+
+PTS_V40_A_PARQUET = os.path.join(BKE_DIR, "pts_v40_a.parquet")
+PTS_V40_C_PARQUET = os.path.join(BKE_DIR, "pts_v40_c.parquet")
+PTS_V40_PARQUET = os.path.join(BKE_DIR, "pts_v40.parquet")
+PROJ_TEAM_FEATURES_V40_PARQUET = os.path.join(PROCESSED_DIR, "forecast", "projected_team_features_v40.parquet")
