@@ -815,22 +815,22 @@ class PtsV40MultiSeasonConfig:
 
 @dataclass
 class PtsV40DefenseConfig:
-    gamma_match: float = 0.45
-    gamma_lineup: float = 0.35
-    gamma_arch: float = 0.20
+    gamma_match: float = 0.30
+    gamma_lineup: float = 0.60
+    gamma_arch: float = 0.10
     matchup_component_weights: Dict[str, float] = field(default_factory=lambda: {
         "d_results_pctl": 0.40,                # sign +1 (higher pctl = better defense)
         "D_FG_DIFF": -0.30,                    # sign -1 (lower DFG_DIFF = better defense; invert)
         "contested_shots_pctl": 0.15,          # sign +1
         "rim_protection_index_pctl": 0.15,     # sign +1
     })
-    final_clip: float = 3.5
+    final_clip: float = 2.5
     pre2022_fallback: bool = True
 
 @dataclass
 class PtsV40CompositeConfig:
-    defense_v40c_weight: float = 0.60
-    defense_v40a_weight: float = 0.40
+    defense_v40c_weight: float = 0.40
+    defense_v40a_weight: float = 0.60
 
 PTS_V40_A_PARQUET = os.path.join(BKE_DIR, "pts_v40_a.parquet")
 PTS_V40_C_PARQUET = os.path.join(BKE_DIR, "pts_v40_c.parquet")
