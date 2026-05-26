@@ -815,9 +815,9 @@ class PtsV40MultiSeasonConfig:
 
 @dataclass
 class PtsV40DefenseConfig:
-    gamma_match: float = 0.30
-    gamma_lineup: float = 0.60
-    gamma_arch: float = 0.10
+    gamma_match: float = 0.45   # OOS sweep winner — design-doc defaults vindicated after leakage fix
+    gamma_lineup: float = 0.35
+    gamma_arch: float = 0.20
     matchup_component_weights: Dict[str, float] = field(default_factory=lambda: {
         "d_results_pctl": 0.40,                # sign +1 (higher pctl = better defense)
         "D_FG_DIFF": -0.30,                    # sign -1 (lower DFG_DIFF = better defense; invert)
