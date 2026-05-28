@@ -129,6 +129,11 @@ REST_DAY_BONUS_AWAY = float(REST_HCA.get("rest_day_bonus_away", 0.0))
 LEAGUE_AVG_HCA_FITTED = float(REST_HCA.get("league_avg_hca", HOME_COURT_ADVANTAGE))
 TEAM_HCA: dict = dict(REST_HCA.get("team_hca", {}))
 
+# 3-in-4 penalty (hardcoded prior; not yet fitted from data)
+# Sign convention: home perspective — negative hurts home team, positive hurts away.
+HOME_3IN4_PENALTY = -1.0   # pts/100 extra when home team plays 3rd game in 4 days
+AWAY_3IN4_PENALTY =  1.0   # pts/100 extra when away team plays 3rd game in 4 days
+
 
 def get_team_hca(team_abbr: str) -> float:
     """Return team-specific HCA (shrunk toward league mean for low-sample teams).

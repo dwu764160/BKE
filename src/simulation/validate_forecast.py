@@ -43,12 +43,102 @@ from src.simulation.game_model import (
     TeamParams,
     build_schedule,
     compute_game_distribution,
+    compute_game_distribution_with_context,
 )
 from src.simulation.simulation_config import (
     FORECAST_TEAM_FEATURES_PATH,
     HISTORICAL_DIR,
     REPORTS_DIR,
 )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Step 3 — Rest / B2B lookup helper
+# ═════════════════════════════════════════════════════════════════════
+
+def build_rest_lookup(season: str, game_logs_path: Path = None) -> dict:
+    """Return {game_id: {home_b2b, away_b2b, home_3in4, away_3in4,
+                          home_days_rest, away_days_rest}} for one season.
+
+    Convention: days_rest = calendar_day_diff - 1  (0 = B2B, 1 = standard).
+    Consistent with fit_rest_hca_coefficients.py so fitted coefficients apply correctly.
+    """
+    gl_path = game_logs_path or HISTORICAL_DIR / "team_game_logs.parquet"
+    if not gl_path.exists():
+        return {}
+
+    gl = pd.read_parquet(gl_path)
+    gl = gl[gl["SEASON"] == season].copy()
+    if gl.empty:
+        return {}
+
+    gl["GAME_DATE"] = pd.to_datetime(gl["GAME_DATE"])
+    gl = gl.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"]).reset_index(drop=True)
+
+    gl["_prev"] = gl.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(1)
+    raw_diff = (gl["GAME_DATE"] - gl["_prev"]).dt.days - 1
+    gl["days_rest"] = raw_diff.fillna(3).clip(lower=0, upper=7).astype(int)
+    gl["is_b2b"] = gl["days_rest"] == 0
+
+    gl["_prev2"] = gl.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(2)
+    span = (gl["GAME_DATE"] - gl["_prev2"]).dt.days.fillna(99)
+    gl["is_3in4"] = (span <= 3) & gl["is_b2b"]
+
+    per_team: dict = {}
+    for _, row in gl.iterrows():
+        per_team[(str(row["GAME_ID"]), str(row["TEAM_ABBREVIATION"]).upper())] = {
+            "days_rest": int(row["days_rest"]),
+            "is_b2b":    bool(row["is_b2b"]),
+            "is_3in4":   bool(row["is_3in4"]),
+        }
+
+    _def = {"days_rest": 1, "is_b2b": False, "is_3in4": False}
+    lookup: dict = {}
+    home_rows = gl[gl["MATCHUP"].str.contains("vs.", na=False)]
+    for _, row in home_rows.iterrows():
+        gid  = str(row["GAME_ID"])
+        home = str(row["TEAM_ABBREVIATION"]).upper()
+        parts = str(row["MATCHUP"]).split(" vs. ")
+        away  = parts[1].strip().upper() if len(parts) > 1 else ""
+        h = per_team.get((gid, home), _def)
+        a = per_team.get((gid, away), _def)
+        lookup[gid] = {
+            "home_b2b":       int(h["is_b2b"]),
+            "away_b2b":       int(a["is_b2b"]),
+            "home_3in4":      int(h["is_3in4"]),
+            "away_3in4":      int(a["is_3in4"]),
+            "home_days_rest": h["days_rest"],
+            "away_days_rest": a["days_rest"],
+        }
+    return lookup
+
+
+def _get_dist(
+    game: Game,
+    team_params: dict,
+    config: SimConfig,
+    rest_lookup: dict,
+) -> dict:
+    """Compute game distribution, using rest context when available."""
+    ctx = rest_lookup.get(game.game_id) if rest_lookup else None
+    if ctx:
+        return compute_game_distribution_with_context(
+            home_team=team_params[game.home_team],
+            away_team=team_params[game.away_team],
+            is_b2b_home=ctx["home_b2b"],
+            is_b2b_away=ctx["away_b2b"],
+            days_rest_home=ctx["home_days_rest"],
+            days_rest_away=ctx["away_days_rest"],
+            is_3in4_home=ctx["home_3in4"],
+            is_3in4_away=ctx["away_3in4"],
+            config=config,
+        )
+    return compute_game_distribution(
+        team_params[game.home_team],
+        team_params[game.away_team],
+        is_home_a=True,
+        config=config,
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -99,6 +189,7 @@ def compute_game_metrics(
     schedule: List[Game],
     team_params: Dict[str, TeamParams],
     config: SimConfig,
+    rest_lookup: dict = None,
 ) -> Dict:
     """Brier, log-loss, accuracy, margin RMSE for a set of games."""
     probs = []
@@ -112,13 +203,9 @@ def compute_game_metrics(
         if np.isnan(game.home_win):
             continue
 
-        dist = compute_game_distribution(
-            team_params[game.home_team],
-            team_params[game.away_team],
-            is_home_a=True,
-            config=config,
-        )
-        probs.append(dist["win_prob_a"])
+        dist = _get_dist(game, team_params, config, rest_lookup)
+        win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
+        probs.append(win_prob)
         actuals.append(game.home_win)
         pred_margins.append(dist["delta_mu"])
         actual_margins.append(game.home_margin if not np.isnan(game.home_margin) else None)
@@ -165,6 +252,7 @@ def compute_calibration(
     team_params: Dict[str, TeamParams],
     config: SimConfig,
     n_bins: int = 10,
+    rest_lookup: dict = None,
 ) -> List[Dict]:
     """10-bin calibration: does the model's X% confidence match observed X% win rate?"""
     probs = []
@@ -176,13 +264,9 @@ def compute_calibration(
         if np.isnan(game.home_win):
             continue
 
-        dist = compute_game_distribution(
-            team_params[game.home_team],
-            team_params[game.away_team],
-            is_home_a=True,
-            config=config,
-        )
-        probs.append(dist["win_prob_a"])
+        dist = _get_dist(game, team_params, config, rest_lookup)
+        win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
+        probs.append(win_prob)
         actuals.append(game.home_win)
 
     if not probs:
@@ -208,6 +292,50 @@ def compute_calibration(
                 "calibration_error": round(abs(float(np.mean(probs[mask])) - float(np.mean(actuals[mask]))), 4),
             })
     return bins
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Game-level prediction export (for CLV measurement, market testing)
+# ═════════════════════════════════════════════════════════════════════
+
+def export_game_predictions(
+    schedule: List[Game],
+    team_params: Dict[str, TeamParams],
+    config: SimConfig,
+    rest_lookup: dict = None,
+) -> pd.DataFrame:
+    """
+    Export per-game predictions in CLV format.
+
+    Returns DataFrame with columns:
+      - game_date (str, YYYY-MM-DD)
+      - home_team (str, 3-letter abbreviation)
+      - away_team (str, 3-letter abbreviation)
+      - bke_home_win_prob (float, 0–1)
+      - home_result (int, 1=home win, 0=away win)
+
+    Only includes games where:
+      - Both teams are in team_params
+      - Actual result (home_win) is known (not NaN)
+    """
+    rows = []
+    for game in schedule:
+        if game.home_team not in team_params or game.away_team not in team_params:
+            continue
+        if np.isnan(game.home_win):
+            continue
+
+        dist = _get_dist(game, team_params, config, rest_lookup)
+        win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
+        rows.append({
+            "game_date": game.date,
+            "home_team": game.home_team,
+            "away_team": game.away_team,
+            "bke_home_win_prob": float(win_prob),
+            "home_result": int(game.home_win),
+        })
+
+    return pd.DataFrame(rows)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -258,6 +386,7 @@ def main() -> None:
     all_actuals = []
     all_cal_errors_weighted = []
     total_games_across = 0
+    all_game_predictions = []  # For CLV export
 
     for season in available_seasons:
         params = forecast_params[season]
@@ -278,10 +407,15 @@ def main() -> None:
             print(f"  {season}: empty schedule — skipping")
             continue
 
+        rest_lookup = build_rest_lookup(season)
+        n_b2b = sum(1 for v in rest_lookup.values() if v["home_b2b"] or v["away_b2b"])
         print(f"\n  {season} (projected ratings vs. actual games):")
+        if rest_lookup:
+            print(f"    Rest context: {len(rest_lookup)} games, {n_b2b} with ≥1 B2B team "
+                  f"({n_b2b / len(rest_lookup):.1%})")
 
-        metrics = compute_game_metrics(schedule, params, config)
-        cal_bins = compute_calibration(schedule, params, config)
+        metrics = compute_game_metrics(schedule, params, config, rest_lookup=rest_lookup)
+        cal_bins = compute_calibration(schedule, params, config, rest_lookup=rest_lookup)
 
         result["game_level"][season] = metrics
         result["calibration"][season] = cal_bins
@@ -305,11 +439,9 @@ def main() -> None:
         for game in schedule:
             if game.home_team in params and game.away_team in params:
                 if not np.isnan(game.home_win):
-                    dist = compute_game_distribution(
-                        params[game.home_team], params[game.away_team],
-                        is_home_a=True, config=config,
-                    )
-                    all_probs.append(dist["win_prob_a"])
+                    dist = _get_dist(game, params, config, rest_lookup)
+                    win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
+                    all_probs.append(win_prob)
                     all_actuals.append(game.home_win)
 
         for b in cal_bins:
@@ -323,6 +455,10 @@ def main() -> None:
             "log_loss": log_loss,
             "accuracy": acc,
         }
+
+        # Collect game predictions for CLV export
+        season_predictions = export_game_predictions(schedule, params, config, rest_lookup=rest_lookup)
+        all_game_predictions.append(season_predictions)
 
     # Aggregate across all walk-forward transitions
     if all_probs:
@@ -362,10 +498,18 @@ def main() -> None:
         print("Note: these ratings were built from PRIOR-SEASON projected profiles.")
         print("Compare to validate_sim.py (same-season backtest) to quantify leakage.")
 
-    # Save
+    # Save game predictions for CLV measurement
+    if all_game_predictions:
+        game_preds_df = pd.concat(all_game_predictions, ignore_index=True)
+        game_preds_path = REPORTS_DIR / "bke_game_forecasts.parquet"
+        game_preds_df.to_parquet(game_preds_path, index=False)
+        print(f"\nExported {len(game_preds_df)} game predictions to {game_preds_path}")
+        print(f"  Schema: game_date, home_team, away_team, bke_home_win_prob, home_result")
+
+    # Save validation metrics
     out_path = REPORTS_DIR / "forecast_game_validation.json"
     out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(f"\nSaved: {out_path}")
+    print(f"Saved: {out_path}")
 
 
 if __name__ == "__main__":

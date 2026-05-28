@@ -49,6 +49,8 @@ from src.simulation.simulation_config import (
     B2B_PENALTY_AWAY,
     REST_DAY_BONUS_HOME,
     REST_DAY_BONUS_AWAY,
+    HOME_3IN4_PENALTY,
+    AWAY_3IN4_PENALTY,
     get_team_hca,
     get_team_pace,
     DEFAULT_PACE_PER_48,
@@ -137,6 +139,8 @@ def compute_game_distribution_with_context(
     is_b2b_away: int = 0,
     days_rest_home: int = 1,
     days_rest_away: int = 1,
+    is_3in4_home: int = 0,
+    is_3in4_away: int = 0,
     use_team_hca: bool = True,
     use_b2b: bool = True,
     use_rest: bool = True,
@@ -162,9 +166,15 @@ def compute_game_distribution_with_context(
         hca = config.home_court_advantage
 
     # B2B adjustment (per fitted coefficients; sign already baked into coef)
+    # 3-in-4 adds an extra penalty on top of B2B (hardcoded prior, home perspective)
     b2b_adj = 0.0
     if use_b2b:
-        b2b_adj = B2B_PENALTY_HOME * float(is_b2b_home) + B2B_PENALTY_AWAY * float(is_b2b_away)
+        b2b_adj = (
+            B2B_PENALTY_HOME * float(is_b2b_home)
+            + B2B_PENALTY_AWAY * float(is_b2b_away)
+            + HOME_3IN4_PENALTY * float(is_3in4_home)
+            + AWAY_3IN4_PENALTY * float(is_3in4_away)
+        )
 
     # Rest day adjustment — centered on 1 day rest (typical) so a neutral matchup adds 0
     rest_adj = 0.0

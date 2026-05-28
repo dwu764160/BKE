@@ -1,44 +1,38 @@
-TASK: BKE v3.2 PTS Optimization — COMPLETE
-SESSION: 2026-05-22
-STATUS: Adopted as production
+TASK: Vegas Accuracy Roadmap — Step 3 COMPLETE, Step 4 (YTD Blending) is next
+STATUS: Steps 1-3 complete. Step 4 is the highest-impact next step.
 
-PRODUCTION ARTIFACTS:
-  data/processed/bke/pts_v32.parquet                       — per-player PTS (5,848 rows)
-  data/processed/forecast/projected_team_features_v32.parquet — patched features (210 rows)
-  src/modeling/model_config.py                              — PTS_V32 config block added
-  docs/bke_v32_pts_tuning_report.md                         — full report (550+ lines)
+STEP 3 FINAL RESULTS (2026-05-28):
 
-KEY SCRIPTS:
-  scripts/build_pts_v32.py            — production build
-  scripts/validate_lineup_pts.py      — Method 2 lineup r harness
-  scripts/pts_v32_posthoc_harness.py  — joint Brier + lineup r runner
-  scripts/pts_v32_posthoc_sweep.py    — sweep wrapper
+✓ IMPLEMENTATION:
+- scripts/build_rest_features.py — per-game rest/B2B/3in4 feature builder
+- src/simulation/simulation_config.py — HOME_3IN4_PENALTY=-1.0, AWAY_3IN4_PENALTY=+1.0 added
+- src/simulation/game_model.py — home_3in4/away_3in4 params added to compute_game_distribution_with_context()
+- src/simulation/validate_forecast.py — build_rest_lookup() + _get_dist() helpers; all 3 metric
+  functions updated; 100% game_id match confirmed
+- scripts/forecast_2025_26_games.py — build_rest_lookup_from_schedule() from Kalshi dates
 
-FINAL METRICS (8,284 walk-forward games, 5,143 lineups):
-  Brier:         0.2352 (vs 0.2420 baseline; −0.0068)
-  Accuracy:      0.603  (vs 0.578; +0.025)
-  Calibration:   0.0489 (vs 0.0563; −0.0074)
-  Lineup r:      0.318  (vs 0.309; +0.009)
-  Weighted r:    0.338  (vs 0.328; +0.010)
+✓ FITTED COEFFICIENTS (already in reports/rest_hca_coefficients.json):
+  B2B home: -1.690 pts/100  |  B2B away: +2.326 pts/100
+  Rest bonus home: +0.317/day  |  Rest bonus away: -0.266/day
+  League avg HCA: 2.147  |  OLS R²: 0.206
 
-ADOPTED v3.2 CONFIG (PtsV32Config in model_config.py):
-  Fix 1: w_rapm_backbone=0.0           ✓ (was already in offensive_portable_z)
-  Fix 4: w_playtype_efficiency=0.0     ✓ (was already in offensive_portable_z)
-  Fix 3: dim5_weight_reduction=0.03    ✓ (post-hoc weight reduction)
-  Fix 2: use_matchup_dim6=False        ⚠️ REJECTED (hurt lineup r 0.011)
-  5G:    defensive_archetype_shrinkage=0.15
-  5E:    multi_season_smoothing=0.20
-  5E:    star_amp_top1=1.0 (off)
+BRIER RESULTS:
+- Historical aggregate (8,284 games, 2018-2025): 0.2418 (was 0.242, delta = -0.0002)
+- 2023-24 specifically: 0.2264 (was 0.2273 baseline, delta = -0.0009)
+- 2023-24 B2B games only (365 games): delta = -0.0016
+- 2025-26 CLV test: Brier 0.2457 (worse due to data staleness + playoff game pollution)
+- 2025-26 CLV: -0.074 (was -0.076, marginal +0.002 improvement)
 
-DOWNSTREAM:
-  - Game prediction pipeline: point validate_forecast at projected_team_features_v32.parquet
-  - BKE viewer: untouched (cosmetic v2.7 BKE preserved)
-  - RDIS: v2.7 cosmetic only; not in v3.2 game pipeline
-  - Sleeve C handoff: needs regenerated docs/integration/for-alpha-thesis.md
-  - Sim game: PTS adequate; matchup interactions still need bespoke work
+KEY INSIGHT: Step 3 gain is real but modest (~-0.001 Brier). The roadmap's -0.010 to -0.015
+estimate was too optimistic. The dominant error source is data staleness + team projection noise
+— not rest/schedule. Step 4 (YTD blending) is expected to be 10x more impactful.
 
-NEXT POSSIBLE STEPS:
-  - Regenerate docs/integration/for-alpha-thesis.md with v3.2 Brier numbers
-  - Walk-forward CLV test vs Kalshi closing lines (Sleeve C alpha gate)
-  - Per-game injury / lineup adjustment to projected minutes
-  - Dimension component-level Layer 1 rerun (optional cleanup)
+STEP 4 DETAILS (YTD Blending — CRITICAL for CLV fix):
+- Script to create: scripts/build_ytd_team_ratings.py
+- Inputs: data/historical/team_game_logs.parquet + projected_team_features.parquet
+- Output: data/processed/forecast/team_ratings_ytd.parquet
+- Logic: alpha(g) = sqrt(g/82), blend preseason proj with actual YTD net rating
+- Expected gain: -0.008 to -0.012 Brier (at game 30, alpha≈0.60 — major shift from static)
+- Integration: replace static team_net_rating_projected in validate_forecast.py with blended
+
+FOR SLEEVE C: Do not allocate yet. Need Step 4 + 2026-27 full season test first.
