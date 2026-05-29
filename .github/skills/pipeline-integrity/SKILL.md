@@ -89,23 +89,55 @@ else:
 if os.path.exists("data/processed/player_rapm.parquet"):
     rapm = pd.read_parquet("data/processed/player_rapm.parquet", columns=["season"])
     print(f"\n=== RAPM SEASONS ===\n  {sorted(rapm['season'].unique())}")
+
+# 6. YTD ratings — expect 2018-26 (2017-18 excluded: no prior-season BKE projection)
+ytd = "data/processed/forecast/team_ratings_ytd.parquet"
+if os.path.exists(ytd):
+    df_ytd = pd.read_parquet(ytd, columns=["season"])
+    ytd_seasons = sorted(df_ytd["season"].unique())
+    expected_ytd = {"2018-19","2019-20","2020-21","2021-22","2022-23","2023-24","2024-25","2025-26"}
+    missing_ytd = expected_ytd - set(ytd_seasons)
+    status = "✓" if not missing_ytd else f"⚠ missing: {missing_ytd}"
+    print(f"\n=== YTD RATINGS === {status}\n  {ytd_seasons}")
+else:
+    print("\n=== YTD RATINGS === MISSING — run build_ytd_team_ratings.py")
+
+# 7. Rest features — expect 2017-26
+rest = "data/processed/forecast/game_rest_features.parquet"
+if os.path.exists(rest):
+    df_rest = pd.read_parquet(rest, columns=["season"])
+    rest_seasons = sorted(df_rest["season"].unique())
+    print(f"\n=== REST FEATURES ===\n  {rest_seasons}")
+else:
+    print("\n=== REST FEATURES === MISSING — run build_rest_features.py")
 ```
 
 ---
 
 ## Step 2 — Identify the Minimal Re-Run Chain
 
-Use this decision table to determine what needs to run. **Only queue steps below the point of change.**
+**The full pipeline always ends with `build_rest_features` → `build_ytd_team_ratings` → `forecast_2025_26_games`. Never skip these terminal steps — they produce the game-level training data Step 5 (GBDT) depends on.**
 
-| What changed | Re-run chain |
-|---|---|
-| Box scores only | `summarize_team_logs` → `build_ytd_team_ratings` → `forecast_2025_26_games` |
-| Tracking files (new season or backfill) | BKE layers 1-4 → `decomposition_engine` → `dbke_v30_defense_shrinkage` → `build_pts_v40` → `build_profile_aggregate` |
-| PBP added/completed for a season | `run_normalization` → `derive_lineups` → `derive_possessions` → `model_rapm` → *(full BKE chain above)* |
-| DARKO updated | `build_profile_aggregate` only |
-| Salaries updated | `build_profile_aggregate` only |
-| model_config.py SEASONS changed | Full pipeline: `scripts/run_full_downstream.sh` |
-| Kalshi closing lines updated | `scripts/compute_kalshi_clv.py` → `scripts/forecast_2025_26_games.py` |
+Use this decision table to determine the *start* of the chain. Run everything from that point to the end.
+
+| What changed | Start here | Then run to end |
+|---|---|---|
+| Box scores only | `summarize_team_logs` | → rest → YTD → CLV |
+| Tracking files (new season or backfill) | BKE layers 1-4 | → decomp → shrinkage → pts_v40 → aggregate → rest → YTD → CLV |
+| PBP added/completed for a season | `run_normalization` | → lineups → possessions → RAPM → *(BKE chain above)* |
+| DARKO updated | `build_profile_aggregate` | → rest → YTD → CLV |
+| Salaries updated | `build_profile_aggregate` | → rest → YTD → CLV |
+| model_config.py SEASONS changed | Full pipeline | `scripts/run_full_downstream.sh` |
+| Kalshi closing lines updated | `forecast_2025_26_games` | (terminal — just re-run CLV) |
+
+**Terminal steps (always run at the end of any pipeline):**
+```
+build_rest_features      — game-level rest/B2B/3-in-4 for all seasons (Step 5 training input)
+build_ytd_team_ratings   — per-game blended mu for 2018-26 (Step 4 + Step 5 training input)
+forecast_2025_26_games   — CLV vs Kalshi closing lines
+```
+
+**YTD coverage note:** `build_ytd_team_ratings` covers seasons 2018-26 (all seasons with projected team features). 2017-18 is excluded — projecting 2017-18 would require 2016-17 BKE scores which are not in the pipeline. This is the correct design; do not attempt to add 2017-18 YTD.
 
 For a full re-run after a new season is added, use:
 ```bash

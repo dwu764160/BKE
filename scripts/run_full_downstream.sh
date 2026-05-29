@@ -73,8 +73,13 @@ run "build_pts_v40"              scripts/build_pts_v40.py \
 # ---- Aggregate ----
 run "build_profile_aggregate"    src/profile_aggregate/build_profile_aggregate.py
 
-# ---- YTD + Forecast (Step 4) ----
+# ---- Rest/B2B features (all seasons, required for Step 5 GBDT) ----
+run "build_rest_features"        scripts/build_rest_features.py
+
+# ---- YTD blended ratings (all seasons with projected features: 2018-26) ----
 run "build_ytd_team_ratings"     scripts/build_ytd_team_ratings.py
+
+# ---- Forecast + CLV ----
 run "forecast_2025_26_games"     scripts/forecast_2025_26_games.py
 
 log "============================================================"

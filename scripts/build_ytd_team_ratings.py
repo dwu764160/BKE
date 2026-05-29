@@ -124,7 +124,12 @@ def main() -> None:
 
     gl = pd.read_parquet(GAME_LOGS_PATH)
 
-    # Only seasons where margin data is available
+    # margin column was only backfilled from 2022-23 onward; derive from PLUS_MINUS for older seasons.
+    # PLUS_MINUS is identical to margin for all populated rows (verified).
+    if "PLUS_MINUS" in gl.columns:
+        gl["margin"] = gl["margin"].fillna(gl["PLUS_MINUS"])
+
+    # All seasons that now have margin data (skips 2017-18: no projected features)
     margin_seasons = sorted(
         s for s in gl["SEASON"].unique() if not gl[gl["SEASON"] == s]["margin"].isna().all()
     )

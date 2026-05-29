@@ -38,7 +38,7 @@ run "compute_linear_metrics"     src/data_compute/compute_linear_metrics.py
 run "compute_advanced_metrics"   src/data_compute/compute_advanced_metrics.py
 run "compute_player_profiles"    src/data_compute/compute_player_profiles.py
 run "compute_player_archetypes"  src/data_compute/compute_player_archetypes.py
-run "compute_def_archetypes_v2"  src/data_compute/compute_def_archetypes_v2.py
+run "compute_def_archetypes_v2"  src/data_compute/compute_defensive_archetypes_v2.py
 run "construct_bke_scores_v27"   src/modeling/construct_bke_scores_v27.py
 run "layer1_portable_talent"     src/modeling/layer1_portable_talent.py
 run "layer2_role_utilization"    src/modeling/layer2_role_utilization.py
@@ -54,8 +54,13 @@ run "build_pts_v40"              scripts/build_pts_v40.py \
 # ---- Aggregate ----
 run "build_profile_aggregate"    src/profile_aggregate/build_profile_aggregate.py
 
-# ---- YTD + CLV ----
+# ---- Rest/B2B features (all seasons) ----
+run "build_rest_features"        scripts/build_rest_features.py
+
+# ---- YTD blended ratings (all seasons with projected features: 2018-26) ----
 run "build_ytd_team_ratings"     scripts/build_ytd_team_ratings.py
+
+# ---- Forecast + CLV ----
 run "forecast_2025_26_games"     scripts/forecast_2025_26_games.py
 
 ts "============================================================"
