@@ -28,6 +28,7 @@ run "derive_lineups"             src/features/derive_lineups.py
 
 # ---- Possessions (all seasons, ~20 min) ----
 run "derive_possessions"         src/features/derive_possessions.py
+run "compute_clean_possessions"  src/data_compute/compute_clean_possessions.py
 
 # ---- RAPM (all seasons, ~60 min) ----
 run "model_rapm"                 src/modeling/model_rapm.py
