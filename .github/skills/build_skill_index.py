@@ -32,8 +32,11 @@ def parse_frontmatter(path: str) -> dict:
 
 def build_index(skills_dir: str) -> dict:
     entries = []
-    pattern = os.path.join(skills_dir, "*/SKILL.md")
-    files = sorted(glob.glob(pattern))
+    # Match both direct children (skill-name/SKILL.md) and one level of subdirectory
+    # (context-engineering/skill-name/SKILL.md) so nested skill groups are indexed.
+    pattern_direct = os.path.join(skills_dir, "*/SKILL.md")
+    pattern_nested = os.path.join(skills_dir, "*/*/SKILL.md")
+    files = sorted(glob.glob(pattern_direct) + glob.glob(pattern_nested))
     for path in files:
         rel = os.path.relpath(path)
         fm = parse_frontmatter(path)

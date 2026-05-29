@@ -78,38 +78,6 @@ skills:
   - When silent bugs or unexplained output anomalies are suspected.
   log_usage: true
   usage_log: loop/skill_usage.log
-- name: audit-eval
-  path: .github/skills/audit-eval/SKILL.md
-  description: 'Audit suite for player evaluation (`src/player_eval/`) and minute-model
-
-    pipeline components. Validates player impact profiles, minute-model fits,
-
-    and profile-aggregate integration.
-
-    '
-  tags: &id002
-  - audit
-  - player_eval
-  - minute_model
-  triggers: *id002
-  preferred_tools:
-  - read_file
-  - grep_search
-  - semantic_search
-  - file_search
-  - run_in_terminal
-  - get_errors
-  avoid_tools:
-  - create_new_workspace
-  job_scope:
-  - Run `src/player_eval/build_player_impact_profiles.py` in smoke mode and validate
-    shape.
-  - Run minute-model training checks and cross-validate `minute_model_v2.pkl` behavior.
-  - Validate profile aggregate ingestion (profile_aggregate/build_profile_aggregate.py).
-  when_to_use:
-  - On-demand, after player-eval logic changes or when requested by the user.
-  log_usage: true
-  usage_log: loop/skill_usage.log
 - name: audit-fetch
   path: .github/skills/audit-fetch/SKILL.md
   description: 'Audit suite for the fetch/ingest stage. Validates fetch scripts, cached
@@ -119,11 +87,11 @@ skills:
     artifacts in `data/historical/`.
 
     '
-  tags: &id003
+  tags: &id002
   - audit
   - fetch
   - ingest
-  triggers: *id003
+  triggers: *id002
   preferred_tools:
   - read_file
   - grep_search
@@ -144,43 +112,6 @@ skills:
     changes.
   log_usage: true
   usage_log: loop/skill_usage.log
-- name: pipeline-integrity
-  path: .github/skills/pipeline-integrity/SKILL.md
-  description: 'Post-fetch pipeline integrity gate. After any data fetch or update,
-    verify downstream artifacts are consistent, documentation matches actual data
-    state, and the correct re-run chain is queued or confirmed complete.'
-  tags:
-  - fetch
-  - pipeline
-  - integrity
-  - data-quality
-  - downstream
-  triggers:
-  - fetch
-  - pipeline
-  - integrity
-  - data-quality
-  - downstream
-  preferred_tools:
-  - run_in_terminal
-  - read_file
-  - grep_search
-  - file_search
-  - get_errors
-  avoid_tools:
-  - create_new_workspace
-  job_scope:
-  - Run artifact completeness check (tracking file counts, box score rows, PBP game counts, aggregate seasons + null rates).
-  - Identify minimal re-run chain from decision table based on what data changed.
-  - Sync docs/reference/tracking_availability.md and loop/in_progress_context.txt to reflect actual data state.
-  - Re-run CLV if box scores or forecasts updated; compare to prior baseline.
-  when_to_use:
-  - After any fetch script runs (box scores, tracking, PBP, DARKO, salaries, Kalshi).
-  - After backfill scripts complete.
-  - After model_config.py SEASONS list changes.
-  - Any time the user says update data, re-fetch, backfill, or refresh.
-  log_usage: true
-  usage_log: loop/skill_usage.log
 - name: audit-model
   path: .github/skills/audit-model/SKILL.md
   description: 'Audit suite for modeling and impact estimation (`src/modeling/`).
@@ -191,11 +122,11 @@ skills:
     sanity (modeling_inputs_* files and reports).
 
     '
-  tags: &id004
+  tags: &id003
   - audit
   - modeling
   - backtest
-  triggers: *id004
+  triggers: *id003
   preferred_tools:
   - read_file
   - grep_search
@@ -213,43 +144,6 @@ skills:
   - On-demand, after modeling changes or when requested by the user.
   log_usage: true
   usage_log: loop/skill_usage.log
-- name: backtest-vs-forecast
-  path: .github/skills/backtest-vs-forecast/SKILL.md
-  description: 'Ensures that every simulation or prediction phase has both a backtest
-    and a
-
-    forecast component where appropriate. Validates presence of backtest reports
-
-    and forecast artifacts and highlights missing coverage.
-
-    '
-  tags: &id005
-  - forecast
-  - backtest
-  - governance
-  triggers: *id005
-  preferred_tools:
-  - read_file
-  - grep_search
-  - semantic_search
-  - run_in_terminal
-  - get_errors
-  avoid_tools:
-  - create_new_workspace
-  job_scope:
-  - Scan `src/` and `reports/` to find simulation/prediction steps and check for both
-    backtest and forecast outputs.
-  - Run `src/simulation/run_forecast.py --skip-lineup` in smoke mode when safe (user
-    approval required for long runs).
-  - Validate that forecast artifacts live under `data/processed/forecast/` and that
-    corresponding backtest `reports/` exist.
-  - Summarize gaps and propose a remediation checklist (e.g., add forecast runner
-    or backtest harness).
-  when_to_use:
-  - On-demand, when preparing forecasts or validating that modeling changes have both
-    backtest and forecast coverage.
-  log_usage: true
-  usage_log: loop/skill_usage.log
 - name: basketball-knowledge
   path: .github/skills/basketball-knowledge/SKILL.md
   description: 'Canonical basketball domain knowledge for the BKE pipeline: role-vs-impact
@@ -261,11 +155,11 @@ skills:
     reference other skills and agents consult for consistent domain decisions.
 
     '
-  tags: &id006
+  tags: &id004
   - domain
   - basketball
   - archetype
-  triggers: *id006
+  triggers: *id004
   preferred_tools:
   - read_file
   - grep_search
@@ -283,6 +177,194 @@ skills:
     or forecast/simulation assumptions.
   log_usage: true
   usage_log: loop/skill_usage.log
+- name: advanced-evaluation
+  path: .github/skills/context-engineering/advanced-evaluation/SKILL.md
+  description: This skill should be used when the user asks to "implement LLM-as-judge",
+    "compare model outputs", "create evaluation rubrics", "mitigate evaluation bias",
+    or mentions direct scoring, pairwise comparison, position bias, evaluation pipelines,
+    or automated quality assessment.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: bdi-mental-states
+  path: .github/skills/context-engineering/bdi-mental-states/SKILL.md
+  description: This skill should be used when the user asks to "model agent mental
+    states", "implement BDI architecture", "create belief-desire-intention models",
+    "transform RDF to beliefs", "build cognitive agent", or mentions BDI ontology,
+    mental state modeling, rational agency, or neuro-symbolic AI integration.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: context-compression
+  path: .github/skills/context-engineering/context-compression/SKILL.md
+  description: This skill should be used when the user asks to "compress context",
+    "summarize conversation history", "implement compaction", "reduce token usage",
+    or mentions context compression, structured summarization, tokens-per-task optimization,
+    or long-running agent sessions exceeding context limits.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: context-degradation
+  path: .github/skills/context-engineering/context-degradation/SKILL.md
+  description: This skill should be used when the user asks to "diagnose context problems",
+    "fix lost-in-middle issues", "debug agent failures", "understand context poisoning",
+    or mentions context degradation, attention patterns, context clash, context confusion,
+    or agent performance degradation. Provides patterns for recognizing and mitigating
+    context failures.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: context-fundamentals
+  path: .github/skills/context-engineering/context-fundamentals/SKILL.md
+  description: This skill should be used when the user asks to "understand context",
+    "explain context windows", "design agent architecture", "debug context issues",
+    "optimize context usage", or discusses context components, attention mechanics,
+    progressive disclosure, or context budgeting. Provides foundational understanding
+    of context engineering for AI agent systems.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: context-optimization
+  path: .github/skills/context-engineering/context-optimization/SKILL.md
+  description: This skill should be used when the user asks to "optimize context",
+    "reduce token costs", "improve context efficiency", "implement KV-cache optimization",
+    "partition context", or mentions context limits, observation masking, context
+    budgeting, or extending effective context capacity.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: evaluation
+  path: .github/skills/context-engineering/evaluation/SKILL.md
+  description: This skill should be used when the user asks to "evaluate agent performance",
+    "build test framework", "measure agent quality", "create evaluation rubrics",
+    or mentions LLM-as-judge, multi-dimensional evaluation, agent testing, or quality
+    gates for agent pipelines.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: filesystem-context
+  path: .github/skills/context-engineering/filesystem-context/SKILL.md
+  description: This skill should be used when the user asks to "offload context to
+    files", "implement dynamic context discovery", "use filesystem for agent memory",
+    "reduce context window bloat", or mentions file-based context management, tool
+    output persistence, agent scratch pads, or just-in-time context loading.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: latent-briefing
+  path: .github/skills/context-engineering/latent-briefing/SKILL.md
+  description: This skill should be used when the user asks to "share memory between
+    agents", "KV cache compaction for multi-agent", "orchestrator worker context",
+    "latent briefing", "reduce worker tokens", "cross-agent memory without summarization",
+    or discusses Attention Matching compaction, recursive language models with workers,
+    or token explosion in hierarchical agents.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: memory-systems
+  path: .github/skills/context-engineering/memory-systems/SKILL.md
+  description: Guides implementation of agent memory systems, compares production
+    frameworks (Mem0, Zep/Graphiti, Letta, LangMem, Cognee), and designs persistence
+    architectures for cross-session knowledge retention. Use when the user asks to
+    "implement agent memory", "persist state across sessions", "build knowledge graph
+    for agents", "track entities over time", "add long-term memory", "choose a memory
+    framework", or mentions temporal knowledge graphs, vector stores, entity memory,
+    adaptive memory, dynamic memory or memory benchmarks (LoCoMo, LongMemEval).
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: multi-agent-patterns
+  path: .github/skills/context-engineering/multi-agent-patterns/SKILL.md
+  description: This skill should be used when the user asks to "design multi-agent
+    system", "implement supervisor pattern", "create swarm architecture", "coordinate
+    multiple agents", or mentions multi-agent patterns, context isolation, agent handoffs,
+    sub-agents, or parallel agent execution.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: project-development
+  path: .github/skills/context-engineering/project-development/SKILL.md
+  description: This skill should be used when the user asks to "start an LLM project",
+    "design batch pipeline", "evaluate task-model fit", "structure agent project",
+    or mentions pipeline architecture, agent-assisted development, cost estimation,
+    or choosing between LLM and traditional approaches.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: tool-design
+  path: .github/skills/context-engineering/tool-design/SKILL.md
+  description: This skill should be used when the user asks to "design agent tools",
+    "create tool descriptions", "reduce tool complexity", "implement MCP tools", or
+    mentions tool consolidation, architectural reduction, tool naming conventions,
+    or agent-tool interfaces.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
 - name: data-audit
   path: .github/skills/data-audit/SKILL.md
   description: 'Repository-wide data audit: normalizes column names across processed
@@ -293,11 +375,11 @@ skills:
     schemas.
 
     '
-  tags: &id007
+  tags: &id005
   - data
   - audit
   - schema
-  triggers: *id007
+  triggers: *id005
   preferred_tools:
   - read_file
   - grep_search
@@ -316,6 +398,18 @@ skills:
   when_to_use:
   - On-demand, before major exports or when schema drift is suspected.
   log_usage: true
+  usage_log: loop/skill_usage.log
+- name: detailed-chat-output
+  path: .github/skills/detailed-chat-output/SKILL.md
+  description: Mandatory output formatting for every task to keep responses structured
+    and traceable.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
   usage_log: loop/skill_usage.log
 - name: docs-sync
   path: .github/skills/docs-sync/SKILL.md
@@ -358,81 +452,117 @@ skills:
   - Before releases or when PRs touch many files.
   log_usage: true
   usage_log: loop/skill_usage.log
-- name: forecast
-  path: .github/skills/forecast/SKILL.md
-  description: 'This skill specializes in projection, scenario mapping, and minute
-    model interactions for the analytics pipeline. It is designed to:
+- name: documentation-cohesion
+  path: .github/skills/documentation-cohesion/SKILL.md
+  description: Use when creating, refining, or maintaining documentation to ensure
+    fixes flow naturally and are readable by both humans and AI agents.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: manual-testing-guides
+  path: .github/skills/manual-testing-guides/SKILL.md
+  description: Use when writing or revising step-by-step manual testing guides with
+    sunny/rainy paths, recovery drills, and reproducible command output.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: pipeline-integrity
+  path: .github/skills/pipeline-integrity/SKILL.md
+  description: 'Post-fetch pipeline integrity gate. After any data fetch or update
+    (box scores,
 
-    - Run and audit projection scripts (e.g., lineup_projection.py, run_forecast.py).
+    tracking, PBP, DARKO, salaries), verify that all downstream artifacts are
 
-    - Map scenarios and ensure correct propagation of scenario parameters.
+    consistent, documentation matches actual data state, and the correct re-run
 
-    - Validate minute model logic and its impact on downstream projections.
+    chain is queued or confirmed complete. Prevents silent stale data in the
 
-    - Focus on files in src/simulation/ and related scenario/model scripts.
+    aggregate.
 
     '
-  tags: &id008
-  - forecast
-  - projection
-  triggers: *id008
+  tags: &id006
+  - fetch
+  - pipeline
+  - integrity
+  - data-quality
+  - downstream
+  triggers: *id006
   preferred_tools:
+  - run_in_terminal
   - read_file
   - grep_search
-  - semantic_search
   - file_search
-  - run_in_terminal
   - get_errors
   avoid_tools:
   - create_new_workspace
-  - create_and_run_task
-  job_scope:
-  - Run and validate all projection and scenario mapping scripts.
-  - Audit minute model logic and its interactions.
-  - Ensure scenario parameters are correctly mapped and propagated.
+  job_scope: []
   when_to_use:
-  - After changes to projection, scenario, or minute model logic.
-  - Before major forecast runs or after merging scenario-related PRs.
+  - After any fetch script runs or completes (box scores, tracking, PBP, DARKO, salaries,
+    Kalshi).
+  - After backfill scripts run (backfill_tracking_missing.py, fetch_2025_26_game_logs.py,
+    etc.).
+  - After model_config.py SEASONS list is changed to add or remove a season.
+  - Any time the user says 'update data', 're-fetch', 'backfill', or 'refresh'.
+  - When the aggregate or CLV report is suspected stale.
   log_usage: true
   usage_log: loop/skill_usage.log
-- name: frontend-sync
-  path: .github/skills/frontend-sync/SKILL.md
-  description: 'This skill specializes in keeping frontend viewers and apps aligned
-    to backend schema changes. It is designed to:
-
-    - Detect and propagate backend schema changes to all frontend viewers (HTML, JS,
-    Python viewers).
-
-    - Audit viewer code for schema mismatches and outdated fields.
-
-    - Ensure all frontend displays are consistent with backend outputs and metadata.
-
-    - Focus on files in app/, src/, and any viewer or export scripts.
-
-    '
-  tags: &id009
-  - frontend
-  - schema
-  - sync
-  triggers: *id009
-  preferred_tools:
-  - read_file
-  - grep_search
-  - semantic_search
-  - file_search
-  - get_errors
-  avoid_tools:
-  - run_in_terminal
-  - create_new_workspace
-  - create_and_run_task
-  job_scope:
-  - Audit and sync all frontend viewers to backend schema.
-  - Detect and fix schema mismatches in viewers.
-  - Ensure all frontend displays are up to date with backend changes.
-  when_to_use:
-  - After backend schema or output changes.
-  - Before major frontend releases or after merging backend PRs.
-  log_usage: true
+- name: remote-commit-logging
+  path: .github/skills/remote-commit-logging/SKILL.md
+  description: Use when setting up or maintaining automatic logging of pushed commits
+    by branch with commit-level file change details.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: repo-workflow
+  path: .github/skills/repo-workflow/SKILL.md
+  description: Use when planning, selecting, or maintaining repository instruction
+    files, prompts, skills, and workflow docs.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: scope-creep-guard
+  path: .github/skills/scope-creep-guard/SKILL.md
+  description: Mandatory boundary guard for every task. Use to lock phase scope, constrain
+    file touch surfaces, and prevent out-of-scope edits before completion.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: self-improvement-loop
+  path: .github/skills/self-improvement-loop/SKILL.md
+  description: Use when correcting recurring mistakes, stale instructions, or workflow
+    drift so future tasks improve.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
   usage_log: loop/skill_usage.log
 - name: self-improvement
   path: .github/skills/self-improvement/SKILL.md
@@ -446,10 +576,10 @@ skills:
     what was learned. Designed to keep skills current and reduce repeated mistakes.
 
     '
-  tags: &id010
+  tags: &id007
   - meta
   - self-improvement
-  triggers: *id010
+  triggers: *id007
   preferred_tools:
   - read_file
   - grep_search
@@ -488,11 +618,11 @@ skills:
     Step1/Step2 outputs and constraints.
 
     '
-  tags: &id011
+  tags: &id008
   - simulation
   - audit
   - schedule
-  triggers: *id011
+  triggers: *id008
   preferred_tools:
   - read_file
   - grep_search
@@ -526,11 +656,11 @@ skills:
     prompts. Acts as the human-approved gate for skill consolidation.
 
     '
-  tags: &id012
+  tags: &id009
   - skill
   - curation
   - maintenance
-  triggers: *id012
+  triggers: *id009
   preferred_tools:
   - read_file
   - file_search
@@ -554,4 +684,52 @@ skills:
   - Periodically (weekly) or when many new skills are added/edited.
   - Before a skills-first automation rollout or CI integration.
   log_usage: true
+  usage_log: loop/skill_usage.log
+- name: skill-improvement-loop
+  path: .github/skills/skill-improvement-loop/SKILL.md
+  description: Use when evaluating skill effectiveness, summarizing recurring mistakes,
+    and rewriting SKILL.md files to improve automatic skill loading.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: skill-map-governance
+  path: .github/skills/skill-map-governance/SKILL.md
+  description: Use when adding, removing, renaming, or changing scope of skills to
+    keep SKILL_MAP.md complete, current, and authoritative.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: verification-gate
+  path: .github/skills/verification-gate/SKILL.md
+  description: Use before completion to verify file changes, instruction consistency,
+    and task requirement coverage.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
+  usage_log: loop/skill_usage.log
+- name: workflow-logging
+  path: .github/skills/workflow-logging/SKILL.md
+  description: Use when recording progress, decisions, verification outcomes, and
+    workflow-impacting changes.
+  tags: []
+  triggers: []
+  preferred_tools: []
+  avoid_tools: []
+  job_scope: []
+  when_to_use: []
+  log_usage: false
   usage_log: loop/skill_usage.log
