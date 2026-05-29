@@ -54,6 +54,9 @@ run "build_pts_v40"              scripts/build_pts_v40.py \
 # ---- Aggregate ----
 run "build_profile_aggregate"    src/profile_aggregate/build_profile_aggregate.py
 
+# ---- Team projections: rebuild all seasons in consistent pts/100 units ----
+run "build_all_season_projections" scripts/build_all_season_projections.py
+
 # ---- Rest/B2B features (all seasons) ----
 run "build_rest_features"        scripts/build_rest_features.py
 

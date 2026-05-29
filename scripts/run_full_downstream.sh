@@ -73,6 +73,10 @@ run "build_pts_v40"              scripts/build_pts_v40.py \
 # ---- Aggregate ----
 run "build_profile_aggregate"    src/profile_aggregate/build_profile_aggregate.py
 
+# ---- Team projections: rebuild all seasons in consistent pts/100 units ----
+# Must run after profile aggregate so BKE scores are current.
+run "build_all_season_projections" scripts/build_all_season_projections.py
+
 # ---- Rest/B2B features (all seasons, required for Step 5 GBDT) ----
 run "build_rest_features"        scripts/build_rest_features.py
 
