@@ -9,6 +9,45 @@
 
 ---
 
+## PTS Scoring Model (Player True Skill)
+
+PTS is the player-level offensive/defensive impact score. It feeds into `projected_team_features`
+(via `team_net_rating_projected`), `player_profile_aggregate`, and the BKE layer inputs.
+
+| Version | Script | Output artifact | Status |
+|---|---|---|---|
+| v3.2 | `scripts/build_pts_v32.py` | `data/processed/bke/pts_v32.parquet` | **BASELINE / DEPRECATED** — cols `pts_o_v32, pts_d_v32`. Retained as a sweep baseline; not used in production pipeline. |
+| v4.0-A | `scripts/build_pts_v40.py --pts-a` | `data/processed/bke/pts_v40_a.parquet` | **COMPONENT** — Improvement A defense. Input to composite. |
+| v4.0-C | `scripts/build_pts_v40.py --pts-c` | `data/processed/bke/pts_v40_c.parquet` | **COMPONENT** — Improvement C defense. Input to composite. |
+| **v4.0** | `scripts/build_pts_v40.py` | `data/processed/bke/pts_v40.parquet` | **CURRENT PRODUCTION** — 50% A + 50% C composite. Cols: `pts_o_v40`, `pts_d_v40`. Locked at `PtsV40CompositeConfig(defense_v40c_weight=0.50)` in `src/modeling/model_config.py`. |
+
+**Canonical production columns used downstream:** `pts_o_v40`, `pts_d_v40` (in `pts_v40.parquet`)
+
+**Season coverage:** 2017-26 (9 seasons after 2025-26 RAPM completes)
+
+**v3.2 retention rule:** `pts_v32.parquet` and `pts_o_v32 / pts_d_v32` columns are kept as
+baseline comparison inputs for sweep scripts (`pts_v40_multiseason.py`, `pts_v40_defense.py`,
+`validate_lineup_pts_v2.py`). These are dev-only. **No production pipeline step should read
+`pts_v32` directly.** If you see a production script importing `pts_v32`, that is a version error.
+
+**Scale note:** PTS scores are in compressed BKE units (std ~0.3 per player). Team-level
+`team_net_rating_projected` is in pts/100 possessions (std ~0.6-0.8), computed from actual
+game margins by `scripts/build_all_season_projections.py` — not directly from PTS player scores.
+
+---
+
+## Team Projection Artifacts
+
+| Version | Script | Output artifact | Status |
+|---|---|---|---|
+| legacy (mixed scale) | `src/player_eval/team_feature_aggregation.py` | *(historical)* | **DEPRECATED** — produced compressed BKE units for 2018-22, pts/100 for 2023-25. Do not use to regenerate. |
+| **current** | `scripts/build_all_season_projections.py` | `data/processed/forecast/projected_team_features.parquet` | **CURRENT PRODUCTION** — all 8 seasons in consistent pts/100 units from actual game margins. |
+| 2025-26 supplement | `scripts/build_2025_26_projections.py` | `data/processed/forecast/projected_team_features_v40_2025-26.parquet` | Separate file for current season; read by `build_ytd_team_ratings.py` for 2025-26. |
+
+**Pipeline order:** `build_profile_aggregate` → `build_all_season_projections` → `build_rest_features` → `build_ytd_team_ratings`
+
+---
+
 ## BKE Scoring Model
 
 | Version | Script | Output artifact | Status |

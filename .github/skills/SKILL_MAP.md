@@ -29,7 +29,8 @@ All agents must do these steps before using or editing skills:
 12. [basketball-knowledge](basketball-knowledge/SKILL.md) — archetype, position-band, or simulation decisions
 13. [simulation](simulation/SKILL.md) — simulation pipeline changes, schedule generation, game model, walk-forward validation
 14. [audit-model](audit-model/SKILL.md) — modeling/RAPM/BKE layer changes
-15. [audit-compute](audit-compute/SKILL.md) — compute stage formula changes
+15. [metric-version-tracker](metric-version-tracker/SKILL.md) — any versioned artifact touched/read/produced (BKE, PTS, archetypes); enforces docs/multiple-versions.md
+16. [audit-compute](audit-compute/SKILL.md) — compute stage formula changes
 16. [audit-aggregate](audit-aggregate/SKILL.md) — profile aggregation changes
 17. [audit-fetch](audit-fetch/SKILL.md) — fetch/ingest changes (user-requested only)
 18. [pipeline-integrity](pipeline-integrity/SKILL.md) — after any data fetch/update: verify downstream artifacts, queue re-run chain, sync docs
@@ -73,6 +74,7 @@ All agents must do these steps before using or editing skills:
 | basketball-knowledge | [basketball-knowledge/SKILL.md](basketball-knowledge/SKILL.md) | Domain: archetype, position, simulation | Archetype/position/forecast decisions |
 | simulation | [simulation/SKILL.md](simulation/SKILL.md) | Simulation + walk-forward validation | Sim/schedule/game-model/CLV/forecast changes |
 | audit-model | [audit-model/SKILL.md](audit-model/SKILL.md) | Modeling/RAPM/BKE audit | Modeling changes |
+| metric-version-tracker | [metric-version-tracker/SKILL.md](metric-version-tracker/SKILL.md) | Enforce canonical versions across all artifacts | Any versioned metric/artifact touched (BKE, PTS, archetypes) |
 | audit-compute | [audit-compute/SKILL.md](audit-compute/SKILL.md) | Compute stage audit | Formula/normalization changes |
 | audit-aggregate | [audit-aggregate/SKILL.md](audit-aggregate/SKILL.md) | Profile aggregation audit | Aggregation changes |
 | audit-fetch | [audit-fetch/SKILL.md](audit-fetch/SKILL.md) | Fetch/ingest audit | Ingest changes (user-requested only) |
@@ -156,6 +158,9 @@ skillMap:
       type: domain
     - name: audit-model
       path: .github/skills/audit-model/SKILL.md
+      type: domain-audit
+    - name: metric-version-tracker
+      path: .github/skills/metric-version-tracker/SKILL.md
       type: domain-audit
     - name: audit-compute
       path: .github/skills/audit-compute/SKILL.md

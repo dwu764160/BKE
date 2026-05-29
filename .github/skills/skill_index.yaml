@@ -476,6 +476,49 @@ skills:
   when_to_use: []
   log_usage: false
   usage_log: loop/skill_usage.log
+- name: metric-version-tracker
+  path: .github/skills/metric-version-tracker/SKILL.md
+  description: 'Ensures every produced metric, artifact, and pipeline script references
+    the
+
+    canonical latest version defined in docs/multiple-versions.md. Fires whenever
+
+    any versioned metric or artifact is touched, read, or produced (BKE, PTS,
+
+    archetypes, RAPM, team projections). Updates docs/multiple-versions.md when
+
+    a version is promoted, deprecated, or newly created.
+
+    '
+  tags: &id006
+  - versioning
+  - metrics
+  - bke
+  - pts
+  - archetypes
+  - pipeline-quality
+  triggers: *id006
+  preferred_tools:
+  - read_file
+  - grep_search
+  - file_search
+  - run_in_terminal
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope: []
+  when_to_use:
+  - When any script touching a versioned artifact is read or modified (BKE, PTS, archetypes,
+    RAPM, team projections).
+  - When decomposition_engine.py, construct_bke_scores_v27.py, build_pts_v40.py, compute_player_archetypes.py,
+    compute_defensive_archetypes_v2.py, or model_config.py are touched.
+  - After any pipeline run that produces versioned outputs.
+  - When the user mentions bke, pts, archetype, scoring, decomp, v27, v28, v32, v40,
+    or any artifact with a version number.
+  - When a new version of any metric is being developed, swept, or promoted to production.
+  - When checking if all seasons use the same version of a metric.
+  log_usage: true
+  usage_log: loop/skill_usage.log
 - name: pipeline-integrity
   path: .github/skills/pipeline-integrity/SKILL.md
   description: 'Post-fetch pipeline integrity gate. After any data fetch or update
@@ -490,13 +533,13 @@ skills:
     aggregate.
 
     '
-  tags: &id006
+  tags: &id007
   - fetch
   - pipeline
   - integrity
   - data-quality
   - downstream
-  triggers: *id006
+  triggers: *id007
   preferred_tools:
   - run_in_terminal
   - read_file
@@ -576,10 +619,10 @@ skills:
     what was learned. Designed to keep skills current and reduce repeated mistakes.
 
     '
-  tags: &id007
+  tags: &id008
   - meta
   - self-improvement
-  triggers: *id007
+  triggers: *id008
   preferred_tools:
   - read_file
   - grep_search
@@ -618,11 +661,11 @@ skills:
     Step1/Step2 outputs and constraints.
 
     '
-  tags: &id008
+  tags: &id009
   - simulation
   - audit
   - schedule
-  triggers: *id008
+  triggers: *id009
   preferred_tools:
   - read_file
   - grep_search
@@ -656,11 +699,11 @@ skills:
     prompts. Acts as the human-approved gate for skill consolidation.
 
     '
-  tags: &id009
+  tags: &id010
   - skill
   - curation
   - maintenance
-  triggers: *id009
+  triggers: *id010
   preferred_tools:
   - read_file
   - file_search
