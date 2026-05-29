@@ -34,7 +34,8 @@ All agents must do these steps before using or editing skills:
 17. [audit-eval](audit-eval/SKILL.md) — player eval or minute model changes
 18. [audit-aggregate](audit-aggregate/SKILL.md) — profile aggregation changes
 19. [audit-fetch](audit-fetch/SKILL.md) — fetch/ingest changes (user-requested only)
-20. [backtest-vs-forecast](backtest-vs-forecast/SKILL.md) — ensuring both backtest and forecast coverage
+20. [pipeline-integrity](pipeline-integrity/SKILL.md) — after any data fetch/update: verify downstream artifacts, queue re-run chain, sync docs
+21. [backtest-vs-forecast](backtest-vs-forecast/SKILL.md) — ensuring both backtest and forecast coverage
 21. [data-audit](data-audit/SKILL.md) — schema drift or data normalization
 22. [docs-sync](docs-sync/SKILL.md) — pipeline step renames or output path changes
 23. [frontend-sync](frontend-sync/SKILL.md) — backend schema changes affecting viewers
@@ -81,6 +82,7 @@ All agents must do these steps before using or editing skills:
 | audit-eval | [audit-eval/SKILL.md](audit-eval/SKILL.md) | Player eval/minute model audit | Player eval changes |
 | audit-aggregate | [audit-aggregate/SKILL.md](audit-aggregate/SKILL.md) | Profile aggregation audit | Aggregation changes |
 | audit-fetch | [audit-fetch/SKILL.md](audit-fetch/SKILL.md) | Fetch/ingest audit | Ingest changes (user-requested only) |
+| pipeline-integrity | [pipeline-integrity/SKILL.md](pipeline-integrity/SKILL.md) | Post-fetch downstream validation and doc sync | After any data fetch, backfill, or season update |
 | backtest-vs-forecast | [backtest-vs-forecast/SKILL.md](backtest-vs-forecast/SKILL.md) | Backtest/forecast coverage | Preparing forecasts |
 | data-audit | [data-audit/SKILL.md](data-audit/SKILL.md) | Schema and data normalization | Schema drift suspected |
 | docs-sync | [docs-sync/SKILL.md](docs-sync/SKILL.md) | Sync docs with code changes | Pipeline step renames/output changes |
@@ -177,6 +179,9 @@ skillMap:
       type: domain-audit
     - name: audit-fetch
       path: .github/skills/audit-fetch/SKILL.md
+      type: domain-audit
+    - name: pipeline-integrity
+      path: .github/skills/pipeline-integrity/SKILL.md
       type: domain-audit
     - name: backtest-vs-forecast
       path: .github/skills/backtest-vs-forecast/SKILL.md

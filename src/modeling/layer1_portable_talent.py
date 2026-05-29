@@ -256,8 +256,12 @@ def load_hustle_stats(seasons: Optional[list] = None) -> pd.DataFrame:
         df = pd.read_parquet(path)
         id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
         df["player_id"] = df[id_col].astype(str).apply(clean_id)
-        season_col = "SEASON" if "SEASON" in df.columns else "season"
-        df["season"] = df[season_col].astype(str)
+        if "SEASON" in df.columns:
+            df["season"] = df["SEASON"].astype(str)
+        elif "season" in df.columns:
+            df["season"] = df["season"].astype(str)
+        else:
+            df["season"] = season
 
         keep = ["season", "player_id",
                 "CHARGES_DRAWN", "DEF_LOOSE_BALLS_RECOVERED",

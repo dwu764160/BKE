@@ -33,10 +33,26 @@ except ImportError:
 
 PROBE_SEASONS = ["2021-22", "2018-19", "2017-18"]
 
+# leaguedashptstats requires a full set of filter params (even if all empty/zero).
+# Sending only 6 minimal params causes HTTP 500 on all seasons.
+_PTSTATS_REQUIRED_DEFAULTS = {
+    "College": "", "Conference": "", "Country": "",
+    "DateFrom": "", "DateTo": "", "Division": "",
+    "DraftPick": "", "DraftYear": "", "GameScope": "",
+    "GameSegment": "", "Height": "", "ISTRound": "",
+    "LastNGames": 0, "Location": "", "Month": 0,
+    "OpponentTeamID": 0, "Outcome": "", "PORound": 0,
+    "Period": 0, "PlayerExperience": "", "PlayerPosition": "",
+    "SeasonSegment": "", "StarterBench": "", "TeamID": 0,
+    "VsConference": "", "VsDivision": "", "Weight": "",
+}
+
+
 PROBE_ENDPOINTS = {
     "drives": {
         "url": "https://stats.nba.com/stats/leaguedashptstats",
         "params": {
+            **_PTSTATS_REQUIRED_DEFAULTS,
             "PtMeasureType": "Drives",
             "PerMode": "PerGame",
             "LeagueID": "00",
@@ -49,6 +65,7 @@ PROBE_ENDPOINTS = {
     "passing": {
         "url": "https://stats.nba.com/stats/leaguedashptstats",
         "params": {
+            **_PTSTATS_REQUIRED_DEFAULTS,
             "PtMeasureType": "Passing",
             "PerMode": "PerGame",
             "LeagueID": "00",
@@ -61,6 +78,7 @@ PROBE_ENDPOINTS = {
     "possessions": {
         "url": "https://stats.nba.com/stats/leaguedashptstats",
         "params": {
+            **_PTSTATS_REQUIRED_DEFAULTS,
             "PtMeasureType": "Possessions",
             "PerMode": "PerGame",
             "LeagueID": "00",
@@ -120,6 +138,7 @@ PROBE_ENDPOINTS = {
     "pull_up": {
         "url": "https://stats.nba.com/stats/leaguedashptstats",
         "params": {
+            **_PTSTATS_REQUIRED_DEFAULTS,
             "PtMeasureType": "PullUpShot",
             "PerMode": "PerGame",
             "LeagueID": "00",
@@ -132,6 +151,7 @@ PROBE_ENDPOINTS = {
     "catch_shoot": {
         "url": "https://stats.nba.com/stats/leaguedashptstats",
         "params": {
+            **_PTSTATS_REQUIRED_DEFAULTS,
             "PtMeasureType": "CatchShoot",
             "PerMode": "PerGame",
             "LeagueID": "00",
@@ -168,7 +188,7 @@ def fetch_endpoint(url: str, params: dict) -> dict | None:
 
     try:
         if USE_CURL_CFFI:
-            response = requests.get(full_url, headers=HEADERS, impersonate="chrome110", timeout=30)
+            response = requests.get(full_url, headers=HEADERS, impersonate="chrome124", timeout=30)
             if response.status_code == 200:
                 return response.json()
             else:

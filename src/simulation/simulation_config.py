@@ -38,6 +38,7 @@ STEP1_SINGLE_GAME_REPORT_PATH = REPORTS_DIR / "simulation_single_game.json"
 FORECAST_DIR = PROCESSED_DIR / "forecast"
 FORECAST_DIR.mkdir(parents=True, exist_ok=True)
 FORECAST_TEAM_FEATURES_PATH = FORECAST_DIR / "projected_team_features.parquet"
+YTD_RATINGS_PATH = FORECAST_DIR / "team_ratings_ytd.parquet"
 FORECAST_PLAYER_PROFILES_PATH = FORECAST_DIR / "projected_player_profiles.parquet"
 FORECAST_SEASON_RESULTS_PATH = REPORTS_DIR / "forecast_season_results.json"
 FORECAST_LINEUP_REPORT_PATH = REPORTS_DIR / "forecast_lineup_profiles.json"

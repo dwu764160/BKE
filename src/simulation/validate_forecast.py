@@ -45,10 +45,13 @@ from src.simulation.game_model import (
     compute_game_distribution,
     compute_game_distribution_with_context,
 )
+import dataclasses
+
 from src.simulation.simulation_config import (
     FORECAST_TEAM_FEATURES_PATH,
     HISTORICAL_DIR,
     REPORTS_DIR,
+    YTD_RATINGS_PATH,
 )
 
 
@@ -118,13 +121,24 @@ def _get_dist(
     team_params: dict,
     config: SimConfig,
     rest_lookup: dict,
+    ytd_lookup: dict = None,
 ) -> dict:
-    """Compute game distribution, using rest context when available."""
+    """Compute game distribution, applying YTD blending and rest context when available."""
+    home_p = team_params[game.home_team]
+    away_p = team_params[game.away_team]
+
+    if ytd_lookup:
+        game_ytd = ytd_lookup.get(game.game_id, {})
+        if game.home_team in game_ytd:
+            home_p = dataclasses.replace(home_p, mu=game_ytd[game.home_team])
+        if game.away_team in game_ytd:
+            away_p = dataclasses.replace(away_p, mu=game_ytd[game.away_team])
+
     ctx = rest_lookup.get(game.game_id) if rest_lookup else None
     if ctx:
         return compute_game_distribution_with_context(
-            home_team=team_params[game.home_team],
-            away_team=team_params[game.away_team],
+            home_team=home_p,
+            away_team=away_p,
             is_b2b_home=ctx["home_b2b"],
             is_b2b_away=ctx["away_b2b"],
             days_rest_home=ctx["home_days_rest"],
@@ -134,11 +148,41 @@ def _get_dist(
             config=config,
         )
     return compute_game_distribution(
-        team_params[game.home_team],
-        team_params[game.away_team],
+        home_p,
+        away_p,
         is_home_a=True,
         config=config,
     )
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Step 4 — YTD blending lookup helper
+# ═════════════════════════════════════════════════════════════════════
+
+def load_ytd_lookup(seasons: list, ytd_path: Path = None) -> dict:
+    """Return {game_id: {team_abbr: blended_mu}} for the given seasons.
+
+    Built by scripts/build_ytd_team_ratings.py. Returns empty dict if the
+    file doesn't exist (falls back to static preseason ratings).
+    """
+    p = ytd_path or YTD_RATINGS_PATH
+    if not p.exists():
+        return {}
+
+    df = pd.read_parquet(p)
+    df = df[df["season"].isin(seasons)].copy()
+    if df.empty:
+        return {}
+
+    lookup: dict = {}
+    for _, row in df.iterrows():
+        gid = str(row["game_id"])
+        team = str(row["team_abbreviation"]).upper()
+        mu = float(row["blended_mu"])
+        if gid not in lookup:
+            lookup[gid] = {}
+        lookup[gid][team] = mu
+    return lookup
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -190,6 +234,7 @@ def compute_game_metrics(
     team_params: Dict[str, TeamParams],
     config: SimConfig,
     rest_lookup: dict = None,
+    ytd_lookup: dict = None,
 ) -> Dict:
     """Brier, log-loss, accuracy, margin RMSE for a set of games."""
     probs = []
@@ -203,7 +248,7 @@ def compute_game_metrics(
         if np.isnan(game.home_win):
             continue
 
-        dist = _get_dist(game, team_params, config, rest_lookup)
+        dist = _get_dist(game, team_params, config, rest_lookup, ytd_lookup)
         win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
         probs.append(win_prob)
         actuals.append(game.home_win)
@@ -253,6 +298,7 @@ def compute_calibration(
     config: SimConfig,
     n_bins: int = 10,
     rest_lookup: dict = None,
+    ytd_lookup: dict = None,
 ) -> List[Dict]:
     """10-bin calibration: does the model's X% confidence match observed X% win rate?"""
     probs = []
@@ -264,7 +310,7 @@ def compute_calibration(
         if np.isnan(game.home_win):
             continue
 
-        dist = _get_dist(game, team_params, config, rest_lookup)
+        dist = _get_dist(game, team_params, config, rest_lookup, ytd_lookup)
         win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
         probs.append(win_prob)
         actuals.append(game.home_win)
@@ -303,6 +349,7 @@ def export_game_predictions(
     team_params: Dict[str, TeamParams],
     config: SimConfig,
     rest_lookup: dict = None,
+    ytd_lookup: dict = None,
 ) -> pd.DataFrame:
     """
     Export per-game predictions in CLV format.
@@ -325,7 +372,7 @@ def export_game_predictions(
         if np.isnan(game.home_win):
             continue
 
-        dist = _get_dist(game, team_params, config, rest_lookup)
+        dist = _get_dist(game, team_params, config, rest_lookup, ytd_lookup)
         win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
         rows.append({
             "game_date": game.date,
@@ -365,6 +412,12 @@ def main() -> None:
         return
 
     print(f"Projected seasons available: {available_seasons}")
+
+    ytd_lookup_all = load_ytd_lookup(available_seasons)
+    if ytd_lookup_all:
+        print(f"YTD lookup loaded: {len(ytd_lookup_all)} game entries across seasons")
+    else:
+        print("YTD lookup not found — using static preseason ratings (run build_ytd_team_ratings.py)")
 
     result = {
         "mode": "walk_forward_forecast",
@@ -414,8 +467,15 @@ def main() -> None:
             print(f"    Rest context: {len(rest_lookup)} games, {n_b2b} with ≥1 B2B team "
                   f"({n_b2b / len(rest_lookup):.1%})")
 
-        metrics = compute_game_metrics(schedule, params, config, rest_lookup=rest_lookup)
-        cal_bins = compute_calibration(schedule, params, config, rest_lookup=rest_lookup)
+        # Pass the full ytd_lookup; _get_dist misses on game_ids not in the dict (no-op).
+        n_ytd = sum(1 for g in schedule if str(g.game_id) in ytd_lookup_all)
+        if ytd_lookup_all and n_ytd:
+            print(f"    YTD blending: {n_ytd} matching game entries")
+
+        metrics = compute_game_metrics(schedule, params, config, rest_lookup=rest_lookup,
+                                       ytd_lookup=ytd_lookup_all)
+        cal_bins = compute_calibration(schedule, params, config, rest_lookup=rest_lookup,
+                                       ytd_lookup=ytd_lookup_all)
 
         result["game_level"][season] = metrics
         result["calibration"][season] = cal_bins
@@ -439,7 +499,7 @@ def main() -> None:
         for game in schedule:
             if game.home_team in params and game.away_team in params:
                 if not np.isnan(game.home_win):
-                    dist = _get_dist(game, params, config, rest_lookup)
+                    dist = _get_dist(game, params, config, rest_lookup, ytd_lookup_all)
                     win_prob = dist.get("win_prob_home", dist.get("win_prob_a", 0.5))
                     all_probs.append(win_prob)
                     all_actuals.append(game.home_win)
@@ -457,7 +517,9 @@ def main() -> None:
         }
 
         # Collect game predictions for CLV export
-        season_predictions = export_game_predictions(schedule, params, config, rest_lookup=rest_lookup)
+        season_predictions = export_game_predictions(schedule, params, config,
+                                                     rest_lookup=rest_lookup,
+                                                     ytd_lookup=ytd_lookup_all)
         all_game_predictions.append(season_predictions)
 
     # Aggregate across all walk-forward transitions

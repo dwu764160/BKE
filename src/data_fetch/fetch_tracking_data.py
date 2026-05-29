@@ -31,6 +31,7 @@ from src.modeling.model_config import SEASONS
 
 TRACKING_MEASURES = {
     "Drives": ("Drives", "drives"),
+    "Defense": ("Defense", "defense"),
     "CatchShoot": ("CatchShoot", "catch-shoot"),
     "PullUpShot": ("PullUpShot", "pullup"),
     "Passing": ("Passing", "passing"),
@@ -51,6 +52,20 @@ DEFENSE_CATEGORIES = {
     "2 Pointers": "defense-dash-2pt",
     "Less Than 10Ft": "defense-dash-lt10",
     "Greater Than 15Ft": "defense-dash-gt15",
+}
+
+# leaguedashptstats now requires all optional filter params to be present.
+# Sending only 6 minimal params causes HTTP 500; full set causes HTTP 200.
+_PTSTATS_DEFAULTS = {
+    "College": "", "Conference": "", "Country": "",
+    "DateFrom": "", "DateTo": "", "Division": "",
+    "DraftPick": "", "DraftYear": "", "GameScope": "",
+    "GameSegment": "", "Height": "", "ISTRound": "",
+    "LastNGames": 0, "Location": "", "Month": 0,
+    "OpponentTeamID": 0, "Outcome": "", "PORound": 0,
+    "Period": 0, "PlayerExperience": "", "PlayerPosition": "",
+    "SeasonSegment": "", "StarterBench": "", "TeamID": 0,
+    "VsConference": "", "VsDivision": "", "Weight": "",
 }
 
 def ensure_dirs():
@@ -86,8 +101,8 @@ def fetch_url_cached(url, params, referer_suffix, cache_name):
     
     try:
         resp = requests.get(
-            url, params=params, headers=headers, 
-            impersonate="chrome110", timeout=30
+            url, params=params, headers=headers,
+            impersonate="chrome124", timeout=30
         )
         
         if resp.status_code != 200:
@@ -174,10 +189,11 @@ def fetch_tracking(season):
         print(f"   Fetching {measure_name}...", end=" ")
         
         params = {
+            **_PTSTATS_DEFAULTS,
             "LeagueID": "00", "PerMode": "PerGame", "PlayerOrTeam": "Player",
-            "PtMeasureType": api_param, "Season": season, "SeasonType": "Regular Season"
+            "PtMeasureType": api_param, "Season": season, "SeasonType": "Regular Season",
         }
-        
+
         df = fetch_url_cached(url, params, slug, cache_key)
         
         # --- FALLBACK LOGIC ---

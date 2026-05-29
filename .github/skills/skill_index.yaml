@@ -144,6 +144,43 @@ skills:
     changes.
   log_usage: true
   usage_log: loop/skill_usage.log
+- name: pipeline-integrity
+  path: .github/skills/pipeline-integrity/SKILL.md
+  description: 'Post-fetch pipeline integrity gate. After any data fetch or update,
+    verify downstream artifacts are consistent, documentation matches actual data
+    state, and the correct re-run chain is queued or confirmed complete.'
+  tags:
+  - fetch
+  - pipeline
+  - integrity
+  - data-quality
+  - downstream
+  triggers:
+  - fetch
+  - pipeline
+  - integrity
+  - data-quality
+  - downstream
+  preferred_tools:
+  - run_in_terminal
+  - read_file
+  - grep_search
+  - file_search
+  - get_errors
+  avoid_tools:
+  - create_new_workspace
+  job_scope:
+  - Run artifact completeness check (tracking file counts, box score rows, PBP game counts, aggregate seasons + null rates).
+  - Identify minimal re-run chain from decision table based on what data changed.
+  - Sync docs/reference/tracking_availability.md and loop/in_progress_context.txt to reflect actual data state.
+  - Re-run CLV if box scores or forecasts updated; compare to prior baseline.
+  when_to_use:
+  - After any fetch script runs (box scores, tracking, PBP, DARKO, salaries, Kalshi).
+  - After backfill scripts complete.
+  - After model_config.py SEASONS list changes.
+  - Any time the user says update data, re-fetch, backfill, or refresh.
+  log_usage: true
+  usage_log: loop/skill_usage.log
 - name: audit-model
   path: .github/skills/audit-model/SKILL.md
   description: 'Audit suite for modeling and impact estimation (`src/modeling/`).

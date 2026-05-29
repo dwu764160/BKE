@@ -99,6 +99,47 @@ Every response MUST follow the **detailed-chat-output** structure:
 
 Read `loop/in_progress_context.txt` at the start of each session for current task context.
 
+## Basketball Terminology — Decoding Statistical Jargon
+
+This section translates technical metrics and modeling terms into basketball context for clarity in code comments and documentation.
+
+### Model & Feature Terms
+
+| Statistical Term | Basketball Analogy | Explanation |
+|---|---|---|
+| **Brier Score** | "Calibration accuracy" | How well prediction confidence matches reality. A team predicted to win 70% of the time should actually win ~70% of games. Lower = better. Vegas target: 0.195–0.210. |
+| **Net Rating** | "Plus-minus per 100 possessions" | If Team A outscores Team B by 5 points per every 100 possessions played, net rating = +5. The single best predictor of team strength. |
+| **YTD (Year-to-Date) Blending** | "Shift from preseason to actual record" | Early season: trust preseason projections (teams haven't played enough games). By game 30: gradually believe what the team actually shows. By season end: 100% actual performance. |
+| **OOS (Out-of-Sample)** | "Future prediction validity" | Train on seasons 2020–2022, predict season 2023. This tests whether the model works on data it's never seen (not backfit). Critical for proving genuine edge vs. Vegas. |
+| **Leakage** | "Peeking at the answer" | Using information from the current game to predict the current game (e.g., using Q4 stats to predict final outcome). Inflates validation scores; defeats live prediction. |
+| **Walk-Forward CV** | "Season-by-season test" | For each season, train on all past seasons, predict that season. Repeats across all seasons. Proves the model works on every new data regime. |
+| **Closing-Line Value (CLV)** | "Beat the Vegas closing odds" | On average, were BKE predictions better-calibrated than the market at close? CLV > 0.01 = model has real alpha (1% edge). CLV ≤ 0 = losing strategy. |
+| **Back-to-Back (B2B)** | "Fatigue penalty" | Team played yesterday, playing today. Road B2B is worse (travel + fatigue). Reduces predicted net rating ~2.5 pts/100. Data-backed at 57% ATS loss rate. |
+| **Season Stage Alpha** | "Ramp weight through season" | `alpha = sqrt(game_number / 82)`. At game 1, alpha ≈ 0.11 (preseason dominates). At game 30, alpha ≈ 0.60 (half preseason, half actual). Smooth transition, not step-function. |
+
+### Model Architecture Terms
+
+| Technical Term | Basketball Analogy | Explanation |
+|---|---|---|
+| **Improvement A / Improvement C** | "Two different coaching adjustments" | Two separate enhancements to the model tested in isolation. Blend them with a weight: Improvement A at 50%, Improvement C at 50%. |
+| **Composite v4.0 (A + C blend)** | "Hybrid starting lineup" | Don't pick one enhancement; run both. Weight them: w_c=0.50 means equal say. Locked in commit e32bad8 after testing w_c ∈ {0.3–0.7}. |
+| **Joint Correlation (Joint_r)** | "How well independent stats align" | Two independent data sources (e.g., preseason projections vs. actual net rating correlation). If Joint_r ≥ 0.331, the two signals agree. |
+| **YoY Correlation (YoY_r)** | "Year-over-year consistency" | Does the model rank teams the same way across seasons? Curry should be #1 both seasons. If YoY_r < 0.766, the model is season-dependent (unstable). |
+| **GBDT (Gradient Boosting Decision Tree)** | "Machine-learning coach adjustments" | Instead of using a single formula (Gaussian), train a tree-based learner on historical games. Learns non-linear patterns: ultra-lopsided matchups are over-predicted; B2B teams underperform formula. |
+| **Gaussian Baseline** | "Simple mathematical curve" | `win_prob = norm.cdf(delta_mu / sigma)`. Uses only team strength delta and home-court advantage. Symmetric, stable, but misses non-linear effects. |
+| **Elo (in ensemble)** | "Momentum indicator" | Running rating that updates after each game. Sharp start = higher Elo; cold spell = lower. Captures short-term form the other models miss. |
+| **Ensemble** | "Three scouts voting" | Don't trust one model; average 3: Gaussian (30%), GBDT (50%), Elo (20%). Reduces systematic bias by ~0.003 Brier. |
+
+### Validation & Readiness Terms
+
+| Term | Basketball Analogy | Explanation |
+|---|---|---|
+| **Validation Gate** | "Threshold the team must cross" | Brier ≤ 0.235, YoY_r ≥ 0.766, star sanity (Curry ≤ #30). Miss any gate = model isn't ready. |
+| **Star Sanity** | "Sense check: elite players rank highly" | Curry #7, KD #8, SGA #2, Giannis #8. If Luka is #412 (he's not in dataset), that's a data problem, not a model problem. |
+| **Alpha-Ready** | "Ready for real money" | CLV > 0.02 **and** Brier ≤ 0.210. Below that: research-only, no allocation. |
+
+---
+
 ## Self-Improvement System
 
 ### Session Start — Check First

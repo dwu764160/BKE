@@ -175,8 +175,8 @@ def merge_and_save(base_dfs, adv_dfs):
     if adv_dfs:
         adv_combined = pd.concat(adv_dfs, ignore_index=True)
         # Merge on PLAYER_ID + SEASON (keep only unique advanced columns)
-        adv_cols = ['PLAYER_ID', 'SEASON'] + [c for c in adv_combined.columns 
-                   if c not in base_combined.columns or c in ['PLAYER_ID', 'SEASON']]
+        adv_cols = ['PLAYER_ID', 'SEASON'] + [c for c in adv_combined.columns
+                   if c not in base_combined.columns and c not in ('PLAYER_ID', 'SEASON')]
         merged = base_combined.merge(
             adv_combined[adv_cols], 
             on=['PLAYER_ID', 'SEASON'], 

@@ -25,7 +25,9 @@ from src.simulation.game_model import (
     compute_game_distribution,
     compute_game_distribution_with_context,
 )
-from src.simulation.simulation_config import FORECAST_DIR, REPORTS_DIR
+import dataclasses
+
+from src.simulation.simulation_config import FORECAST_DIR, REPORTS_DIR, YTD_RATINGS_PATH
 
 
 def build_rest_lookup_from_schedule(kalshi_df: pd.DataFrame) -> dict:
@@ -80,6 +82,26 @@ def build_rest_lookup_from_schedule(kalshi_df: pd.DataFrame) -> dict:
     return lookup
 
 
+def load_ytd_lookup_2025_26(ytd_path=None) -> dict:
+    """Return {(game_date_str, team_abbr): blended_mu} for 2025-26.
+
+    Keyed by (date, team) because Kalshi games have no NBA game_id.
+    Built by scripts/build_ytd_team_ratings.py.
+    """
+    p = ytd_path or YTD_RATINGS_PATH
+    if not p.exists():
+        return {}
+    df = pd.read_parquet(p)
+    df = df[df["season"] == "2025-26"].copy()
+    if df.empty:
+        return {}
+    lookup = {}
+    for _, row in df.iterrows():
+        key = (str(row["game_date"]), str(row["team_abbreviation"]).upper())
+        lookup[key] = float(row["blended_mu"])
+    return lookup
+
+
 def load_team_params_2025_26():
     """Load 2025-26 projected team parameters."""
     proj_path = FORECAST_DIR / "projected_team_features_v40_2025-26.parquet"
@@ -99,29 +121,43 @@ def load_team_params_2025_26():
     return result
 
 
-def generate_2025_26_forecasts(team_params, kalshi_df, rest_lookup=None):
+def generate_2025_26_forecasts(team_params, kalshi_df, rest_lookup=None, ytd_lookup=None):
     """Generate game-level forecasts for 2025-26 using Kalshi as schedule.
 
-    When rest_lookup is provided, applies B2B/3-in-4/days-rest corrections
-    via compute_game_distribution_with_context (Step 3).
+    Applies YTD blended ratings (Step 4) when ytd_lookup is provided, then
+    rest/B2B/3-in-4 corrections (Step 3) when rest_lookup is provided.
     """
     config = SimConfig()
     rows = []
+    n_ytd_applied = 0
 
     for _, kalshi_game in kalshi_df.iterrows():
-        home   = kalshi_game["home_team"]
-        away   = kalshi_game["away_team"]
-        date   = kalshi_game["game_date"]
+        home   = str(kalshi_game["home_team"]).upper()
+        away   = str(kalshi_game["away_team"]).upper()
+        date   = str(kalshi_game["game_date"])
         result = kalshi_game["home_result"]
 
         if home not in team_params or away not in team_params:
             continue
 
-        ctx = rest_lookup.get((str(date), str(home), str(away))) if rest_lookup else None
+        home_p = team_params[home]
+        away_p = team_params[away]
+
+        # Step 4: apply YTD blended mu when available
+        if ytd_lookup:
+            home_blended = ytd_lookup.get((date, home))
+            away_blended = ytd_lookup.get((date, away))
+            if home_blended is not None:
+                home_p = dataclasses.replace(home_p, mu=home_blended)
+                n_ytd_applied += 1
+            if away_blended is not None:
+                away_p = dataclasses.replace(away_p, mu=away_blended)
+
+        ctx = rest_lookup.get((date, str(kalshi_game["home_team"]), str(kalshi_game["away_team"]))) if rest_lookup else None
         if ctx:
             dist = compute_game_distribution_with_context(
-                home_team=team_params[home],
-                away_team=team_params[away],
+                home_team=home_p,
+                away_team=away_p,
                 is_b2b_home=ctx["home_b2b"],
                 is_b2b_away=ctx["away_b2b"],
                 days_rest_home=ctx["home_days_rest"],
@@ -133,7 +169,7 @@ def generate_2025_26_forecasts(team_params, kalshi_df, rest_lookup=None):
             win_prob = dist["win_prob_home"]
         else:
             dist = compute_game_distribution(
-                team_params[home], team_params[away], is_home_a=True, config=config,
+                home_p, away_p, is_home_a=True, config=config,
             )
             win_prob = dist["win_prob_a"]
 
@@ -145,6 +181,8 @@ def generate_2025_26_forecasts(team_params, kalshi_df, rest_lookup=None):
             "home_result":      int(result),
         })
 
+    if ytd_lookup and n_ytd_applied:
+        print(f"   YTD blending applied to {n_ytd_applied} team-game entries")
     return pd.DataFrame(rows)
 
 
@@ -232,9 +270,20 @@ def main():
     print(f"   ✓ {len(rest_lookup)} games, {n_b2b} with ≥1 B2B ({n_b2b / len(rest_lookup):.1%}), "
           f"{n_3in4} with ≥1 3-in-4 ({n_3in4 / len(rest_lookup):.1%})")
 
+    # Load YTD blended ratings (Step 4)
+    print("\n4. Loading YTD blended team ratings...")
+    ytd_lookup = load_ytd_lookup_2025_26()
+    if ytd_lookup:
+        n_ytd_teams = len({t for _, t in ytd_lookup})
+        print(f"   ✓ {len(ytd_lookup)} team-game entries, {n_ytd_teams} teams")
+    else:
+        print("   ✗ YTD lookup not found — using static preseason ratings")
+        print("     Run: python3 scripts/build_ytd_team_ratings.py")
+
     # Generate forecasts
-    print("\n4. Generating 2025-26 game forecasts (with rest context)...")
-    bke_forecasts = generate_2025_26_forecasts(team_params, kalshi, rest_lookup=rest_lookup)
+    print("\n5. Generating 2025-26 game forecasts (with rest + YTD context)...")
+    bke_forecasts = generate_2025_26_forecasts(team_params, kalshi, rest_lookup=rest_lookup,
+                                               ytd_lookup=ytd_lookup)
     print(f"   ✓ Generated {len(bke_forecasts)} game predictions")
     print(f"   Date range: {bke_forecasts['game_date'].min()} to {bke_forecasts['game_date'].max()}")
 
@@ -242,10 +291,9 @@ def main():
     out_path = REPORTS_DIR / "bke_2025_26_forecasts.parquet"
     bke_forecasts.to_parquet(out_path, index=False)
     print(f"   ✓ Saved to {out_path}")
-    print(f"   Date range: {bke_forecasts['game_date'].min()} to {bke_forecasts['game_date'].max()}")
 
     # Compute CLV
-    print("\n5. Computing CLV (Closing-Line Value)...")
+    print("\n6. Computing CLV (Closing-Line Value)...")
     clv_metrics = compute_clv_metrics(bke_forecasts, kalshi)
 
     if clv_metrics is None:

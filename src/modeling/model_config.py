@@ -93,7 +93,7 @@ TRACKING_DIR = "data/tracking"
 #
 SEASONS: List[str] = [
     "2017-18", "2018-19", "2019-20", "2020-21", "2021-22",
-    "2022-23", "2023-24", "2024-25",
+    "2022-23", "2023-24", "2024-25", "2025-26",
 ]
 
 # COVID-disrupted seasons: included in RAPM (with reduced decay weight 0.25),
@@ -829,8 +829,8 @@ class PtsV40DefenseConfig:
 
 @dataclass
 class PtsV40CompositeConfig:
-    defense_v40c_weight: float = 0.40
-    defense_v40a_weight: float = 0.60
+    defense_v40c_weight: float = 0.50  # locked: sweep winner (w_c=0.5 ties Brier with 0.7 but has better YoY_r 0.690 vs 0.641)
+    defense_v40a_weight: float = 0.50
 
 PTS_V40_A_PARQUET = os.path.join(BKE_DIR, "pts_v40_a.parquet")
 PTS_V40_C_PARQUET = os.path.join(BKE_DIR, "pts_v40_c.parquet")
