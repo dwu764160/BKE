@@ -1481,8 +1481,12 @@ def attach_validation(
 def build_projected_lineup_rows(
     forecast_mode: bool = False,
     profiles_path: Optional[Path] = None,
+    config_overrides: Optional[Dict] = None,
 ) -> Tuple[List[Dict], pd.DataFrame, Dict[str, str], Dict[str, str], Dict[str, str]]:
-    cfg = Step2Config(forecast_mode=forecast_mode)
+    # config_overrides lets the Step-0 tuner sweep Step2Config fields
+    # (starter/clutch weights, continuity, low-minutes penalty, …) without
+    # mutating the module-level defaults in simulation_config.
+    cfg = Step2Config(forecast_mode=forecast_mode, **(config_overrides or {}))
     full_to_abbr, abbr_to_conf, team_id_to_abbr = _load_team_map()
 
     from src.player_eval.constants import PROJECTED_PROFILES_PATH

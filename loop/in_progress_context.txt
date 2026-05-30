@@ -1,116 +1,62 @@
-TASK: PTS→game-model wiring — Phase 1/2 DONE, awaiting decision on Phase 3
-STATUS: 2026-05-30. Committed+pushed prior work (76dd17a). Built+validated PTS
-team ratings. Decisive result: lagged PTS does NOT help the game model.
+TASK: Step 0 (lineup projection tuning) — DONE. Next = Step 1 (cross-team interactions).
+STATUS: 2026-05-30. Step 0a (offline game-by-game validation + walk-forward tuning)
+COMPLETE and gate PASSED. Step 0b (live fetch) code-complete (runs in networked env).
+Committing this unit; Step 1 is the next build.
+
+STEP 0a RESULT (gate PASSED):
+- Built game-by-game ground truth from pbp_with_lineups_* (all 9 seasons, 21,495
+  game-team rows): starters=opening-tip 5; clutch-5=most time-weighted 5 in clutch
+  window (period>=4,|margin|<=5,clock<=5:00); minutes=lineup-stint seconds.
+  Cached -> data/processed/simulation/lineup_ground_truth.pkl (gitignored).
+- scripts/validate_lineup_projection.py: scores the season-level projector per game,
+  10-config grid, WALK-FORWARD selection (tune on seasons<T, eval T).
+- Baseline (8 seasons, 19,037 game-teams): starter_hit 0.623, clutch 2.88/5,
+  minutes_corr(Spearman) 0.486, top9 0.676.
+- Walk-forward converged to config 'starter_m080' (0.80/0.12/0.04/0.04) for EVERY
+  eval season -> starter_hit 0.621->0.647 (+2.5pp), clutch 2.872->2.894 (no regress),
+  minutes_corr unchanged. LOCKED into simulation_config STARTER_WEIGHT_*.
+- HONEST LIMIT: minutes_corr is invariant across configs (projector reads MPG
+  straight from profiles; levers only change which 5 are flagged). Lifting it needs
+  train_minute_model.py tuning = OUT of Step 0a scope. Genuine win = starter ID only.
+
+NETWORK INVESTIGATION (user asked): confirmed stats.nba.com is THROTTLED, not down.
+- github 200/0.46s; stats.nba.com DNS ok + TCP:443 connects BUT HTTPS times out
+  (>20s, silently black-holed post-connect) = Akamai datacenter-IP throttle.
+  cdn.nba.com answers 403/0.12s (reachable, header-gated). Sandbox is NOT offline.
+- Doc: docs/findings/network_stats_nba_throttle_2026-05-30.md. No in-sandbox fix
+  (IP-reputation block on one host); run stats.nba.com fetches in networked env.
 
 DELIVERABLES (this session):
-- scripts/build_pts_team_ratings.py -> data/processed/forecast/team_pts_ratings.parquet
-  (270 team-seasons, 9 seasons). Variants A (PTS-only additive) + B (PTS+fit).
-  C/D skipped: repo Lasso already found archetype-pair interactions negligible
-  (INTERACTION_MATRIX={}, team_feature_aggregation.py:167-196) => C/D ≈ B.
-- scripts/validate_pts_team_ratings.py (2 performance gates).
-- docs/findings/pts_wiring_phase1_2026-05-30.md (full result).
+- scripts/validate_lineup_projection.py (game-by-game validator + walk-forward tuner)
+- src/data_fetch/fetch_pregame_lineups.py (Step 0b live starters+inactives, NETWORK)
+- src/simulation/lineup_projection.py (+config_overrides param)
+- src/simulation/simulation_config.py (STARTER_WEIGHT_* tuned/locked)
+- reports/lineup_projection_validation.json (gitignored)
+- docs/findings/lineup_projection_tuning_2026-05-30.md (results)
+- docs/findings/network_stats_nba_throttle_2026-05-30.md (network)
+- pytest -q 3/3 pass; production simulation_step2_* regenerated cleanly.
 
-RESULTS:
-- Gate 1: pts_net ↔ same-season actual net rating r=0.840 (EXCELLENT metric).
-  BUT as a prior-year prior: pts_net 0.514 < margin 0.542 (loses). Stale carry.
-- Gate 2 (walk-forward, 8279 OOS games, lagged N-1 PTS as GBDT feature):
-  Elo 0.2193 | GBDT base 0.2250 | +PTS 0.2260 | +PTS+fit 0.2256.
-  PTS vs GBDT-base = NOISE (Δ+0.0009, CI straddles 0); PTS vs Elo = worse.
-  => Lagged PTS adds NOTHING. Do NOT promote.
+ARCHITECTURE (ratified 2026-05-30): Core repo (this) + 2 sister repos (markets=
+existing Robinhood/Kalshi; game=NEW after Core step 2). Divergence = lineup
+realization layer (markets override projected starters w/ live actuals+injuries at
+T-60/30; game uses fully projected lineups). Sim = bottom-up generative possession
+engine (box score emerges), calibrated to a SHARED stat-line model. Game-winner
+prediction is a DEAD END vs market (Elo 0.2193 OOS / 0.2092 on 2025-26 beats all
+BKE/PTS wiring); markets pivot to PROPS/TOTALS long-tail edge. PTS = team-quality
+metric (same-season r=0.84), use for sim/power-rankings, not moneylines.
+Docs: docs/phase_v1_architecture.md (RATIFIED), docs/plans/cross_team_interaction_model.md.
 
-INTERPRETATION: metric is good (r=0.84 contemporaneous), but the only leakage-free
-wiring today is a 1-season lag, which Elo + prior-year margin already subsume.
-The unlock = YTD/current-roster PTS (recompute PTS from games-to-date on the
-CURRENT roster) — can't test with season-aggregated PTS (would leak). Needs the
-Phase-3 data track: per-game availability/inactives + incremental PTS. That's a
-multi-step data-engineering effort, NOT wiring.
+REVISED SEQUENCE: Step 0 (lineup tuning) DONE -> Step 1 (cross-team interactions)
+-> Step 2 (generative stat-line model) -> FORK repos.
 
-BOTTLENECK CONFIRMED: it's DATA (current roster + availability), not the metric.
-
-DECISION POINT FOR USER: invest in Phase 3 (game-day inactives fetch + YTD PTS
-machinery + preseason-roster backfill to 8 seasons)? Only path for player-impact
-to beat Elo. Large effort. Awaiting go/no-go.
-
-PHASE 3 (prelim, offline) — current-roster YTD PTS test:
-- scripts/experiment_ytd_roster_pts.py: weight prior-season player PTS by strictly-
-  prior current-season cumulative minutes (captures roster changes, leakage-free).
-- Local player_game_logs = 2022-25 only => 2 OOS seasons (2023-24, 2024-25, 2389 g).
-- Result: current-roster PTS vs Elo = NOISE (Δ+0.0007, CI straddles 0); lagged HURT.
-- By season progress: early(2-10) Δ-0.0004, mid(11-25) Δ-0.0005, late(26-50)
-  Δ+0.0015, deep(51+) Δ+0.0010. Direction matches theory (helps while Elo blind,
-  hurts once Elo caught up) but magnitude negligible (~0.0005), not significant.
-
-STRATEGIC CONCLUSION (mounting evidence): nothing in BKE/PTS beats Elo at the game
-level by a margin that matters. PTS = excellent TEAM-QUALITY metric (same-season
-r=0.84) -> use for manager-sim + power rankings, NOT game-level alpha.
-
-NETWORK BLOCK: stats.nba.com firewalled from this sandbox (30s timeout). The
-remaining Phase-3 fetches (player_game_logs backfill to 9 seasons, preseason-roster
-backfill to 8 seasons, game-day inactives) CANNOT run here — must run in a
-networked env. fetch_preseason_rosters.py already supports --seasons.
-
-DECISION PENDING: given negligible offline payoff + network block, does user still
-want the heavy network-gated fetch scripts written, or pivot PTS to sim/power-
-rankings and accept Elo (research-only) for Kalshi?
-
-COMMITS: 76dd17a (Step5+Elo+audit), 3fc3c4a (PTS wiring Phase1/2),
-90f4fb4 (current-roster YTD PTS prelim).
-
-NEW PHASE (v0.8 -> v1): two-track split.
-- Game-winner prediction = dead end vs market. Pivot markets to PROPS/TOTALS
-  long-tail edge-finding (scan all lines, conditional edge), NOT moneylines.
-- Game track = Tier-2 generative possession engine (NEW sister repo).
-- LINEUP FINDING: lineup_projection.py used ONLY in season_sim track, NOT in
-  game-level prediction (no under-the-hood misuse). It's the unused unlock for
-  cross-team archetype interactions (POA vs ball-dominant creator).
-- DIVERGENCE POINT = lineup realization layer: markets fetch ACTUAL starters +
-  injury ~T-60/30min and override; game uses fully PROJECTED lineups.
-- ARCH RECOMMENDATION: Core repo (this) + 2 sister repos (markets=existing
-  Robinhood/Kalshi; game=NEW). Core publishes versioned artifact contract.
-- SEQUENCING: (1) wire lineup projector as Core artifact + build cross-team
-  archetype interaction model [SHARED]; (2) generative player stat-line model
-  [SHARED, serves props AND game]; (3) FORK repos.
-- DOC: docs/phase_v1_architecture.md written (PROPOSED, awaiting ratification of
-  §9 open decisions).
-
-RATIFIED 2026-05-30: Core + 2 sister repos; game repo created AFTER Core step 2;
-build order = lineup projector -> cross-team interactions FIRST; doc practice =
-lock Core API contract + immediate-build note now, defer full per-track docs.
-
-SIM ARCHITECTURE DECISION (user asked predict-then-backfill?): NO. Bottom-up
-generative possession engine (box score EMERGES), steered by a cheap macro layer,
-calibrated to the shared stat-line model. NOT "draw box score then fake the PBP"
-(that kills interactivity + cross-team interactions). Unification: one stat-line
-model, two uses — markets SAMPLES it for props; game's possession engine REPRODUCES
-it. Locked in docs/phase_v1_architecture.md §10.
-
-DOCS LOCKED:
-- docs/phase_v1_architecture.md (RATIFIED; +§10 sim arch, +§11 Core API contract).
-- docs/plans/cross_team_interaction_model.md (immediate-build design note).
-  KEY: within-team archetype synergy was negligible (INTERACTION_MATRIX={}), but
-  CROSS-team attacker-vs-defender matchups (POA vs creator) are DIFFERENT + UNTESTED.
-  Double-counting guard: interaction term mean-zero over defender archetypes.
-
-STEP 0 ADDED (pending user approval before commit): lineup projection tuning.
-- docs/plans/step0_lineup_projection_tuning.md written.
-- Game-by-game validation vs ACTUAL lineups, OFFLINE: pbp_with_lineups_* (all 9
-  seasons) gives on-court 5 per team per event => starters (opening tip), clutch
-  lineup (clutch window), rotation minutes. No network needed.
-- Step 0b = live pre-game injury/starter fetch (network, market-track infra, reused).
-- High ROI confirmed (offline ground truth now + dual-purpose fetch later).
-
-DOC UPDATES (pending commit): docs/phase_v1_architecture.md
-- §8 sequencing: inserted Step 0 before Step 1.
-- §10: clarified "market SAMPLES the stat-line model" (Monte-Carlo prop
-  distributions, no possessions); possession engine = GAME TRACK ONLY; optional
-  future SGP-correlation bridge noted.
-- §12 NEW: player tendency model (2K-esque decision policy), GAME TRACK ONLY.
-  Hierarchy coach play-call -> transition/halfcourt -> follow/freelance -> action.
-  Generation: (b) pbp tendencies + (c) behavioral archetypes now; add (a) play-type
-  fetch later. New "coachability/improvisation" per-player param.
-
-HOLDING COMMIT per user instruction until Step 0 plan approved.
-
-REVISED SEQUENCE: Step 0 (lineup tuning) -> Step 1 (cross-team interactions) ->
-Step 2 (generative stat-line model) -> FORK repos.
-
+NEXT — STEP 1 (cross-team archetype interaction model):
+- docs/plans/cross_team_interaction_model.md is the design note.
+- Build attacker-archetype x defender-archetype efficiency cells from pbp/matchup
+  data; interaction[A,D] = PPP(A|guarded by D) - PPP(A overall), shrunk (empirical-
+  Bayes). Mean-zero over defenders (double-counting guard). Emit Core artifact
+  data/processed/bke/cross_team_interactions.parquet.
+- Gate: (1) signal exists beyond shrinkage noise? if matrix ~0, stop. (2) incremental
+  value via walk-forward GBDT (experiment_microadjustments.py pattern), paired
+  bootstrap vs Elo + current stack; judge on game-level AND matchup/props fit.
+- Within-team synergy was negligible (INTERACTION_MATRIX={}); cross-team
+  attacker-vs-defender is DIFFERENT + UNTESTED — measure fresh.

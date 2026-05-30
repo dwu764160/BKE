@@ -227,11 +227,20 @@ CLUTCH_WEIGHT_TALENT = 0.20
 CLUTCH_WEIGHT_I = 0.65
 CLUTCH_WEIGHT_M = 0.35
 
-# Starter score weights: 0.50 * M + 0.25 * I + 0.10 * Pos + 0.15 * C
-STARTER_WEIGHT_M = 0.50
-STARTER_WEIGHT_I = 0.25
-STARTER_WEIGHT_POS = 0.10
-STARTER_WEIGHT_C = 0.15
+# Starter score weights: 0.80 * M + 0.12 * I + 0.04 * Pos + 0.04 * C
+# Tuned in Step 0a (2026-05-30): walk-forward game-by-game validation vs actual
+# pbp opening-tip lineups independently re-selected this minutes-heavy weighting
+# (config 'starter_m080') for every eval season. Starter hit-rate 0.621 -> 0.647
+# walk-forward (+2.5pp), clutch overlap not regressed, minutes corr unchanged.
+# Rationale: actual NBA starters are overwhelmingly the highest-minute players;
+# the prior 0.50/0.25/0.10/0.15 split diluted that signal. Backtest mode only —
+# forecast-mode starter scoring uses separate hardcoded weights.
+# Validation: reports/lineup_projection_validation.json;
+# docs/findings/lineup_projection_tuning_2026-05-30.md.
+STARTER_WEIGHT_M = 0.80
+STARTER_WEIGHT_I = 0.12
+STARTER_WEIGHT_POS = 0.04
+STARTER_WEIGHT_C = 0.04
 
 # Rotation model: mu_rotation = alpha * stagger + (1-alpha) * bench
 ROTATION_ALPHA = 0.30
