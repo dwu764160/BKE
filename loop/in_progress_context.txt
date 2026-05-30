@@ -91,8 +91,26 @@ DOCS LOCKED:
   CROSS-team attacker-vs-defender matchups (POA vs creator) are DIFFERENT + UNTESTED.
   Double-counting guard: interaction term mean-zero over defender archetypes.
 
-NEXT BUILD (Core step 1): build cross-team interaction model — estimate
-interaction[A,D] from pbp/matchup data (shrunk), attach per-game via projected
-lineups, gate on signal + incremental value. Then Core step 2 = generative
-stat-line model. Then FORK repos.
+STEP 0 ADDED (pending user approval before commit): lineup projection tuning.
+- docs/plans/step0_lineup_projection_tuning.md written.
+- Game-by-game validation vs ACTUAL lineups, OFFLINE: pbp_with_lineups_* (all 9
+  seasons) gives on-court 5 per team per event => starters (opening tip), clutch
+  lineup (clutch window), rotation minutes. No network needed.
+- Step 0b = live pre-game injury/starter fetch (network, market-track infra, reused).
+- High ROI confirmed (offline ground truth now + dual-purpose fetch later).
+
+DOC UPDATES (pending commit): docs/phase_v1_architecture.md
+- §8 sequencing: inserted Step 0 before Step 1.
+- §10: clarified "market SAMPLES the stat-line model" (Monte-Carlo prop
+  distributions, no possessions); possession engine = GAME TRACK ONLY; optional
+  future SGP-correlation bridge noted.
+- §12 NEW: player tendency model (2K-esque decision policy), GAME TRACK ONLY.
+  Hierarchy coach play-call -> transition/halfcourt -> follow/freelance -> action.
+  Generation: (b) pbp tendencies + (c) behavioral archetypes now; add (a) play-type
+  fetch later. New "coachability/improvisation" per-player param.
+
+HOLDING COMMIT per user instruction until Step 0 plan approved.
+
+REVISED SEQUENCE: Step 0 (lineup tuning) -> Step 1 (cross-team interactions) ->
+Step 2 (generative stat-line model) -> FORK repos.
 

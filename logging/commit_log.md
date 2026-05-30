@@ -960,3 +960,18 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - M logging/commit_log.md
       - M loop/in_progress_context.txt
       - A scripts/experiment_ytd_roster_pts.py
+
+### 2026-05-30 16:45:47Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 90f4fb43065ea828a931ffea82c1f59a88aa3936..db60f6c918d827c7c77bb4d2e9cd6cc27c92e409
+- Commits:
+  - db60f6c docs: lock v1 phase architecture — two-track split + sim architecture decision
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T11:45:43-05:00
+    - Purpose: Lock the v0.8->v1 phase: Core repo + 2 sister repos (markets=Robinhood/Kalshi,
+    - Files:
+      - A docs/phase_v1_architecture.md
+      - A docs/plans/cross_team_interaction_model.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt

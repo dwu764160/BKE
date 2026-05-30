@@ -136,13 +136,14 @@ to carry game-level alpha over Elo. The theoretical early-season edge is real in
 sign but too small to monetize.
 
 **Data caveat / what would change the verdict:** only 2 OOS seasons are testable
-offline (player_game_logs local = 2022-25; stats.nba.com is firewalled from this
-environment). A full read needs: (1) `player_game_logs` backfilled to all 9 seasons,
-(2) **preseason-roster-projected minutes** for the very-early window (games 1-10,
-where YTD minutes are too noisy and a preseason roster prior is the right signal —
-needs the roster backfill to 8 seasons), (3) optionally game-day inactives to test
-true injury-availability pricing. All three are network-gated fetches to run in an
-environment that can reach stats.nba.com.
+from local data (player_game_logs local = 2022-25). A full read needs: (1)
+`player_game_logs` backfilled to all 9 seasons, (2) **preseason-roster-projected
+minutes** for the very-early window (games 1-10, where YTD minutes are too noisy and
+a preseason roster prior is the right signal — needs the roster backfill to 8
+seasons), (3) optionally game-day inactives to test true injury-availability pricing.
+All three are NBA-API fetches. Note: general internet works in the dev session, but
+`stats.nba.com` specifically times out here (NBA datacenter-IP throttling), so these
+fetches run in the normal working environment, not this session.
 
 ## Reproduce
 ```bash

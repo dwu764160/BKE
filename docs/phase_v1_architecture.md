@@ -175,13 +175,19 @@ stat-line model).
 ## 8. Sequencing — when we fork
 
 Fork the repos only AFTER the shared Core is locked. Order:
+0. **Lineup projection tuning** (`docs/plans/step0_lineup_projection_tuning.md`).
+   Validate + tune the starter/clutch/rotation projector **game-by-game vs actual
+   lineups** (offline ground truth from `pbp_with_lineups_*`). Everything
+   downstream consumes projected lineups, so accuracy here gates all of it. Also
+   specs the live pre-game injury/starter fetch (Step 0b) reused by the market
+   track. *Shared.*
 1. **Lineup projector → Core artifact** + **cross-team archetype interaction
    model** (§7 unlock). Validate the interaction signal (does POA-vs-creator etc.
    move outcomes measurably?). *Shared; both tracks need it.*
 2. **Generative player stat-line model** (§4.6). Validate vs real box scores.
    *Shared; serves props AND the game.*
 3. **FORK.** Markets adds live-lineup fetch + edge-scanner + execution; Game adds
-   the possession engine + meta-systems + UI.
+   the possession engine + tendency model + meta-systems + UI.
 
 **Divergence point in time = after step 2** (the stat-line model validates as a
 shared artifact). Before that, both tracks are 100% shared — do not split repos
@@ -234,6 +240,25 @@ Why top-down "predict the result then fill in how we got there" is rejected:
 Same calibrated truth across both products — consistency for free. This is
 "generate honestly, calibrated to a shared spine," not "predict then backfill."
 
+**What "the market track samples it" means (clarification):** the stat-line model
+outputs, per player in a game context (role, minutes, matchup), a *probability
+distribution* over their box score (pts/reb/ast/…). To price a prop like "LeBron
+over 25.5 pts," draw many stat lines from the model (Monte-Carlo *sample*) →
+P(pts > 25.5) → compare to the line's implied prob → bet only if the divergence
+beats the vig. You need the *number/distribution*, not a play-by-play. So the
+market track never runs the possession engine — sampling marginals is faster and
+sufficient.
+
+**Possession engine = GAME TRACK ONLY** (confirmed). The one *optional* future
+bridge to markets: **correlated / same-game-parlay (SGP) pricing.** Single props
+need only marginals (sample each player independently). But correlated bets need
+the *joint* — a blowout sits the star in Q4 (props down); a close/OT game inflates
+clutch usage (props up). The possession sim naturally produces these correlations,
+which books often misprice by treating legs independently. So the game's possession
+engine *could* later feed an SGP edge for markets — but that is an opt-in future
+module, not the default. Default stays: market = stat-line sampling; game =
+possession sim.
+
 ---
 
 ## 11. Core API / artifact contract (the stable surface both tracks consume)
@@ -253,3 +278,47 @@ re-derive. Initial surface (extend `docs/multiple-versions.md` as these land):
 Contract rules: (1) schemas are versioned and additive; (2) any breaking change
 bumps a Core version recorded in `docs/multiple-versions.md`; (3) sister repos read
 artifacts, never import Core internals.
+
+---
+
+## 12. Player tendency model — 2K-esque decision policy (GAME TRACK ONLY)
+
+The possession engine (§10) needs to know *what each player does* on a possession,
+not just how good they are. This is the engine's **decision policy** (game-track
+gap #2), modeled as a hierarchy. **Game track only** — markets never simulate
+possessions, so they don't need it.
+
+**Hierarchy:**
+1. **Team / coach over-arch layer** — pace, transition-vs-half-court split, and the
+   **play-call distribution** (how often the coach calls iso / P&R ball-handler /
+   P&R roll / post-up / spot-up / handoff / motion), plus scheme. Derived from
+   *team-level* pbp + tracking tendencies.
+2. **Transition branch** — no set play; fast-break decision logic (push vs pull
+   back, who handles, early offense).
+3. **Half-court branch** — coach calls a play type → the player **follows** (a
+   discipline/coachability tendency) or **freelances** (improvisation tendency).
+4. **Action choice** — once a player has the ball in a context, what they do
+   (shoot / drive / pass / iso / screen) per their **tendency vector** (shot
+   selection by zone, 3PA rate, drive rate, pass-first vs score-first, usage).
+
+**How we generate the tendency ratings (decision pending — options):**
+- **(a) Play-type / tracking frequencies + efficiencies** (Synergy-style: iso,
+  P&R, post, spot-up…). Richest, most 2K-like, but **no materialized play-type
+  table yet** — would need a play-type fetch (`fetch_tracking_data` exists as a
+  starting point).
+- **(b) pbp-derived tendencies** — shot/drive/pass rates, zone selection, usage,
+  assist/turnover rates, straight from `pbp_with_lineups_*` (have it, all seasons).
+- **(c) existing behavioral archetype features** — usage, assist rate,
+  ball-dominance, playtype tendencies already in the aggregate
+  (`pec_behavioral_*`, archetypes) — partly already encodes this.
+Likely answer: **(b)+(c) now** (offline, available) as v0 tendency vectors, **add
+(a)** when a play-type fetch lands for richer realism. Decide at the
+possession-engine design step.
+
+**Coachability / improvisation** is a *new* per-player parameter (how often a
+player executes the called action vs freelances) — estimable from pbp (deviation
+of a player's action from his team's called-play context). This is the spice that
+makes stars feel like stars (high-usage freelancers) and role players reliable.
+
+Full design lives in the deferred possession-engine doc; locked here so the
+tendency layer and its data dependencies aren't lost.
