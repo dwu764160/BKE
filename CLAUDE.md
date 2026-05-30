@@ -2,6 +2,23 @@
 
 Guidance for Claude Code sessions working in this repository.
 
+## Narration & Output (persistent, system-level)
+
+**Suppress intermediate step narration.** Do not announce what you are about to do
+or pre-narrate tool use ("Now I'll search…", "Let me read…", "I'm going to run…").
+Just do it. This applies to every session and every task.
+
+Keep visible:
+- **Decision logic** — the *why* behind non-obvious choices, trade-offs, and pivots.
+- **Errors and surprises** — failures, unexpected results, and how you handled them.
+- **Checkpoint summaries** — at natural breakpoints in long/multi-step work, a short
+  recap of what was done and what's next.
+
+Final output: use the **detailed-chat-output** skill structure. It may be slightly
+richer than a bare summary, **as long as suppressing the play-by-play still nets a
+meaningful token saving** over narrating every step. Optimize for signal per token,
+not for a transcript of the process.
+
 ## Repo essentials
 
 - Possession-level NBA player-impact pipeline: fetch → normalize → features →
@@ -140,29 +157,22 @@ This section translates technical metrics and modeling terms into basketball con
 
 ---
 
-## Self-Improvement System
+## Improvement Loop
 
-### Session Start — Check First
-
-**Before doing anything else**, read `.claude/pending-improvements.md`. If it has unresolved entries:
-1. Address each item (run `skill-improvement-loop`, update skills, re-run smoke test).
-2. Delete the resolved section from the file.
-3. Then proceed with the user's task.
-
-### Automatic Verification (PostToolUse Hook)
-
-`scripts/post-edit-check.sh` runs after every Edit/Write call against modified `.py` files:
-- Runs `pytest -q tests/` at the project root
-- Writes errors to `.claude/session_errors.tmp`
-- Rate-limited to 60 seconds per check/root to avoid excessive runs
+**Write a Debug Entry when you make a real mistake; that is the entire improvement
+loop.** Append a `### Debug Entry` block to `.claude/debugging_log.md` (what broke,
+root cause, fix, and — optionally — a `**Skill gap:**` line). That is the only
+required step. Everything downstream is automatic and lossless: the session-end
+hook reads new Debug Entries into persistent memory (`memory/skill_effectiveness.md`,
+`memory/debugging_patterns.md`). No pattern scanners, no smoke tests, no
+pending-improvements queue — those were removed (2026-05-30) as token-wasting noise.
 
 ### Automatic Verification (Stop Hook)
 
-`scripts/session-end.sh` runs at the end of every session:
-- Runs configured checks for modified files
-- Appends a structured entry to `.claude/debugging_log.md`
-- Calls `scripts/analyze-patterns.sh` to scan for recurring error patterns
-- Auto-flags `skill-improvement-loop` if error threshold exceeded (≥2 errors)
+`scripts/session-end.sh` runs at the end of every session and does exactly four
+things: (1) runs the verification check (`pytest -q tests/`), (2) appends a session
+boundary to `.claude/debugging_log.md`, (3) runs `scripts/update-skill-memory.sh`
+(new Debug Entries → persistent memory), (4) sends a push notification.
 
 ### Git Hooks Setup (one-time per local clone)
 
@@ -175,11 +185,3 @@ This wires the `pre-commit` (secret scan) and `pre-push` (commit log) hooks.
 ### Push Notifications
 
 `scripts/notify.sh` sends ntfy.sh push notifications. Set `NTFY_CHANNEL_URL` env var to your topic to activate. Leave unset if not needed — scripts fail silently.
-
-### Running the Smoke Test
-
-After any skill is created, renamed, or reworded:
-```bash
-bash scripts/implicit-skill-smoke-test.sh
-```
-A failing test = a skill has a trigger gap. Fix the description or "When to Use" wording, then re-run.

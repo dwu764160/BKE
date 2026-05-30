@@ -59,7 +59,28 @@ only `stats.nba.com` is throttled; never call the environment offline.
 
 ## Verdict
 
-No code change fixes this in-sandbox — it is an IP-reputation throttle on one
-host. The correct handling is the split already adopted: **offline work
-(Step 0a) here; all `stats.nba.com` fetches (Step 0b live lineups, Phase-3
-backfills) in the networked environment.**
+No *plain-curl* request to `stats.nba.com` succeeds in-sandbox — but see the
+correction below: a `curl_cffi` TLS-impersonated request **does**.
+
+---
+
+## CORRECTION (2026-05-30, later same day) — curl_cffi gets through
+
+Running `src/data_fetch/fetch_matchup_data.py` (which uses
+`curl_cffi … impersonate="chrome110"`) from the sandbox **successfully fetched all
+9 seasons** of `leagueseasonmatchups` (2017-18…2025-26, 1.22M rows) — no timeouts.
+
+So the throttle is **TLS-fingerprint / request-shape dependent, not a blanket
+datacenter-IP block**:
+
+- **Plain `curl` / default Python `requests`** → timeout (the diagnostic above).
+- **`curl_cffi` with `impersonate="chrome110/124"`** → succeeds for at least
+  `leagueseasonmatchups`.
+
+Akamai is filtering on TLS/JA3 fingerprint + headers; a real-browser impersonation
+passes. **Revised guidance:** prefer `curl_cffi` + `impersonate` for any
+`stats.nba.com` fetch — it may well work in-sandbox. Still validate per-endpoint
+(some endpoints/anti-bot paths may differ, e.g. `scoreboardv2` was not retried
+here), and keep the networked-env fallback for anything that does time out. This
+updates [[feedback_not_offline_nba_throttle]]: the sandbox is not just "not
+offline" — `stats.nba.com` itself is reachable with the right client.

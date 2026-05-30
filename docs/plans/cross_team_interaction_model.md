@@ -124,8 +124,12 @@ Two things the test forces into the build:
    make this **marginal for game-level Brier** but valuable for **props and
    possession realism** — judge on BOTH (a lineup/matchup-level fit + the game
    gate), per the original note.
-4. **Walk-forward caveat:** matchup data starts 2022-23, so the matrix itself
-   can't be validated pre-2022-23; it ports to all seasons via archetype labels.
+4. **Walk-forward:** matchup data is now backfilled to **all 9 seasons**
+   (2017-18…2025-26, 1.22M rows; `curl_cffi` got through the stats.nba.com
+   throttle — see `network_stats_nba_throttle_2026-05-30.md`). So the matrix CAN
+   be walk-forward validated across seasons. The signal pre-flight ran on only the
+   3 seasons present at the time — **re-run `test_archetype_interactions.py` on all
+   9 for tighter cells before locking the matrix** (more power, season-stability check).
 
 ### Reuse (updated)
 
