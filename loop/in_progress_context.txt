@@ -49,14 +49,26 @@ Docs: docs/phase_v1_architecture.md (RATIFIED), docs/plans/cross_team_interactio
 REVISED SEQUENCE: Step 0 (lineup tuning) DONE -> Step 1 (cross-team interactions)
 -> Step 2 (generative stat-line model) -> FORK repos.
 
-NEXT — STEP 1 (cross-team archetype interaction model):
-- docs/plans/cross_team_interaction_model.md is the design note.
-- Build attacker-archetype x defender-archetype efficiency cells from pbp/matchup
-  data; interaction[A,D] = PPP(A|guarded by D) - PPP(A overall), shrunk (empirical-
-  Bayes). Mean-zero over defenders (double-counting guard). Emit Core artifact
-  data/processed/bke/cross_team_interactions.parquet.
-- Gate: (1) signal exists beyond shrinkage noise? if matrix ~0, stop. (2) incremental
-  value via walk-forward GBDT (experiment_microadjustments.py pattern), paired
-  bootstrap vs Elo + current stack; judge on game-level AND matchup/props fit.
-- Within-team synergy was negligible (INTERACTION_MATRIX={}); cross-team
-  attacker-vs-defender is DIFFERENT + UNTESTED — measure fresh.
+STEP 1 PRE-FLIGHT DONE (2026-05-30) — signal CONFIRMED, gate #1 PASSED:
+- scripts/test_archetype_interactions.py: two-way player FE on NBA matchup data
+  (data/matchup/league_season_matchups.parquet, per off×def-player poss, 2022-25;
+  361k rows, 4.2M poss). FE strips both players' talent (double-counting guard).
+- RESULT: 79/99 cells sig @95% CI (~5 by chance), 76 pass BH-FDR. FE-adj spread
+  0.044 ppp vs naive 0.055 (80% survives talent removal). VERDICT: SIGNAL.
+- Motivating cells hold: POA Defender vs Ball Dominant Creator -0.038 [-0.047,-0.027]
+  (166k poss); PnR Rolling Big vs Rim Protector -0.091 (talent was MASKING it,
+  naive only -0.038). Report: reports/archetype_interaction_signal_test.json;
+  findings: docs/findings/archetype_interaction_signal_2026-05-30.md.
+- KEY NUANCE: dominant axis = SIZE/POSITION (guard-vs-big boost +0.14..+0.19 only
+  on SWITCHES). Build must apply matrix via POSITION-BAND ASSIGNMENT + a separate
+  SWITCH term, not the full off×def matrix on every pair. Positive-vs-creator
+  artifacts exist (Versatile Defender +0.057) -> shrink hard, inspect.
+
+NEXT — STEP 1 BUILD (plan grounded in docs/plans/cross_team_interaction_model.md
+"Empirical grounding" section):
+1. Promote FE-residual cells -> shrunk artifact data/processed/bke/
+   cross_team_interactions.parquet (empirical-Bayes by poss; mean-zero per off arch).
+2. Per-game interaction_adj via Step-0 projected lineups + position-band assignment
+   (+switch term). 3. Gate #2: add interaction_adj to walk-forward GBDT (paired
+   bootstrap vs Elo + stack); EXPECT marginal game-Brier, judge on props/possession
+   realism too. 4. Matchup data starts 2022-23 (no pre-2022 walk-forward of matrix).
