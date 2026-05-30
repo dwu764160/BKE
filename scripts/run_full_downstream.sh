@@ -65,6 +65,21 @@ run "decomposition_engine"       src/modeling/decomposition_engine.py
 run "dbke_v30_defense_shrinkage" src/modeling/dbke_v30_defense_shrinkage.py
 
 # ---- PTS ----
+# Baseline: PTS v3.2 (input to v4.0 components; must run first to cover all seasons)
+run "build_pts_v32"              scripts/build_pts_v32.py
+# Component A: Bayesian multi-season smoothing
+run "build_pts_v40_a"            scripts/pts_v40_multiseason.py \
+    --pts-v32 data/processed/bke/pts_v32.parquet \
+    --decomp  data/processed/bke/bke_v28_decomposition.parquet \
+    --output  data/processed/bke/pts_v40_a.parquet
+# Component C: Defense redesign (matchup-weighted)
+run "build_pts_v40_c"            scripts/pts_v40_defense.py \
+    --pts-v32  data/processed/bke/pts_v32.parquet \
+    --decomp   data/processed/bke/bke_v28_decomposition.parquet \
+    --def-arch data/processed/defensive_archetypes_v2.parquet \
+    --pbp-dir  data/ \
+    --output   data/processed/bke/pts_v40_c.parquet
+# Composite: 50% A + 50% C
 run "build_pts_v40"              scripts/build_pts_v40.py \
     --pts-a data/processed/bke/pts_v40_a.parquet \
     --pts-c data/processed/bke/pts_v40_c.parquet \

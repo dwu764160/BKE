@@ -459,6 +459,18 @@ def _load_diagnostics() -> pd.DataFrame:
     return _dedup(result)
 
 
+def _load_pts_v40() -> pd.DataFrame:
+    """Load PTS v4.0 composite scores (production metric)."""
+    from src.modeling.model_config import PTS_V40_PARQUET
+    df = _safe_load(Path(PTS_V40_PARQUET))
+    if df.empty:
+        return df
+    df["player_id"] = _norm_id(df["player_id"])
+    df["season"] = df["season"].astype(str)
+    keep = ["player_id", "season", "pts_o_v40", "pts_d_v40"]
+    return _dedup(df[[c for c in keep if c in df.columns]])
+
+
 def _load_step1_profiles() -> pd.DataFrame:
     """Load Step 1 curated impact profiles."""
     df = _safe_load(PLAYER_PROFILES_PARQUET)
@@ -640,7 +652,12 @@ def main() -> None:
     spine = _smart_merge(spine, step1, merge_key, "s1", how="left")
     print(f"  [17] + Step 1 profiles: {len(spine.columns)} cols")
 
-    # 18. Name normalization (ID-first and alias-aware)
+    # 18. PTS v4.0 scores (production metric — must appear after BKE decomp spine)
+    pts_v40 = _load_pts_v40()
+    spine = _smart_merge(spine, pts_v40, merge_key, "pts40", how="left")
+    print(f"  [18] + PTS v4.0: {len(spine.columns)} cols")
+
+    # 19. Name normalization (ID-first and alias-aware)
     name_sources = [
         (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
         (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),

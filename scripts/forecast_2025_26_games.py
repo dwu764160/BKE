@@ -106,7 +106,7 @@ def load_team_params_2025_26():
     """Load 2025-26 projected team parameters."""
     proj_path = FORECAST_DIR / "projected_team_features_v40_2025-26.parquet"
     if not proj_path.exists():
-        raise FileNotFoundError(f"{proj_path} not found. Run build_2025_26_projections.py first.")
+        raise FileNotFoundError(f"{proj_path} not found. Run build_all_season_projections.py first.")
 
     tf = pd.read_parquet(proj_path)
     result = {}

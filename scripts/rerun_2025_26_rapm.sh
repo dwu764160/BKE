@@ -47,6 +47,17 @@ run "layer3_archetype_elevation" src/modeling/layer3_archetype_elevation.py
 run "layer4_scheme_amplification" src/modeling/layer4_scheme_amplification.py
 run "decomposition_engine"       src/modeling/decomposition_engine.py
 run "dbke_v30_defense_shrinkage" src/modeling/dbke_v30_defense_shrinkage.py
+run "build_pts_v32"              scripts/build_pts_v32.py
+run "build_pts_v40_a"            scripts/pts_v40_multiseason.py \
+    --pts-v32 data/processed/bke/pts_v32.parquet \
+    --decomp  data/processed/bke/bke_v28_decomposition.parquet \
+    --output  data/processed/bke/pts_v40_a.parquet
+run "build_pts_v40_c"            scripts/pts_v40_defense.py \
+    --pts-v32  data/processed/bke/pts_v32.parquet \
+    --decomp   data/processed/bke/bke_v28_decomposition.parquet \
+    --def-arch data/processed/defensive_archetypes_v2.parquet \
+    --pbp-dir  data/ \
+    --output   data/processed/bke/pts_v40_c.parquet
 run "build_pts_v40"              scripts/build_pts_v40.py \
     --pts-a data/processed/bke/pts_v40_a.parquet \
     --pts-c data/processed/bke/pts_v40_c.parquet \
