@@ -1,44 +1,35 @@
-TASK: Post-Step-5 — docs corrected, micro-adjustments measured, PTS-wiring being planned
-STATUS: Docs + experiments DONE (2026-05-30). PTS-wiring in plan+interview mode.
+TASK: PTS→game-model wiring — Phase 1/2 DONE, awaiting decision on Phase 3
+STATUS: 2026-05-30. Committed+pushed prior work (76dd17a). Built+validated PTS
+team ratings. Decisive result: lagged PTS does NOT help the game model.
 
-BIG DISCOVERY (verified): the game model's team rating
-(team_net_rating_projected) = 0.70 × prior-season PLUS_MINUS margin
-(build_all_season_projections.py:50-78, build_2025_26_projections.py:27-92).
-NEITHER PTS v4.0 NOR BKE is in the game-prediction path. Archetype/talent columns
-in projected_team_features are vestigial/unused. Also a scale bug: net rating
-divides by team-minutes (240) => margin ÷5, mislabeled "per 100 poss".
+DELIVERABLES (this session):
+- scripts/build_pts_team_ratings.py -> data/processed/forecast/team_pts_ratings.parquet
+  (270 team-seasons, 9 seasons). Variants A (PTS-only additive) + B (PTS+fit).
+  C/D skipped: repo Lasso already found archetype-pair interactions negligible
+  (INTERACTION_MATRIX={}, team_feature_aggregation.py:167-196) => C/D ≈ B.
+- scripts/validate_pts_team_ratings.py (2 performance gates).
+- docs/findings/pts_wiring_phase1_2026-05-30.md (full result).
 
-DOCS UPDATED:
-- docs/findings/game_model_comparison_2026-05-30.md: correction banner + §0/§3/§4/§5
-  rewritten; added §5b measured micro-adjustment results.
-- docs/roadmap_to_vegas_accuracy.md: Step 6 (Ensemble) marked SUPERSEDED/NOT SHIPPING
-  (blend 0.2223 worse than Elo 0.2193; fails its own gate).
-- docs/multiple-versions.md: source note on the Game-Level Forecast Models section.
+RESULTS:
+- Gate 1: pts_net ↔ same-season actual net rating r=0.840 (EXCELLENT metric).
+  BUT as a prior-year prior: pts_net 0.514 < margin 0.542 (loses). Stale carry.
+- Gate 2 (walk-forward, 8279 OOS games, lagged N-1 PTS as GBDT feature):
+  Elo 0.2193 | GBDT base 0.2250 | +PTS 0.2260 | +PTS+fit 0.2256.
+  PTS vs GBDT-base = NOISE (Δ+0.0009, CI straddles 0); PTS vs Elo = worse.
+  => Lagged PTS adds NOTHING. Do NOT promote.
 
-MICRO-ADJUSTMENT EXPERIMENT (scripts/experiment_microadjustments.py; 8,279 OOS
-games; paired bootstrap):
-- Adj1 recalibrate Gaussian (isotonic): Δ -0.0005, CI straddles 0 => NOISE. Drop.
-  (Can't calibrate away a stale, low-resolution signal.)
-- Adj2 undiluted current-season margin: 0.2225, Δ -0.0183 => HELP, but it's Elo-lite
-  (still worse than Elo +0.0032 sig). Keep as a feature, not standalone.
-- Adj3 GBDT stack: 0.2250 HELP; +current-margin feature -> 0.2235.
-- NONE beat Elo (0.2193). Mechanical fixes converge to ~Elo, can't cross the
-  ~0.01 Brier wall to Kalshi (0.2045).
+INTERPRETATION: metric is good (r=0.84 contemporaneous), but the only leakage-free
+wiring today is a 1-season lag, which Elo + prior-year margin already subsume.
+The unlock = YTD/current-roster PTS (recompute PTS from games-to-date on the
+CURRENT roster) — can't test with season-aggregated PTS (would leak). Needs the
+Phase-3 data track: per-game availability/inactives + incremental PTS. That's a
+multi-step data-engineering effort, NOT wiring.
 
-PTS-WIRING FEASIBILITY (for the interview):
-- PTS v40 = per-player on-court impact (pts_o_v40/pts_d_v40), 7675 rows/9 seasons.
-- Aggregate has PTS + archetypes + RAPM + minutes (min/box_min/pec_minutes/
-  agg_minute_share) + team_abbreviation.
-- An interaction-aware team model already EXISTS but is UNUSED (off_talent_base +
-  off_interaction_term + archetype distributions in projected_team_features).
-- preseason_rosters exist for 2022-23..2024-25 only (3 seasons).
-- NO per-game injury/inactive/availability data found => the in-season injury-
-  pricing alpha (Track 2) is DATA-BLOCKED without a new game-day inactives fetch.
-- => Wiring PTS is COMPLEX / decision-heavy, not a simple sum.
+BOTTLENECK CONFIRMED: it's DATA (current roster + availability), not the metric.
 
-KEY DECISIONS TO INTERVIEW: (1) sequencing preseason-static vs in-season-alpha
-(blocked on data); (2) additive vs interaction-aware aggregation; (3) archetypes
-in/out (double-counting: PTS=level, archetypes=fit-only); (4) integrate as GBDT
-feature vs replace vs Elo-blind-windows-only.
+DECISION POINT FOR USER: invest in Phase 3 (game-day inactives fetch + YTD PTS
+machinery + preseason-roster backfill to 8 seasons)? Only path for player-impact
+to beat Elo. Large effort. Awaiting go/no-go.
 
-NEXT: AskUserQuestion on the 4 decisions, then produce the plan.
+NOT DONE: Phase 3 (parallel data track) — paused pending user decision given
+Gate 2 null result.

@@ -908,3 +908,24 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - D src/modeling/experiment2_production_tilt.py
       - M src/profile_aggregate/build_profile_aggregate.py
       - D tests/bke_v29_diagnostics.py
+
+### 2026-05-30 08:42:57Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 8c0cda9b614f6b961a59646815a02a1c5427e759..76dd17a392d0da564e47aebc89e8578b7fc25ddb
+- Commits:
+  - 76dd17a feat: Step 5 GBDT game model + Elo discovery + leakage audit
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T03:42:47-05:00
+    - Purpose: Step 5 (walk-forward GBDT game model) plus the key finding that a zero-cost
+    - Files:
+      - M .github/skills/SKILL_MAP.md
+      - A .github/skills/forecast-leakage-audit/SKILL.md
+      - A docs/findings/game_model_comparison_2026-05-30.md
+      - M docs/multiple-versions.md
+      - M docs/roadmap_to_vegas_accuracy.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/audit_forecast_leakage.py
+      - A scripts/experiment_microadjustments.py
+      - A src/simulation/gbdt_game_model.py
