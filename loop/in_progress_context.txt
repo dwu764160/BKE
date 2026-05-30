@@ -31,5 +31,26 @@ DECISION POINT FOR USER: invest in Phase 3 (game-day inactives fetch + YTD PTS
 machinery + preseason-roster backfill to 8 seasons)? Only path for player-impact
 to beat Elo. Large effort. Awaiting go/no-go.
 
-NOT DONE: Phase 3 (parallel data track) — paused pending user decision given
-Gate 2 null result.
+PHASE 3 (prelim, offline) — current-roster YTD PTS test:
+- scripts/experiment_ytd_roster_pts.py: weight prior-season player PTS by strictly-
+  prior current-season cumulative minutes (captures roster changes, leakage-free).
+- Local player_game_logs = 2022-25 only => 2 OOS seasons (2023-24, 2024-25, 2389 g).
+- Result: current-roster PTS vs Elo = NOISE (Δ+0.0007, CI straddles 0); lagged HURT.
+- By season progress: early(2-10) Δ-0.0004, mid(11-25) Δ-0.0005, late(26-50)
+  Δ+0.0015, deep(51+) Δ+0.0010. Direction matches theory (helps while Elo blind,
+  hurts once Elo caught up) but magnitude negligible (~0.0005), not significant.
+
+STRATEGIC CONCLUSION (mounting evidence): nothing in BKE/PTS beats Elo at the game
+level by a margin that matters. PTS = excellent TEAM-QUALITY metric (same-season
+r=0.84) -> use for manager-sim + power rankings, NOT game-level alpha.
+
+NETWORK BLOCK: stats.nba.com firewalled from this sandbox (30s timeout). The
+remaining Phase-3 fetches (player_game_logs backfill to 9 seasons, preseason-roster
+backfill to 8 seasons, game-day inactives) CANNOT run here — must run in a
+networked env. fetch_preseason_rosters.py already supports --seasons.
+
+DECISION PENDING: given negligible offline payoff + network block, does user still
+want the heavy network-gated fetch scripts written, or pivot PTS to sim/power-
+rankings and accept Elo (research-only) for Kalshi?
+
+COMMITS: 76dd17a (Step5+Elo+audit), 3fc3c4a (PTS wiring Phase1/2).

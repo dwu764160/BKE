@@ -90,8 +90,63 @@ Lagged PTS is statistical noise on top of the GBDT and clearly worse than Elo.
   YTD PTS) — that is the only path that could let player-impact beat Elo, and it
   is a multi-step data-engineering effort, not a wiring task.
 
+## Phase 3 (prelim) — current-roster YTD PTS, the real test
+
+`scripts/experiment_ytd_roster_pts.py` builds the signal Phase-1/2 lacked: weight
+each player's **prior-season** PTS by their **strictly-prior current-season**
+cumulative minutes (`ytd_pts(T,D) = Σ_{g<D} Σ_p min·skill / Σ_{g<D} Σ_p min`). This
+captures roster changes (trades, who's actually playing) — leakage-free. Local
+player-game minutes exist only for 2022-25, so this is **2 OOS seasons (2023-24,
+2024-25), 2,389 games** — preliminary.
+
+Walk-forward logistic stack on Elo:
+
+| Model | Brier |
+|---|---|
+| raw Elo | 0.2133 |
+| A) logit(Elo) | 0.2142 |
+| B) logit(Elo + current-roster PTS) | 0.2149 |
+| C) logit(Elo + lagged PTS) | 0.2153 |
+
+| Comparison | Δ Brier | 95% CI | Verdict |
+|---|---|---|---|
+| B current-roster vs Elo | +0.0007 | [−0.0008, +0.0021] | **NOISE** |
+| C lagged vs Elo | +0.0011 | [+0.0002, +0.0019] | HURT |
+
+**By season progress** (Δ = Brier(Elo+PTS) − Brier(Elo); negative = PTS helps):
+
+| Window | n | Δ |
+|---|---|---|
+| early (games 2-10) | 274 | **−0.0004** |
+| mid (11-25) | 458 | **−0.0005** |
+| late (26-50) | 743 | +0.0015 |
+| deep (51+) | 914 | +0.0010 |
+
+**Interpretation:** the *direction* matches the theory exactly — current-roster PTS
+helps marginally while Elo is still uninformed (early/mid) and becomes dead weight
+once Elo has caught up (late/deep). But the **magnitude is negligible (~0.0005
+Brier) and not statistically distinguishable from zero.** Even in its best window,
+player-impact gets nowhere near the ~0.01 Brier needed to reach Kalshi.
+
+**Strategic read (mounting evidence):** across lagged-PTS, current-roster PTS, and
+every mechanical fix, **nothing in the BKE/PTS pipeline beats Elo at the game level
+by a margin that matters.** PTS is excellent for *team quality* (same-season
+r=0.84) — ideal for the manager-sim and power rankings — but it does **not** appear
+to carry game-level alpha over Elo. The theoretical early-season edge is real in
+sign but too small to monetize.
+
+**Data caveat / what would change the verdict:** only 2 OOS seasons are testable
+offline (player_game_logs local = 2022-25; stats.nba.com is firewalled from this
+environment). A full read needs: (1) `player_game_logs` backfilled to all 9 seasons,
+(2) **preseason-roster-projected minutes** for the very-early window (games 1-10,
+where YTD minutes are too noisy and a preseason roster prior is the right signal —
+needs the roster backfill to 8 seasons), (3) optionally game-day inactives to test
+true injury-availability pricing. All three are network-gated fetches to run in an
+environment that can reach stats.nba.com.
+
 ## Reproduce
 ```bash
 python3 scripts/build_pts_team_ratings.py
 python3 scripts/validate_pts_team_ratings.py
+python3 scripts/experiment_ytd_roster_pts.py     # current-roster test (2022-25)
 ```

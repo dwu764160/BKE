@@ -929,3 +929,19 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - A scripts/audit_forecast_leakage.py
       - A scripts/experiment_microadjustments.py
       - A src/simulation/gbdt_game_model.py
+
+### 2026-05-30 09:03:58Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 76dd17a392d0da564e47aebc89e8578b7fc25ddb..3fc3c4a3c5e22be5f9d54255ea0f8e5c64e9dfc4
+- Commits:
+  - 3fc3c4a feat: PTS->team rating wiring + Phase 1/2 validation (lagged PTS = noise)
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T04:03:55-05:00
+    - Purpose: Aggregate PTS v4.0 into team ratings and measure incremental game-level value.
+    - Files:
+      - A docs/findings/pts_wiring_phase1_2026-05-30.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/build_pts_team_ratings.py
+      - A scripts/validate_pts_team_ratings.py
