@@ -801,11 +801,22 @@ lightgbm>=4.0
 
 ---
 
-## Step 6 — Ensemble Game Model
+## Step 6 — Ensemble Game Model  ⛔ SUPERSEDED / NOT BEING SHIPPED (2026-05-30)
+
+> **Status:** Built and evaluated inside `src/simulation/gbdt_game_model.py`
+> (the `blend_30_50_20` leg), then **retired**. The fixed 30/50/20 ensemble
+> (OOS Brier 0.2223) is **worse than Elo alone (0.2193)** — it fails this step's
+> own validation gate ("no single model should dominate; if one does, drop the
+> weak legs"). Elo dominates; the Gaussian leg drags the blend down. We are
+> **not** shipping the fixed ensemble. Interim production model = GBDT-stack-with-Elo
+> or Elo alone (see `docs/findings/game_model_comparison_2026-05-30.md`). The real
+> next step is **Track 2 / Step 7 below**: wire PTS/BKE player-impact into the game
+> model and test incremental CLV where Elo is blind. Original spec kept below for
+> history.
 
 **Dependencies:** Step 5 (GBDT trained and validated)  
-**Expected Brier gain:** −0.003 to −0.005  
-**Basketball source:** Ensemble methods reduce systematic bias by ~0.003 Brier when base models have complementary error patterns. Gaussian captures symmetric calibration well; GBDT captures non-linear matchup effects; simple Elo captures momentum.
+**Expected Brier gain:** −0.003 to −0.005 *(NOT realized — ensemble underperformed Elo)*  
+**Basketball source:** Ensemble methods reduce systematic bias by ~0.003 Brier when base models have complementary error patterns. Gaussian captures symmetric calibration well; GBDT captures non-linear matchup effects; simple Elo captures momentum. *(In practice the legs were not complementary: Elo subsumed the others.)*
 
 ### What this does
 

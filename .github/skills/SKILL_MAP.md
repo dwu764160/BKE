@@ -34,6 +34,7 @@ All agents must do these steps before using or editing skills:
 16. [audit-aggregate](audit-aggregate/SKILL.md) — profile aggregation changes
 17. [audit-fetch](audit-fetch/SKILL.md) — fetch/ingest changes (user-requested only)
 18. [pipeline-integrity](pipeline-integrity/SKILL.md) — after any data fetch/update: verify downstream artifacts, queue re-run chain, sync docs
+18b. [forecast-leakage-audit](forecast-leakage-audit/SKILL.md) — before trusting any OOS Brier/CLV or comparing game-level forecast models; rules out temporal leakage vs signal dilution
 19. [data-audit](data-audit/SKILL.md) — schema drift or data normalization
 20. [docs-sync](docs-sync/SKILL.md) — pipeline step renames or output path changes
 21. [self-improvement](self-improvement/SKILL.md) — end-of-session skill quality evaluation (BKE-specific)
@@ -79,6 +80,7 @@ All agents must do these steps before using or editing skills:
 | audit-aggregate | [audit-aggregate/SKILL.md](audit-aggregate/SKILL.md) | Profile aggregation audit | Aggregation changes |
 | audit-fetch | [audit-fetch/SKILL.md](audit-fetch/SKILL.md) | Fetch/ingest audit | Ingest changes (user-requested only) |
 | pipeline-integrity | [pipeline-integrity/SKILL.md](pipeline-integrity/SKILL.md) | Post-fetch downstream validation and doc sync | After any data fetch, backfill, or season update |
+| forecast-leakage-audit | [forecast-leakage-audit/SKILL.md](forecast-leakage-audit/SKILL.md) | Temporal-leakage / contamination audit for OOS forecast & CLV | Before trusting an OOS Brier/CLV or comparing game models |
 | data-audit | [data-audit/SKILL.md](data-audit/SKILL.md) | Schema and data normalization | Schema drift suspected |
 | docs-sync | [docs-sync/SKILL.md](docs-sync/SKILL.md) | Sync docs with code changes | Pipeline step renames/output changes |
 | self-improvement | [self-improvement/SKILL.md](self-improvement/SKILL.md) | Session-end skill evaluation | End of interactive session |
@@ -173,6 +175,9 @@ skillMap:
       type: domain-audit
     - name: pipeline-integrity
       path: .github/skills/pipeline-integrity/SKILL.md
+      type: domain-audit
+    - name: forecast-leakage-audit
+      path: .github/skills/forecast-leakage-audit/SKILL.md
       type: domain-audit
     - name: data-audit
       path: .github/skills/data-audit/SKILL.md

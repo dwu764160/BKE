@@ -564,3 +564,347 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - A scripts/validate_lineup_pts.py
       - A scripts/validate_lineup_pts_v2.py
       - M src/modeling/model_config.py
+
+### 2026-05-23 20:45:14Z - Push to deploy
+- Remote URL: https://github.com/Daniel-Wu-Github/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 765eed68cd2e26a5faee26a5e320674f0baed01c..ae8998658529298c460a2bad811013768b521781
+- Commits:
+  - ae89986 pre PTS 4.0 improvement A, waiting for new pass 45 checks
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-23T15:45:10-05:00
+    - Purpose: This commit adds 2, modifies 7 across .claude, .gitignore, logging, scripts, src.
+    - Files:
+      - M .claude/debugging_log.md
+      - M .claude/notification_log.txt
+      - M .claude/pending-improvements.md
+      - M .claude/skill_memory_cursor.tmp
+      - M .gitignore
+      - M logging/commit_log.md
+      - A scripts/pts_v40_multiseason.py
+      - A scripts/pts_v40_sweep.py
+      - M src/modeling/model_config.py
+
+### 2026-05-23 20:45:20Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 765eed68cd2e26a5faee26a5e320674f0baed01c..ae8998658529298c460a2bad811013768b521781
+- Commits:
+  - ae89986 pre PTS 4.0 improvement A, waiting for new pass 45 checks
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-23T15:45:10-05:00
+    - Purpose: This commit adds 2, modifies 7 across .claude, .gitignore, logging, scripts, src.
+    - Files:
+      - M .claude/debugging_log.md
+      - M .claude/notification_log.txt
+      - M .claude/pending-improvements.md
+      - M .claude/skill_memory_cursor.tmp
+      - M .gitignore
+      - M logging/commit_log.md
+      - A scripts/pts_v40_multiseason.py
+      - A scripts/pts_v40_sweep.py
+      - M src/modeling/model_config.py
+
+### 2026-05-24 07:25:41Z - Push to deploy
+- Remote URL: https://github.com/Daniel-Wu-Github/BKE.git
+- Remote ref: refs/heads/personal
+- Range: ae8998658529298c460a2bad811013768b521781..7a88f93274052f83f41a715018f58f0df8421e35
+- Commits:
+  - 7a88f93 fix: Improvement C OOS leakage + archetype individual signal
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-24T02:25:36-05:00
+    - Purpose: - lineup_residual_z: switch from within-season OLS to rolling OOS OLS
+    - Files:
+      - A scripts/pts_v40_defense.py
+      - M scripts/pts_v40_sweep.py
+      - M src/modeling/model_config.py
+
+### 2026-05-24 07:25:44Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: ae8998658529298c460a2bad811013768b521781..7a88f93274052f83f41a715018f58f0df8421e35
+- Commits:
+  - 7a88f93 fix: Improvement C OOS leakage + archetype individual signal
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-24T02:25:36-05:00
+    - Purpose: - lineup_residual_z: switch from within-season OLS to rolling OOS OLS
+    - Files:
+      - A scripts/pts_v40_defense.py
+      - M scripts/pts_v40_sweep.py
+      - M src/modeling/model_config.py
+
+### 2026-05-26 04:40:57Z - Push to deploy
+- Remote URL: https://github.com/Daniel-Wu-Github/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 7a88f93274052f83f41a715018f58f0df8421e35..e32bad83d018db36d37ef075c7df3626041a43f2
+- Commits:
+  - e32bad8 feat: lock Improvement C winner + add Vegas accuracy roadmap
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-25T23:40:53-05:00
+    - Purpose: - model_config.py: lock C winner (gamma_match=0.45, lineup=0.35, arch=0.20)
+    - Files:
+      - A docs/roadmap_to_vegas_accuracy.md
+      - M src/modeling/model_config.py
+
+### 2026-05-26 04:41:03Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 7a88f93274052f83f41a715018f58f0df8421e35..e32bad83d018db36d37ef075c7df3626041a43f2
+- Commits:
+  - e32bad8 feat: lock Improvement C winner + add Vegas accuracy roadmap
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-25T23:40:53-05:00
+    - Purpose: - model_config.py: lock C winner (gamma_match=0.45, lineup=0.35, arch=0.20)
+    - Files:
+      - A docs/roadmap_to_vegas_accuracy.md
+      - M src/modeling/model_config.py
+
+### 2026-05-29 16:25:07Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: e32bad83d018db36d37ef075c7df3626041a43f2..b1797a253511b45750edc827dc55a04c0edfc408
+- Commits:
+  - b1797a2 feat: Step 3 rest/B2B correction layer — game-day context applied to game model
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-28T08:52:17-05:00
+    - Purpose: Implements Schedule Step 3 of the Vegas Accuracy Roadmap:
+    - Files:
+      - M docs/roadmap_to_vegas_accuracy.md
+      - M loop/in_progress_context.txt
+      - A scripts/build_rest_features.py
+      - A scripts/forecast_2025_26_games.py
+      - M src/simulation/game_model.py
+      - M src/simulation/simulation_config.py
+      - M src/simulation/validate_forecast.py
+
+### 2026-05-29 16:26:49Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: b1797a253511b45750edc827dc55a04c0edfc408..804419aff82f37e86e697bab6a08ccfa9d348b0e
+- Commits:
+  - 804419a feat: Step 4 YTD blending, tracking backfill, pipeline fixes, pipeline-integrity skill
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T11:26:13-05:00
+    - Purpose: Data fixes:
+    - Files:
+      - D .claude/debugging_log.md
+      - D .claude/notification_log.txt
+      - D .claude/pending-improvements.md
+      - D .claude/skill_memory_cursor.tmp
+      - M .github/skills/SKILL_MAP.md
+      - A .github/skills/pipeline-integrity/SKILL.md
+      - M .github/skills/skill_index.yaml
+      - M CLAUDE.md
+      - A docs/bke_v40_report.md
+      - M docs/reference/tracking_availability.md
+      - M loop/in_progress_context.txt
+      - A scripts/backfill_tracking_missing.py
+      - A scripts/build_2025_26_projections.py
+      - A scripts/build_pts_v40.py
+      - A scripts/build_ytd_team_ratings.py
+      - A scripts/compute_kalshi_clv.py
+      - A scripts/fetch_2025_26_game_logs.py
+      - A scripts/fetch_kalshi_closing_lines.py
+      - A scripts/fetch_pbp_2025_26_statsapi.py
+      - M scripts/forecast_2025_26_games.py
+      - A scripts/oos_check.py
+      - A scripts/pipeline_2025_26.sh
+      - A scripts/rerun_2025_26_rapm.sh
+      - A scripts/run_full_downstream.sh
+      - M src/data_fetch/fetch_box_scores_complete.py
+      - M src/data_fetch/fetch_tracking_data.py
+      - M src/data_fetch/probe_tracking_availability.py
+      - M src/modeling/layer1_portable_talent.py
+      - M src/modeling/model_config.py
+      - M src/simulation/simulation_config.py
+      - M src/simulation/validate_forecast.py
+
+### 2026-05-29 16:32:52Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 804419aff82f37e86e697bab6a08ccfa9d348b0e..819ce97736e331a733e1c869d9187e29c7c694cc
+- Commits:
+  - 819ce97 refactor: skill catalog cleanup — remove 4 stale skills, nest context-engineering
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T11:32:36-05:00
+    - Purpose: Removed stale/redundant skills:
+    - Files:
+      - M .github/skills/SKILL_MAP.md
+      - D .github/skills/advanced-evaluation/SKILL.md
+      - D .github/skills/advanced-evaluation/references/bias-mitigation.md
+      - D .github/skills/advanced-evaluation/references/evaluation-pipeline.md
+      - D .github/skills/advanced-evaluation/references/implementation-patterns.md
+      - D .github/skills/advanced-evaluation/references/metrics-guide.md
+      - D .github/skills/advanced-evaluation/scripts/evaluation_example.py
+      - D .github/skills/audit-eval/SKILL.md
+      - D .github/skills/backtest-vs-forecast/SKILL.md
+      - D .github/skills/bdi-mental-states/SKILL.md
+      - D .github/skills/bdi-mental-states/references/bdi-ontology-core.md
+      - D .github/skills/bdi-mental-states/references/framework-integration.md
+      - D .github/skills/bdi-mental-states/references/rdf-examples.md
+      - D .github/skills/bdi-mental-states/references/sparql-competency.md
+      - M .github/skills/build_skill_index.py
+      - D .github/skills/context-compression/SKILL.md
+      - D .github/skills/context-compression/references/evaluation-framework.md
+      - D .github/skills/context-compression/scripts/compression_evaluator.py
+      - D .github/skills/context-compression/tests/test_compression_evaluator.py
+      - D .github/skills/context-degradation/SKILL.md
+      - D .github/skills/context-degradation/references/patterns.md
+      - D .github/skills/context-degradation/scripts/degradation_detector.py
+      - A .github/skills/context-engineering/advanced-evaluation/SKILL.md
+      - A .github/skills/context-engineering/advanced-evaluation/references/bias-mitigation.md
+      - A .github/skills/context-engineering/advanced-evaluation/references/evaluation-pipeline.md
+      - A .github/skills/context-engineering/advanced-evaluation/references/implementation-patterns.md
+      - A .github/skills/context-engineering/advanced-evaluation/references/metrics-guide.md
+      - A .github/skills/context-engineering/advanced-evaluation/scripts/evaluation_example.py
+      - A .github/skills/context-engineering/bdi-mental-states/SKILL.md
+      - A .github/skills/context-engineering/bdi-mental-states/references/bdi-ontology-core.md
+      - A .github/skills/context-engineering/bdi-mental-states/references/framework-integration.md
+      - A .github/skills/context-engineering/bdi-mental-states/references/rdf-examples.md
+      - A .github/skills/context-engineering/bdi-mental-states/references/sparql-competency.md
+      - A .github/skills/context-engineering/context-compression/SKILL.md
+      - A .github/skills/context-engineering/context-compression/references/evaluation-framework.md
+      - A .github/skills/context-engineering/context-compression/scripts/compression_evaluator.py
+      - A .github/skills/context-engineering/context-compression/tests/test_compression_evaluator.py
+      - A .github/skills/context-engineering/context-degradation/SKILL.md
+      - A .github/skills/context-engineering/context-degradation/references/patterns.md
+      - A .github/skills/context-engineering/context-degradation/scripts/degradation_detector.py
+      - A .github/skills/context-engineering/context-fundamentals/SKILL.md
+      - A .github/skills/context-engineering/context-fundamentals/references/context-components.md
+      - A .github/skills/context-engineering/context-fundamentals/scripts/context_manager.py
+      - A .github/skills/context-engineering/context-optimization/SKILL.md
+      - A .github/skills/context-engineering/context-optimization/references/optimization_techniques.md
+      - A .github/skills/context-engineering/context-optimization/scripts/compaction.py
+      - A .github/skills/context-engineering/evaluation/SKILL.md
+      - A .github/skills/context-engineering/evaluation/references/metrics.md
+      - A .github/skills/context-engineering/evaluation/scripts/evaluator.py
+      - A .github/skills/context-engineering/filesystem-context/SKILL.md
+      - A .github/skills/context-engineering/filesystem-context/references/implementation-patterns.md
+      - A .github/skills/context-engineering/filesystem-context/scripts/filesystem_context.py
+      - A .github/skills/context-engineering/latent-briefing/SKILL.md
+      - A .github/skills/context-engineering/latent-briefing/references/attention-matching-formulation.md
+      - A .github/skills/context-engineering/memory-systems/SKILL.md
+      - A .github/skills/context-engineering/memory-systems/references/implementation.md
+      - A .github/skills/context-engineering/memory-systems/scripts/memory_store.py
+      - A .github/skills/context-engineering/multi-agent-patterns/SKILL.md
+      - A .github/skills/context-engineering/multi-agent-patterns/references/frameworks.md
+      - A .github/skills/context-engineering/multi-agent-patterns/scripts/coordination.py
+      - A .github/skills/context-engineering/project-development/SKILL.md
+      - A .github/skills/context-engineering/project-development/references/case-studies.md
+      - A .github/skills/context-engineering/project-development/references/pipeline-patterns.md
+      - A .github/skills/context-engineering/project-development/scripts/pipeline_template.py
+      - A .github/skills/context-engineering/tool-design/SKILL.md
+      - A .github/skills/context-engineering/tool-design/references/architectural_reduction.md
+      - A .github/skills/context-engineering/tool-design/references/best_practices.md
+      - A .github/skills/context-engineering/tool-design/scripts/description_generator.py
+      - D .github/skills/context-fundamentals/SKILL.md
+      - D .github/skills/context-fundamentals/references/context-components.md
+      - D .github/skills/context-fundamentals/scripts/context_manager.py
+      - D .github/skills/context-optimization/SKILL.md
+      - D .github/skills/context-optimization/references/optimization_techniques.md
+      - D .github/skills/context-optimization/scripts/compaction.py
+      - D .github/skills/evaluation/SKILL.md
+      - D .github/skills/evaluation/references/metrics.md
+      - D .github/skills/evaluation/scripts/evaluator.py
+      - D .github/skills/filesystem-context/SKILL.md
+      - D .github/skills/filesystem-context/references/implementation-patterns.md
+      - D .github/skills/filesystem-context/scripts/filesystem_context.py
+      - D .github/skills/forecast/SKILL.md
+      - D .github/skills/frontend-sync/SKILL.md
+      - D .github/skills/latent-briefing/SKILL.md
+      - D .github/skills/latent-briefing/references/attention-matching-formulation.md
+      - D .github/skills/memory-systems/SKILL.md
+      - D .github/skills/memory-systems/references/implementation.md
+      - D .github/skills/memory-systems/scripts/memory_store.py
+      - D .github/skills/multi-agent-patterns/SKILL.md
+      - D .github/skills/multi-agent-patterns/references/frameworks.md
+      - D .github/skills/multi-agent-patterns/scripts/coordination.py
+      - D .github/skills/project-development/SKILL.md
+      - D .github/skills/project-development/references/case-studies.md
+      - D .github/skills/project-development/references/pipeline-patterns.md
+      - D .github/skills/project-development/scripts/pipeline_template.py
+      - M .github/skills/skill_index.yaml
+      - D .github/skills/tool-design/SKILL.md
+      - D .github/skills/tool-design/references/architectural_reduction.md
+      - D .github/skills/tool-design/references/best_practices.md
+      - D .github/skills/tool-design/scripts/description_generator.py
+
+### 2026-05-29 17:11:57Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 819ce97736e331a733e1c869d9187e29c7c694cc..0aafc6634ea3c164d14622840c92a9830fa8e6be
+- Commits:
+  - 0aafc66 fix: YTD ratings for all 8 seasons + rest features for 2025-26 + pipeline completeness
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T12:11:50-05:00
+    - Purpose: YTD ratings (build_ytd_team_ratings.py):
+    - Files:
+      - M .github/skills/pipeline-integrity/SKILL.md
+      - M scripts/build_ytd_team_ratings.py
+      - M scripts/rerun_2025_26_rapm.sh
+      - M scripts/run_full_downstream.sh
+
+### 2026-05-29 17:38:13Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 0aafc6634ea3c164d14622840c92a9830fa8e6be..757145752a4f9993bac39d5313d0867b8e113e01
+- Commits:
+  - 7571457 fix: rebuild all-season team projections in consistent pts/100 units
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T12:38:07-05:00
+    - Purpose: Root cause:
+    - Files:
+      - A scripts/build_all_season_projections.py
+      - M scripts/rerun_2025_26_rapm.sh
+      - M scripts/run_full_downstream.sh
+
+### 2026-05-29 17:41:36Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 757145752a4f9993bac39d5313d0867b8e113e01..c772496a814334ca0680d4560b19607e3304fe38
+- Commits:
+  - c772496 fix: add compute_clean_possessions to rerun script (was missing, blocked 2025-26 RAPM)
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T12:41:32-05:00
+    - Purpose: rerun_2025_26_rapm.sh was missing the compute_clean_possessions step between
+    - Files:
+      - M scripts/rerun_2025_26_rapm.sh
+
+### 2026-05-29 17:59:06Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: c772496a814334ca0680d4560b19607e3304fe38..501430b6a8ec4451496e2ac3334ddf24e28e4c1b
+- Commits:
+  - 501430b feat: metric-version-tracker skill + PTS/team-projection sections in multiple-versions.md
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T12:58:59-05:00
+    - Purpose: New skill — metric-version-tracker:
+    - Files:
+      - M .github/skills/SKILL_MAP.md
+      - A .github/skills/metric-version-tracker/SKILL.md
+      - M .github/skills/skill_index.yaml
+      - M docs/multiple-versions.md
+
+### 2026-05-30 04:36:39Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 501430b6a8ec4451496e2ac3334ddf24e28e4c1b..8c0cda9b614f6b961a59646815a02a1c5427e759
+- Commits:
+  - 8c0cda9 fix: PTS v40 pipeline chain + legacy cleanup + aggregate PTS v40 merge
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-29T23:36:31-05:00
+    - Purpose: - Add build_pts_v32 → build_pts_v40_a → build_pts_v40_c → build_pts_v40 chain
+    - Files:
+      - M .github/skills/metric-version-tracker/SKILL.md
+      - M aggregate/player_profile_aggregate.parquet
+      - D scripts/compute_kalshi_clv.py
+      - D scripts/export_bke_components.py
+      - M scripts/forecast_2025_26_games.py
+      - D scripts/pts_v32_posthoc_sweep.py
+      - D scripts/pts_v32_sweep.py
+      - M scripts/rerun_2025_26_rapm.sh
+      - M scripts/run_full_downstream.sh
+      - D src/data_compute/compute_defensive_archetypes.py
+      - D src/modeling/experiment2_production_tilt.py
+      - M src/profile_aggregate/build_profile_aggregate.py
+      - D tests/bke_v29_diagnostics.py

@@ -48,6 +48,38 @@ game margins by `scripts/build_all_season_projections.py` — not directly from 
 
 ---
 
+## Game-Level Forecast Models
+
+Walk-forward, out-of-sample (train seasons < T, predict T). Aggregate Brier over
+2019-20…2025-26 (8,279 games) from `reports/gbdt_forecast_validation.json`.
+
+| Model | Script / entry | Output | Agg Brier | 2025-26 Brier | Status |
+|---|---|---|---|---|---|
+| Gaussian baseline | `src/simulation/validate_forecast.py` (`compute_game_distribution_with_context`) | `reports/bke_game_forecasts.parquet` | 0.2408 | 0.2358 | **PRODUCTION BASELINE** — underconfident (gauss_p std ≈ 0.083) |
+| GBDT stack (Step 5) | `src/simulation/gbdt_game_model.py` | `reports/bke_gbdt_game_forecasts.parquet` | 0.2250 | 0.2133 | **NEW** — LightGBM stacking Gaussian+Elo+rest; −0.0158 vs Gaussian |
+| Elo (sequential) | `src/simulation/gbdt_game_model.py` (`compute_walk_forward_elo`) | *(in JSON report)* | **0.2193** | **0.2092** | **BEST SINGLE MODEL** — beats the BKE player-impact pipeline |
+
+**Key finding (2026-05-30):** a zero-cost sequential Elo (K=20, HCA≈55 Elo pts,
+0.75 between-season carry) is the strongest game-level model and the only leg
+that crosses the Brier ≤ 0.210 gate on 2025-26 (0.2092, near Kalshi's 0.2045).
+The GBDT stack helps but cannot beat pure Elo on limited data. Normalization
+used: per-season z-score of `delta_mu` (leakage-free) to absorb cross-era scale
+drift in `blended_mu`. **Alpha gate (CLV > 0.02 AND Brier ≤ 0.210) still NOT
+met** — Elo is near Brier-parity with Kalshi, not ahead, so expected CLV ≈ 0.
+Next: run `scripts/fetch_kalshi_closing_lines.py` CLV test against the Elo/GBDT
+2025-26 export.
+
+**⚠ Source note (2026-05-30):** the Gaussian/GBDT "team rating"
+(`team_net_rating_projected`) is `0.70 × prior-season PLUS_MINUS margin`
+(`build_all_season_projections.py`, `build_2025_26_projections.py`) — it contains
+**no PTS and no BKE**. The archetype/talent columns in `projected_team_features`
+are unused template fields. Wiring PTS/BKE player-impact into team strength is an
+open task (Track 2 in `docs/findings/game_model_comparison_2026-05-30.md`).
+
+**Run:** `python3 src/simulation/gbdt_game_model.py`
+
+---
+
 ## BKE Scoring Model
 
 | Version | Script | Output artifact | Status |
