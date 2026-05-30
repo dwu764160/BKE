@@ -945,3 +945,18 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - M loop/in_progress_context.txt
       - A scripts/build_pts_team_ratings.py
       - A scripts/validate_pts_team_ratings.py
+
+### 2026-05-30 09:13:39Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 3fc3c4a3c5e22be5f9d54255ea0f8e5c64e9dfc4..90f4fb43065ea828a931ffea82c1f59a88aa3936
+- Commits:
+  - 90f4fb4 feat: current-roster YTD PTS experiment (Phase 3 prelim) — still NOISE vs Elo
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T04:13:36-05:00
+    - Purpose: scripts/experiment_ytd_roster_pts.py: weight each player's prior-season PTS by
+    - Files:
+      - M docs/findings/pts_wiring_phase1_2026-05-30.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+      - A scripts/experiment_ytd_roster_pts.py

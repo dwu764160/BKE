@@ -53,4 +53,46 @@ DECISION PENDING: given negligible offline payoff + network block, does user sti
 want the heavy network-gated fetch scripts written, or pivot PTS to sim/power-
 rankings and accept Elo (research-only) for Kalshi?
 
-COMMITS: 76dd17a (Step5+Elo+audit), 3fc3c4a (PTS wiring Phase1/2).
+COMMITS: 76dd17a (Step5+Elo+audit), 3fc3c4a (PTS wiring Phase1/2),
+90f4fb4 (current-roster YTD PTS prelim).
+
+NEW PHASE (v0.8 -> v1): two-track split.
+- Game-winner prediction = dead end vs market. Pivot markets to PROPS/TOTALS
+  long-tail edge-finding (scan all lines, conditional edge), NOT moneylines.
+- Game track = Tier-2 generative possession engine (NEW sister repo).
+- LINEUP FINDING: lineup_projection.py used ONLY in season_sim track, NOT in
+  game-level prediction (no under-the-hood misuse). It's the unused unlock for
+  cross-team archetype interactions (POA vs ball-dominant creator).
+- DIVERGENCE POINT = lineup realization layer: markets fetch ACTUAL starters +
+  injury ~T-60/30min and override; game uses fully PROJECTED lineups.
+- ARCH RECOMMENDATION: Core repo (this) + 2 sister repos (markets=existing
+  Robinhood/Kalshi; game=NEW). Core publishes versioned artifact contract.
+- SEQUENCING: (1) wire lineup projector as Core artifact + build cross-team
+  archetype interaction model [SHARED]; (2) generative player stat-line model
+  [SHARED, serves props AND game]; (3) FORK repos.
+- DOC: docs/phase_v1_architecture.md written (PROPOSED, awaiting ratification of
+  §9 open decisions).
+
+RATIFIED 2026-05-30: Core + 2 sister repos; game repo created AFTER Core step 2;
+build order = lineup projector -> cross-team interactions FIRST; doc practice =
+lock Core API contract + immediate-build note now, defer full per-track docs.
+
+SIM ARCHITECTURE DECISION (user asked predict-then-backfill?): NO. Bottom-up
+generative possession engine (box score EMERGES), steered by a cheap macro layer,
+calibrated to the shared stat-line model. NOT "draw box score then fake the PBP"
+(that kills interactivity + cross-team interactions). Unification: one stat-line
+model, two uses — markets SAMPLES it for props; game's possession engine REPRODUCES
+it. Locked in docs/phase_v1_architecture.md §10.
+
+DOCS LOCKED:
+- docs/phase_v1_architecture.md (RATIFIED; +§10 sim arch, +§11 Core API contract).
+- docs/plans/cross_team_interaction_model.md (immediate-build design note).
+  KEY: within-team archetype synergy was negligible (INTERACTION_MATRIX={}), but
+  CROSS-team attacker-vs-defender matchups (POA vs creator) are DIFFERENT + UNTESTED.
+  Double-counting guard: interaction term mean-zero over defender archetypes.
+
+NEXT BUILD (Core step 1): build cross-team interaction model — estimate
+interaction[A,D] from pbp/matchup data (shrunk), attach per-game via projected
+lineups, gate on signal + incremental value. Then Core step 2 = generative
+stat-line model. Then FORK repos.
+
