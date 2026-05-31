@@ -10,22 +10,22 @@ matchup carry REAL signal *beyond player talent*? (The plan's gate #1.)
 
 ## 0. TL;DR
 
-**Yes — unambiguous, talent-purged, basketball-coherent signal.** Using NBA
-defensive matchup data (per offensive-player × defensive-player possessions,
-2022-23…2024-25; 361k rows, 4.2M partial possessions) and **two-way player fixed
-effects** to strip both players' average levels, **79 of 99 archetype-pair cells
-are significant at 95% CI (≈5 expected by chance); 76 survive Benjamini-Hochberg
-FDR.** The motivating hypotheses both hold:
+**Yes — unambiguous, talent-purged, basketball-coherent signal.** Confirmed on
+two runs: the original 3-season pre-flight (2022-23…2024-25; 361k rows) and the
+**locked 8-season run (2017-18…2024-25; 810k rows, 9.6M partial possessions)**
+using **two-way player fixed effects** to strip both players' average levels.
+**8-season result: 71 of 99 archetype-pair cells significant at 95% CI (≈5 by
+chance); 68 survive Benjamini-Hochberg FDR.** The motivating hypotheses hold with
+tighter CIs on larger N:
 
-- **POA Defender vs Ball Dominant Creator: −0.038 ppp** [−0.047, −0.027], 166k
-  poss — a real matchup suppression on top of talent (naive −0.069, so ~half the
-  raw gap was talent, but a solid residual remains). Wing Stopper vs Creator
-  −0.037.
-- **Rim protection vs rollers is the strongest and was MASKED by talent:**
-  PnR Rolling Big vs Rim Protector **−0.091** [−0.099, −0.081] — *larger* than
-  the naive −0.038, because rollers' efficiency averaged over all bigs hides how
-  much rim protectors specifically erase them. Same for Dropping/Mobile Big
-  (−0.08).
+- **POA Defender vs Ball Dominant Creator: −0.031 ppp** [−0.042, −0.019], 166k
+  poss — real matchup suppression on top of talent. Wing Stopper vs Creator −0.028.
+  (3-season: −0.038; slight attenuation adding pre-2022 data, still highly
+  significant.)
+- **Rim protection vs rollers remains the strongest cell:**
+  PnR Rolling Big vs Rim Protector **−0.078** [−0.083, −0.073], 172k poss —
+  talent was *masking* this one; the cell grew stronger with larger N and tighter
+  CI. Same direction for Dropping Big (−0.069) and Mobile Big (−0.069).
 
 **Verdict: GO.** This is a different result from the repo's within-team
 null (`INTERACTION_MATRIX = {}`); cross-team attacker-vs-defender is real.
@@ -41,9 +41,11 @@ guard** the design requires (PTS/RAPM already carry talent; we add only the
 deviation). Significance = **cluster bootstrap over offensive players** (2000
 resamples) → 95% CI per cell + BH-FDR.
 
-Talent removal shrinks the cross-cell spread only modestly: FE-adjusted std
-**0.044 ppp** vs naive 0.055 (80%). So most of the structure is genuine matchup,
-not talent confound.
+Talent removal shrinks the cross-cell spread modestly: FE-adjusted std
+**0.035 ppp** vs naive 0.045 (8-season; washout ratio 0.787). Most structure is
+genuine matchup interaction, not talent confound. (3-season was 0.044 vs 0.055;
+the slight compression adding pre-2022 seasons reflects era differences in scheme
+and archetype composition, not signal degradation.)
 
 ## 2. The dominant axis is SIZE/POSITION — important for Step 1
 
@@ -57,15 +59,17 @@ occur on **switches/mismatches**, not standard assignments.
 possessions are same-position-band (guard guards guard). The *assignable* signal
 that a position-band matchup step will actually invoke is:
 
+8-season locked values (2017-18…2024-25; replace 3-season figures above):
+
 | Assignable matchup (same band) | FE-adj interaction | poss |
 |---|---|---|
-| PnR Rolling Big vs Rim Protector | −0.091 | 44k |
-| PnR Rolling Big vs Dropping Big | −0.080 | 67k |
-| PnR Popping Big vs Dropping Big | −0.058 | 27k |
-| Interior Scorer vs Dropping Big | −0.056 | 34k |
-| Ball Dominant Creator vs POA Defender | −0.038 | 166k |
-| Ball Dominant Creator vs Wing Stopper | −0.037 | 129k |
-| All-Around Scorer vs POA Defender | −0.030 | 89k |
+| PnR Rolling Big vs Rim Protector | **−0.078** | 172k |
+| PnR Rolling Big vs Dropping Big | **−0.069** | 219k |
+| PnR Rolling Big vs Mobile Big | **−0.069** | 20k |
+| PnR Popping Big vs Rim Protector | −0.021 (n.s. 8-season) | 45k |
+| Interior Scorer vs Dropping Big | **−0.050** | 34k |
+| Ball Dominant Creator vs POA Defender | **−0.031** | 166k |
+| All-Around Scorer vs POA Defender | **−0.021** | 89k |
 
 The cross-position boost cells become the **switch term** the possession engine
 can use when a mismatch is forced — kept, but gated behind a switch/assignment
@@ -81,9 +85,9 @@ flag so they don't fire on every possession.
   (a POA that forces a pass shows up as suppression of the creator but not the
   teammate's resulting shot). The team-level adjustment will understate
   playmaking disruption — fine for a first cut, note for later.
-- **Matchup data is 3 seasons only** (2022-23+). The matrix is league-level and
-  archetype-keyed, so it ports to all seasons via archetype labels, but it cannot
-  be walk-forward-validated before 2022-23.
+- **Matchup data is now 8 seasons** (2017-18…2024-25; 2025-26 profiles not yet
+  generated). The matrix is locked on the 8-season run. Walk-forward validation
+  across seasons is feasible.
 - **Magnitudes are modest per possession.** A creator sees a POA ~30 partial
   poss/game → ≈ −1.1 pts; a roller vs rim protector ~20 poss → ≈ −1.8 pts. Summed
   across a lineup the team `interaction_adj` is a few points — meaningful for

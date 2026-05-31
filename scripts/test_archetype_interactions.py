@@ -236,7 +236,7 @@ def main() -> None:
     )
     report = {
         "test": "cross-team attacker-vs-defender archetype interaction (two-way player FE)",
-        "source": "data/matchup/league_season_matchups.parquet (2022-23..2024-25)",
+        "source": "data/matchup/league_season_matchups.parquet (2017-18..2024-25, 8 seasons)",
         "method": {
             "metric": "PLAYER_PTS / PARTIAL_POSS (points per partial possession)",
             "fixed_effects": "weighted two-way demean by OFF_PLAYER_ID and DEF_PLAYER_ID",

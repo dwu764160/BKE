@@ -155,6 +155,23 @@ This section translates technical metrics and modeling terms into basketball con
 | **Star Sanity** | "Sense check: elite players rank highly" | Curry #7, KD #8, SGA #2, Giannis #8. If Luka is #412 (he's not in dataset), that's a data problem, not a model problem. |
 | **Alpha-Ready** | "Ready for real money" | CLV > 0.02 **and** Brier ≤ 0.210. Below that: research-only, no allocation. |
 
+### Matchup Projection System (Step 1)
+
+The cross-team interaction model assigns five offensive players to five defenders
+using a three-tier system. All cell lookups use argmax archetype; position band is
+used for assignment and as fallback for Unknown-archetype players. Talent rank
+within a band uses `pts_o_v40` (PTS 4.0 offensive score); defensive quality uses
+`pts_d_v40`. Terminology: **smalls** = guards (`position_band_3 = 'smalls'`),
+**wings** = forwards, **bigs** = centers.
+
+| Term | Basketball Analogy | Explanation |
+|---|---|---|
+| **Pair 1 — Primary Perimeter Threat** | "Ace vs. ace stopper" | The highest-`pts_o_v40` smalls/wings creator (Ball Dominant Creator, All-Around Scorer, or Ballhandler archetype) matched against the defense's best POA Defender or Wing Stopper. Most empirically stable assignment — 166k+ possession sample, era-stable across 8 seasons. Cell lookup: argmax archetype. |
+| **Pair 2 — Interior Threat + Big Behavior** | "Who handles the big man?" | Sub-case A: if defense has a big-bodied forward (wings-band, `position_proxy` = Forward/Forward-Center, `pts_d_v40 > 0.0`, top-3 on team), that player guards the interior threat; center stays as rim anchor. Sub-case B: no qualifying defender → center is **overloaded** — guards interior threat AND protects the rim. Rim anchor's paint-presence effect is always modeled as a lineup composition term regardless of sub-case. |
+| **Pairs 3-5 — Band + Talent Residual** | "Everyone else, size then talent" | Remaining players ranked by `pts_o_v40` within position band (smalls/wings/bigs), matched rank-to-rank within the same band. **Projection assumes no mismatch** — coaches switch back and rotate to avoid sustained cross-band assignments. Cross-band forced only when no same-band defender exists; discounted penalty (~50% of empirical magnitude) applied. |
+| **Band Mismatch Penalty** | "Size mismatch tax" | Empirical: +4.0 pts/100 FE-residual for smalls↔bigs forced mismatch (archetype cells explain only 31% of this). **Projection applies ~50% discount** (→ +2.0 pts/100) to account for coaching adjustment. Full magnitude used in the possession engine where real-time mismatch hunting is simulated. |
+| **Center Overloaded flag** | "One man, two jobs" | Fires in Pair 2 Sub-case B: no qualifying big-bodied defender, center must guard the interior threat and anchor the paint simultaneously. Signals that roll men and big-attackers on the opposing team will get cleaner rim looks — center cannot do both jobs at full effectiveness. |
+
 ---
 
 ## Improvement Loop
