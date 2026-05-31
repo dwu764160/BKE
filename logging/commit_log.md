@@ -975,3 +975,89 @@ Entries are grouped by branch and extend commit messages with file-level change 
       - A docs/plans/cross_team_interaction_model.md
       - M logging/commit_log.md
       - M loop/in_progress_context.txt
+
+### 2026-05-30 17:16:20Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: db60f6c918d827c7c77bb4d2e9cd6cc27c92e409..37179863eca4491a476da48cafb514db163f85b0
+- Commits:
+  - 3717986 docs: add Step 0 (lineup projection tuning) + tendency model + market-sampling clarification
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T12:16:18-05:00
+    - Purpose: - docs/plans/step0_lineup_projection_tuning.md: validate/tune the starter/clutch/
+    - Files:
+      - M docs/findings/pts_wiring_phase1_2026-05-30.md
+      - M docs/phase_v1_architecture.md
+      - A docs/plans/step0_lineup_projection_tuning.md
+      - M logging/commit_log.md
+      - M loop/in_progress_context.txt
+
+### 2026-05-30 19:48:35Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 37179863eca4491a476da48cafb514db163f85b0..5cb277a04e1382c63fabd06594c351cb1096668b
+- Commits:
+  - 5cb277a feat: Step 0a lineup projection tuning (walk-forward) + Step 0b live-fetch spec
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T14:46:51-05:00
+    - Purpose: Game-by-game validation of the season-level lineup projector vs actual pbp
+    - Files:
+      - A docs/findings/lineup_projection_tuning_2026-05-30.md
+      - A docs/findings/network_stats_nba_throttle_2026-05-30.md
+      - M loop/in_progress_context.txt
+      - A scripts/validate_lineup_projection.py
+      - A src/data_fetch/fetch_pregame_lineups.py
+      - M src/simulation/lineup_projection.py
+      - M src/simulation/simulation_config.py
+
+### 2026-05-30 20:35:13Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 5cb277a04e1382c63fabd06594c351cb1096668b..424f4ad656c0e103a44a251e5c78e4915cbdf442
+- Commits:
+  - 424f4ad test: Step 1 pre-flight — cross-team archetype interaction signal CONFIRMED
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T15:35:09-05:00
+    - Purpose: Two-way player-FE test on NBA matchup data (off×def-player possessions,
+    - Files:
+      - A docs/findings/archetype_interaction_signal_2026-05-30.md
+      - M docs/plans/cross_team_interaction_model.md
+      - M loop/in_progress_context.txt
+      - A scripts/test_archetype_interactions.py
+
+### 2026-05-30 21:34:39Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: 424f4ad656c0e103a44a251e5c78e4915cbdf442..e92928317ede637830ce93dc6f75bd58d721a730
+- Commits:
+  - e929283 chore: strip self-improvement loop to Debug-Entry log + persistent narration suppression
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-30T16:34:36-05:00
+    - Purpose: Self-improvement loop reduced to its real signal: a structured mistake log
+    - Files:
+      - D .claude/config
+      - M .claude/settings.json
+      - M CLAUDE.md
+      - M docs/findings/network_stats_nba_throttle_2026-05-30.md
+      - M docs/plans/cross_team_interaction_model.md
+      - D scripts/analyze-patterns.sh
+      - D scripts/implicit-skill-smoke-test.sh
+      - D scripts/post-edit-check.sh
+      - M scripts/session-end.sh
+      - M scripts/update-skill-memory.sh
+
+### 2026-05-31 08:36:50Z - Push to origin
+- Remote URL: https://github.com/dwu764160/BKE.git
+- Remote ref: refs/heads/personal
+- Range: e92928317ede637830ce93dc6f75bd58d721a730..5ad2c2cb111f5312aa5c3c44e32b3733d0234cfc
+- Commits:
+  - 5ad2c2c design: lock Step 1 matchup engine architecture + update all session docs
+    - Author: Daniel-Wu-Github <danielwu1510@tamu.edu>
+    - Commit date: 2026-05-31T03:36:43-05:00
+    - Purpose: - docs/plans/cross_team_interaction_model.md: full "Resolved Design" section
+    - Files:
+      - M CLAUDE.md
+      - M docs/findings/archetype_interaction_signal_2026-05-30.md
+      - M docs/plans/cross_team_interaction_model.md
+      - M scripts/test_archetype_interactions.py
+      - A scripts/test_softmax_vs_argmax.py

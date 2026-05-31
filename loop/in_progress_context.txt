@@ -1,74 +1,62 @@
-TASK: Step 0 (lineup projection tuning) — DONE. Next = Step 1 (cross-team interactions).
-STATUS: 2026-05-30. Step 0a (offline game-by-game validation + walk-forward tuning)
-COMPLETE and gate PASSED. Step 0b (live fetch) code-complete (runs in networked env).
-Committing this unit; Step 1 is the next build.
+TASK: Step 1 (cross-team matchup engine) — BUILD DONE. Next = Step 2 (generative stat-line / possession model).
+STATUS: 2026-05-31. All three Step-1 deliverables built, run clean, artifacts written.
 
-STEP 0a RESULT (gate PASSED):
-- Built game-by-game ground truth from pbp_with_lineups_* (all 9 seasons, 21,495
-  game-team rows): starters=opening-tip 5; clutch-5=most time-weighted 5 in clutch
-  window (period>=4,|margin|<=5,clock<=5:00); minutes=lineup-stint seconds.
-  Cached -> data/processed/simulation/lineup_ground_truth.pkl (gitignored).
-- scripts/validate_lineup_projection.py: scores the season-level projector per game,
-  10-config grid, WALK-FORWARD selection (tune on seasons<T, eval T).
-- Baseline (8 seasons, 19,037 game-teams): starter_hit 0.623, clutch 2.88/5,
-  minutes_corr(Spearman) 0.486, top9 0.676.
-- Walk-forward converged to config 'starter_m080' (0.80/0.12/0.04/0.04) for EVERY
-  eval season -> starter_hit 0.621->0.647 (+2.5pp), clutch 2.872->2.894 (no regress),
-  minutes_corr unchanged. LOCKED into simulation_config STARTER_WEIGHT_*.
-- HONEST LIMIT: minutes_corr is invariant across configs (projector reads MPG
-  straight from profiles; levers only change which 5 are flagged). Lifting it needs
-  train_minute_model.py tuning = OUT of Step 0a scope. Genuine win = starter ID only.
+STEP 1 BUILD RESULT:
+1. scripts/fit_archetype_interactions_v2.py
+   - EB-shrinks the locked 8-season FE cells (reports/archetype_interaction_signal_test.json,
+     99 cells) toward 0 using per-cell SE (from the 95% CI, which encodes poss),
+     then enforces poss-weighted mean-zero per offensive archetype.
+   - Out: data/processed/bke/cross_team_interactions_matrix.parquet (shrunk +
+     provenance: raw_ppp, se, shrink_factor, poss, ci, source=emergent_matchup).
+   - Run: 99 cells, shrunk std ~0.040 ppp, mean shrink_factor ~0.92, mean-zero
+     residual ~4.5e-18 (constraint holds). Also exposes estimate_fe_cells() — a
+     reusable two-way-FE estimator with a season filter, used by validation.
+2. scripts/compute_matchup_adj.py — the 3-pair engine.
+   - Pair1 perimeter threat->POA/Wing Stopper; Pair2 interior threat->big-bodied
+     defender (sub-case A) or center overloaded (sub-case B) + rim-anchor paint
+     term; Pairs3-5 band rank-to-rank + discounted mismatch adj (0.5x: diff0
+     -0.010, diff1 +0.005, diff2 +0.020). argmax cell lookup; band-avg fallback
+     for Unknown off arch. Talent rank = pts_o_v40 / pts_d_v40.
+   - Joins per-player attrs (archetype/position_band_3/position_proxy/mpg) from
+     projected_player_profiles (fallback player_impact_profiles); starters from
+     simulation_step2_lineup_profiles.starter_player_ids (a JSON string).
+   - Out: data/processed/bke/cross_team_interactions.parquet, schema per design.
+   - Granularity = (season, team, opponent), game_id=NULL: matchup source is
+     SEASON-aggregated (no GAME_ID) and projected lineups are season-level, so a
+     team-pair matchup is identical across their games. Markets track fans out
+     per-game later with LIVE lineups.
+   - Run: 7380 rows / 8 seasons; center_overloaded 0.570; pair1 argmax-resolved
+     0.923; lineup_net_rating_adj mean -0.26, std 1.32, range [-4.27,+5.59] pts/100.
+3. scripts/validate_matchup_interactions.py — walk-forward, leakage-free.
+   - Fit two-way FE + cells on train (<=2023-24), EB-shrink, apply forward to
+     2024-25 matchup rows. Compare poss-weighted player-game PPP MAE: baseline
+     (grand+off_fe+def_fe) vs +interaction[off_arch][def_arch]. Paired bootstrap.
+   - Out: reports/cross_team_interaction_validation.json.
+   - Run (archetypes from player_impact_profiles, actual, all 8 seasons):
+     n=105,595 holdout rows; overall WMAE 0.18256->0.18119 (dWMAE -0.00138, +0.75%);
+     significant-cell stratum (n=69,980) -0.00278; paired bootstrap p(model
+     better)=1.000, CI[-0.00164,-0.00112]. VERDICT: MODEL HELPS (OOS), leakage-free.
+     Bigger gain on significant cells = the expected pattern. (Note: an interim run
+     using sparse projected_player_profiles archetypes was NEUTRAL; actual-archetype
+     coverage is what unlocks the OOS win.)
 
-NETWORK INVESTIGATION (user asked): confirmed stats.nba.com is THROTTLED, not down.
-- github 200/0.46s; stats.nba.com DNS ok + TCP:443 connects BUT HTTPS times out
-  (>20s, silently black-holed post-connect) = Akamai datacenter-IP throttle.
-  cdn.nba.com answers 403/0.12s (reachable, header-gated). Sandbox is NOT offline.
-- Doc: docs/findings/network_stats_nba_throttle_2026-05-30.md. No in-sandbox fix
-  (IP-reputation block on one host); run stats.nba.com fetches in networked env.
+DOC/REGISTRY UPDATES: docs/multiple-versions.md (new "Cross-Team Interaction
+Matrix" section); docs/findings/matchup_engine_step1_2026-05-31.md (build writeup).
 
-DELIVERABLES (this session):
-- scripts/validate_lineup_projection.py (game-by-game validator + walk-forward tuner)
-- src/data_fetch/fetch_pregame_lineups.py (Step 0b live starters+inactives, NETWORK)
-- src/simulation/lineup_projection.py (+config_overrides param)
-- src/simulation/simulation_config.py (STARTER_WEIGHT_* tuned/locked)
-- reports/lineup_projection_validation.json (gitignored)
-- docs/findings/lineup_projection_tuning_2026-05-30.md (results)
-- docs/findings/network_stats_nba_throttle_2026-05-30.md (network)
-- pytest -q 3/3 pass; production simulation_step2_* regenerated cleanly.
+KEY DATA-SCHEMA TRUTHS (verified this session — prior notes had display-corrupted
+schemas):
+- league_season_matchups.parquet is SEASON-aggregated per off x def player pair;
+  cols incl SEASON, OFF/DEF_PLAYER_ID, PARTIAL_POSS, PLAYER_PTS, GP. NO game_id,
+  NO team_id.
+- simulation_step2_lineup_profiles.parquet carries only starter_player_ids /
+  clutch_player_ids at player level (plus team mu/sigma). No per-player archetypes.
+- projected_player_profiles.parquet HAS position_band_3 (smalls/wings/bigs),
+  position_proxy, off/def_primary_archetype, mpg; seasons 2018-19..2024-25.
+- pts_v40.parquet keys = player_id+season; cols pts_o_v40, pts_d_v40 (+v32/a/c).
 
-ARCHITECTURE (ratified 2026-05-30): Core repo (this) + 2 sister repos (markets=
-existing Robinhood/Kalshi; game=NEW after Core step 2). Divergence = lineup
-realization layer (markets override projected starters w/ live actuals+injuries at
-T-60/30; game uses fully projected lineups). Sim = bottom-up generative possession
-engine (box score emerges), calibrated to a SHARED stat-line model. Game-winner
-prediction is a DEAD END vs market (Elo 0.2193 OOS / 0.2092 on 2025-26 beats all
-BKE/PTS wiring); markets pivot to PROPS/TOTALS long-tail edge. PTS = team-quality
-metric (same-season r=0.84), use for sim/power-rankings, not moneylines.
-Docs: docs/phase_v1_architecture.md (RATIFIED), docs/plans/cross_team_interaction_model.md.
-
-REVISED SEQUENCE: Step 0 (lineup tuning) DONE -> Step 1 (cross-team interactions)
--> Step 2 (generative stat-line model) -> FORK repos.
-
-STEP 1 PRE-FLIGHT DONE (2026-05-30) — signal CONFIRMED, gate #1 PASSED:
-- scripts/test_archetype_interactions.py: two-way player FE on NBA matchup data
-  (data/matchup/league_season_matchups.parquet, per off×def-player poss, 2022-25;
-  361k rows, 4.2M poss). FE strips both players' talent (double-counting guard).
-- RESULT: 79/99 cells sig @95% CI (~5 by chance), 76 pass BH-FDR. FE-adj spread
-  0.044 ppp vs naive 0.055 (80% survives talent removal). VERDICT: SIGNAL.
-- Motivating cells hold: POA Defender vs Ball Dominant Creator -0.038 [-0.047,-0.027]
-  (166k poss); PnR Rolling Big vs Rim Protector -0.091 (talent was MASKING it,
-  naive only -0.038). Report: reports/archetype_interaction_signal_test.json;
-  findings: docs/findings/archetype_interaction_signal_2026-05-30.md.
-- KEY NUANCE: dominant axis = SIZE/POSITION (guard-vs-big boost +0.14..+0.19 only
-  on SWITCHES). Build must apply matrix via POSITION-BAND ASSIGNMENT + a separate
-  SWITCH term, not the full off×def matrix on every pair. Positive-vs-creator
-  artifacts exist (Versatile Defender +0.057) -> shrink hard, inspect.
-
-NEXT — STEP 1 BUILD (plan grounded in docs/plans/cross_team_interaction_model.md
-"Empirical grounding" section):
-1. Promote FE-residual cells -> shrunk artifact data/processed/bke/
-   cross_team_interactions.parquet (empirical-Bayes by poss; mean-zero per off arch).
-2. Per-game interaction_adj via Step-0 projected lineups + position-band assignment
-   (+switch term). 3. Gate #2: add interaction_adj to walk-forward GBDT (paired
-   bootstrap vs Elo + stack); EXPECT marginal game-Brier, judge on props/possession
-   realism too. 4. Matchup data starts 2022-23 (no pre-2022 walk-forward of matrix).
+NEXT — STEP 2 (generative stat-line / bottom-up possession engine):
+- Consume cross_team_interactions.parquet (lineup_net_rating_adj + per-player
+  player_matchup_adjs + center_overloaded) as a possession-engine input.
+- Use FULL empirical mismatch magnitude (not the 0.5x projection discount) where
+  real-time mismatch hunting is simulated.
+- After Step 2, FORK repos (Core + markets + game) per docs/phase_v1_architecture.md.

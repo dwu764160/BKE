@@ -163,6 +163,35 @@ best-fit fallback. Any player who clears 200 min threshold now falls into one of
 
 ---
 
+## Cross-Team Interaction Matrix (Simulation Core — Step 1)
+
+The matchup engine resolves attacker-vs-defender archetype matchups between two
+projected lineups. Built 2026-05-31.
+
+| Artifact | Script | Output | Status |
+|---|---|---|---|
+| Signal cells (raw FE) | `scripts/test_archetype_interactions.py` | `reports/archetype_interaction_signal_test.json` | **PRE-FLIGHT (LOCKED)** — two-way player-FE residual cells, 8 seasons (2017-18…2024-25), 99 cells, 71 sig @95% / 68 BH-FDR. Do not re-run. |
+| **Shrunk matrix** | `scripts/fit_archetype_interactions_v2.py` | `data/processed/bke/cross_team_interactions_matrix.parquet` | **CURRENT PRODUCTION** — EB-shrunk (per-cell SE) + mean-zero per off archetype. Cols: `off_arch, def_arch, interaction_ppp` (shrunk), `raw_ppp, se, shrink_factor, poss, ci_lo, ci_hi, source`. |
+| **Per-matchup adj** | `scripts/compute_matchup_adj.py` | `data/processed/bke/cross_team_interactions.parquet` | **CURRENT PRODUCTION** — 3-pair engine over projected starters. Granularity = `(season, team, opponent)`, `game_id=NULL` (matchup source is season-aggregated, no game_id). |
+
+**Inputs (canonical):** `simulation_step2_lineup_profiles.parquet` (starter IDs),
+`projected_player_profiles.parquet` (archetype / `position_band_3` / `position_proxy` /
+mpg, fallback `player_impact_profiles.parquet`), `pts_v40.parquet` (`pts_o_v40` /
+`pts_d_v40` talent rank — NOT `impact_obke`).
+
+**Validation:** `scripts/validate_matchup_interactions.py` →
+`reports/cross_team_interaction_validation.json`. Walk-forward player-game PPP MAE
+on the 2024-25 holdout (train FE+cells ≤2023-24, applied forward — leakage-free).
+Result: **MODEL HELPS (OOS)** — leakage-free player-game PPP WMAE 0.18256→0.18119
+(+0.75% overall, +1.5% on significant-cell rows), paired-bootstrap p=1.000. Gain is
+~2× larger where a significant train cell applies. Headline magnitude is small (the
+fuller value is possession/props realism, judged in Step 2).
+
+**Data caveat:** all cells are `source = emergent_matchup` — closest-defender
+proximity attribution (Second Spectrum), not intentional assignment.
+
+---
+
 ## App Viewers
 
 No version forks — each viewer is a single canonical file. They load multiple BKE versions
