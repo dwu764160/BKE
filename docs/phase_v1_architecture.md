@@ -249,7 +249,20 @@ beats the vig. You need the *number/distribution*, not a play-by-play. So the
 market track never runs the possession engine — sampling marginals is faster and
 sufficient.
 
-**Possession engine = GAME TRACK ONLY** (confirmed). The one *optional* future
+**Refinement (2026-05-31, ratified in planning):** Core step 2 is built as a
+*lightweight possession-OUTCOME sampler* that IS the calibration spine — the box
+score emerges bottom-up from sampled possession outcomes, rather than the spine
+being pure marginal-sampling. A decoupled `PossessionResolver` seam lets the GAME
+track later drop in the *full event-level Markov sim* (rich per-player tendency
+model) without touching the loop, aggregator, or calibration. So "possession
+engine" now spans both: a simple sampler in Core (shared spine) and the full
+event-level Markov resolver in the game repo (game-track only). Market track still
+consumes only the resulting box-score *distributions* — it never runs either
+resolver. Design: `docs/plans/generative_possession_engine.md`. The clause below
+("possession engine = GAME TRACK ONLY") refers specifically to the **full
+event-level Markov** resolver, not the Core sampler spine.
+
+**Full event-level Markov possession engine = GAME TRACK ONLY** (confirmed). The one *optional* future
 bridge to markets: **correlated / same-game-parlay (SGP) pricing.** Single props
 need only marginals (sample each player independently). But correlated bets need
 the *joint* — a blowout sits the star in Q4 (props down); a close/OT game inflates

@@ -1,62 +1,45 @@
-TASK: Step 1 (cross-team matchup engine) — BUILD DONE. Next = Step 2 (generative stat-line / possession model).
-STATUS: 2026-05-31. All three Step-1 deliverables built, run clean, artifacts written.
+TASK: Step 2 (generative possession engine) — BUILD DONE, both modes PASS. Next = FORK repos (Core + markets + game) per docs/phase_v1_architecture.md.
+STATUS: 2026-05-31. All three Step-2 deliverables built, run clean, artifacts written, pytest 3/3. NOT yet committed (awaiting user go).
 
-STEP 1 BUILD RESULT:
-1. scripts/fit_archetype_interactions_v2.py
-   - EB-shrinks the locked 8-season FE cells (reports/archetype_interaction_signal_test.json,
-     99 cells) toward 0 using per-cell SE (from the 95% CI, which encodes poss),
-     then enforces poss-weighted mean-zero per offensive archetype.
-   - Out: data/processed/bke/cross_team_interactions_matrix.parquet (shrunk +
-     provenance: raw_ppp, se, shrink_factor, poss, ci, source=emergent_matchup).
-   - Run: 99 cells, shrunk std ~0.040 ppp, mean shrink_factor ~0.92, mean-zero
-     residual ~4.5e-18 (constraint holds). Also exposes estimate_fe_cells() — a
-     reusable two-way-FE estimator with a season filter, used by validation.
-2. scripts/compute_matchup_adj.py — the 3-pair engine.
-   - Pair1 perimeter threat->POA/Wing Stopper; Pair2 interior threat->big-bodied
-     defender (sub-case A) or center overloaded (sub-case B) + rim-anchor paint
-     term; Pairs3-5 band rank-to-rank + discounted mismatch adj (0.5x: diff0
-     -0.010, diff1 +0.005, diff2 +0.020). argmax cell lookup; band-avg fallback
-     for Unknown off arch. Talent rank = pts_o_v40 / pts_d_v40.
-   - Joins per-player attrs (archetype/position_band_3/position_proxy/mpg) from
-     projected_player_profiles (fallback player_impact_profiles); starters from
-     simulation_step2_lineup_profiles.starter_player_ids (a JSON string).
-   - Out: data/processed/bke/cross_team_interactions.parquet, schema per design.
-   - Granularity = (season, team, opponent), game_id=NULL: matchup source is
-     SEASON-aggregated (no GAME_ID) and projected lineups are season-level, so a
-     team-pair matchup is identical across their games. Markets track fans out
-     per-game later with LIVE lineups.
-   - Run: 7380 rows / 8 seasons; center_overloaded 0.570; pair1 argmax-resolved
-     0.923; lineup_net_rating_adj mean -0.26, std 1.32, range [-4.27,+5.59] pts/100.
-3. scripts/validate_matchup_interactions.py — walk-forward, leakage-free.
-   - Fit two-way FE + cells on train (<=2023-24), EB-shrink, apply forward to
-     2024-25 matchup rows. Compare poss-weighted player-game PPP MAE: baseline
-     (grand+off_fe+def_fe) vs +interaction[off_arch][def_arch]. Paired bootstrap.
-   - Out: reports/cross_team_interaction_validation.json.
-   - Run (archetypes from player_impact_profiles, actual, all 8 seasons):
-     n=105,595 holdout rows; overall WMAE 0.18256->0.18119 (dWMAE -0.00138, +0.75%);
-     significant-cell stratum (n=69,980) -0.00278; paired bootstrap p(model
-     better)=1.000, CI[-0.00164,-0.00112]. VERDICT: MODEL HELPS (OOS), leakage-free.
-     Bigger gain on significant cells = the expected pattern. (Note: an interim run
-     using sparse projected_player_profiles archetypes was NEUTRAL; actual-archetype
-     coverage is what unlocks the OOS win.)
+STEP 2 BUILD RESULT:
+- src/simulation/possession_engine.py: PossessionResolver seam +
+  OutcomeSamplerResolver (Core sampler, single-poss resolve() + vectorized
+  simulate_team_batch()) + RateModel (explainable spine: base behavioral_* +
+  pts_v40 talent x archetype_shape x Step-1 matchup_mult, FULL mismatch magnitude)
+  + BoxScoreAggregator. PossessionOutcome rich schema so game-track MarkovEventResolver
+  drops in on the same seam with no schema change.
+- scripts/run_possession_engine.py: --mode v0 (5 starters + aggregate bench unit,
+  covers 240 min) | --mode v1 (top 9-11 by projected MPG, normalized to 240).
+  Calibrates global constants on train <=2023-24 (pace/oreb/league_ft/league_3p +
+  single efg_scale to match train team PTS); applies forward to 2024-25.
+  -> data/processed/simulation/possession_box_distributions.parquet +
+     possession_engine_constants.json
+- scripts/validate_possession_engine.py: BOTH gates, 2024-25 holdout ->
+  reports/possession_engine_validation.json (+ _v0/_v1 snapshots).
 
-DOC/REGISTRY UPDATES: docs/multiple-versions.md (new "Cross-Team Interaction
-Matrix" section); docs/findings/matchup_engine_step1_2026-05-31.md (build writeup).
+VALIDATION (walk-forward, both PASS) — authoritative production run:
+  v0: TEAM mae=10.21 bias=+1.08 cov=0.890 | PLAYER n=7274  pts_mae=6.65 ast=1.98 reb=2.74 cov=0.642
+  v1: TEAM mae=10.34 bias=+1.86 cov=0.885 | PLAYER n=13173 pts_mae=5.89 ast=2.09 reb=2.46 cov=0.649
+  v1 is the better prop model (pts_mae 5.89<6.65, 13173>7274 scorable games). Sim team ~115 vs actual ~114.
 
-KEY DATA-SCHEMA TRUTHS (verified this session — prior notes had display-corrupted
-schemas):
-- league_season_matchups.parquet is SEASON-aggregated per off x def player pair;
-  cols incl SEASON, OFF/DEF_PLAYER_ID, PARTIAL_POSS, PLAYER_PTS, GP. NO game_id,
-  NO team_id.
-- simulation_step2_lineup_profiles.parquet carries only starter_player_ids /
-  clutch_player_ids at player level (plus team mu/sigma). No per-player archetypes.
-- projected_player_profiles.parquet HAS position_band_3 (smalls/wings/bigs),
-  position_proxy, off/def_primary_archetype, mpg; seasons 2018-19..2024-25.
-- pts_v40.parquet keys = player_id+season; cols pts_o_v40, pts_d_v40 (+v32/a/c).
+KNOWN LIMITATION (deferred to Step 2.1): player-points P10-P90 coverage 0.65 < 0.80
+target (intervals slightly narrow). Dominant missing variance = MINUTES (v1 holds
+projected MPG fixed; no DNP/foul-trouble/blowout minute swings). Add per-game
+minutes dispersion + the deferred foul-out/OT/clutch logic first.
 
-NEXT — STEP 2 (generative stat-line / bottom-up possession engine):
-- Consume cross_team_interactions.parquet (lineup_net_rating_adj + per-player
-  player_matchup_adjs + center_overloaded) as a possession-engine input.
-- Use FULL empirical mismatch magnitude (not the 0.5x projection discount) where
-  real-time mismatch hunting is simulated.
-- After Step 2, FORK repos (Core + markets + game) per docs/phase_v1_architecture.md.
+BUGS FIXED DURING BUILD (see docs/findings/possession_engine_step2_2026-05-31.md):
+1. DREB almost never recorded (vectorized miss branch else-bug); fixed -> reb_mae 4.2->2.4.
+2. team_game_logs is a COMBINED file (SEASON col), not per-season; calibration was
+   silently using defaults. 3. player logs have both Player_ID & PLAYER_ID -> dedup on upper.
+
+ENV NOTE: tool-output DISPLAY lagged/stalled badly this session (OneDrive Files-On-
+Demand). Execution was fine; verified via /tmp file reads + unique-marker greps. See
+[[reference_bke_data_schemas]].
+
+NEXT — FORK (docs/phase_v1_architecture.md sequencing step 3):
+- Markets (existing Robinhood/Kalshi repo, Sleeve C): consume
+  possession_box_distributions.parquet -> price props/totals; override projected
+  starters with live actuals+injuries at T-60/30. Never runs the resolver.
+- Game (NEW repo): implement MarkovEventResolver (full event-level sim + rich
+  per-player tendency model) on the existing PossessionResolver seam.
+- Step 2.1 (Core, before/around fork): minutes dispersion to lift prop coverage to ~0.80.

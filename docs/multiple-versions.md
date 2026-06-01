@@ -192,6 +192,32 @@ proximity attribution (Second Spectrum), not intentional assignment.
 
 ---
 
+## Generative Possession Engine (Simulation Core — Step 2)
+
+The bottom-up generative spine: a game is simulated possession-by-possession and
+the box score emerges. Built 2026-05-31. Last pre-divergence Core step.
+
+| Artifact | Script | Output | Status |
+|---|---|---|---|
+| **Engine** | `src/simulation/possession_engine.py` | (module) | **CURRENT** — `PossessionResolver` seam, `OutcomeSamplerResolver` (Core sampler), `RateModel` (calibratable spine), `BoxScoreAggregator`. Game track later adds `MarkovEventResolver` on the same seam. |
+| **Runner** | `scripts/run_possession_engine.py` | `data/processed/simulation/possession_box_distributions.parquet` + `possession_engine_constants.json` | **CURRENT** — `--mode v0` (starters + aggregate bench) or `--mode v1` (9–11 man rotation). Calibrates global constants on train ≤2023-24. |
+| **Validator** | `scripts/validate_possession_engine.py` | `reports/possession_engine_validation.json` (+ `_v0`/`_v1` snapshots) | **CURRENT** — player-prop + team-total calibration, 2024-25 holdout. |
+
+**Inputs (canonical):** `simulation_step2_lineup_profiles.parquet` (starters),
+`projected_player_profiles.parquet` (`behavioral_*` rates + archetype +
+`position_band_3` + mpg), `pts_v40.parquet` (talent), `cross_team_interactions.parquet`
+(Step-1 matchup adj, applied at FULL magnitude). Actuals: `team_game_logs.parquet`,
+`player_game_logs_2024-25.parquet`.
+
+**Validation (walk-forward, 2024-25):** both modes PASS. v1 — team PTS MAE 10.34,
+bias +1.86, P10–P90 cov 0.885; player pts_mae 5.89, ast 2.09, reb 2.46, pts cov 0.649.
+v0 — team PTS MAE 10.21, bias +1.08, cov 0.890; player pts_mae 6.65 (v1 is the better
+prop model). **Known limitation:** player points interval coverage 0.65 < 0.80 target
+(intervals too narrow; fixed-minutes v1 cannot express DNP/foul-trouble/blowout minute
+variance — deferred to Step 2.1).
+
+---
+
 ## App Viewers
 
 No version forks — each viewer is a single canonical file. They load multiple BKE versions
