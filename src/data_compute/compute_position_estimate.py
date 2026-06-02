@@ -26,12 +26,13 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 DATA_DIR = Path("data")
 HISTORICAL_DIR = DATA_DIR / "historical"
 OUTPUT_DIR = DATA_DIR / "processed"
 OUTPUT_DIR.mkdir(exist_ok=True)
-POSITION_SLOTS = ["PG", "SG", "SF", "PF", "C"]
+POSITION_SLOTS = ["PG", "SG", "SF", "pf", "C"]
 
 # Canonical position band mappings — single source of truth.
 # position_band_5 == primary_position_estimate. position_band_3 collapses to smalls/wings/bigs.
@@ -142,16 +143,16 @@ def load_player_bios() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
 
-    bios = pd.read_parquet(path)
+    bios = load_standardized(path)
     bios = bios.rename(columns={
-        "player_id": "PLAYER_ID",
-        "full_name": "PLAYER_NAME",
+        "player_id": "player_id",
+        "full_name": "player_name",
     })
-    if "PLAYER_ID" not in bios.columns:
+    if "player_id" not in bios.columns:
         return pd.DataFrame()
 
-    bios["PLAYER_ID"] = pd.to_numeric(bios["PLAYER_ID"], errors="coerce")
-    return bios[[c for c in ["PLAYER_ID", "PLAYER_NAME", "primary_position", "height_inches"] if c in bios.columns]].drop_duplicates("PLAYER_ID")
+    bios["player_id"] = pd.to_numeric(bios["player_id"], errors="coerce")
+    return bios[[c for c in ["player_id", "player_name", "primary_position", "height_inches"] if c in bios.columns]].drop_duplicates("player_id")
 
 
 def load_player_season_index() -> pd.DataFrame:
@@ -159,15 +160,15 @@ def load_player_season_index() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
 
-    df = pd.read_parquet(path)
-    cols = ["PLAYER_ID", "PLAYER_NAME", "SEASON", "GP", "MIN"]
+    df = load_standardized(path)
+    cols = ["player_id", "player_name", "season", "gp", "min"]
     cols = [c for c in cols if c in df.columns]
     if not cols:
         return pd.DataFrame()
 
     idx = df[cols].copy()
-    idx["PLAYER_ID"] = pd.to_numeric(idx["PLAYER_ID"], errors="coerce")
-    return idx.dropna(subset=["PLAYER_ID", "SEASON"]).drop_duplicates(["PLAYER_ID", "SEASON"])
+    idx["player_id"] = pd.to_numeric(idx["player_id"], errors="coerce")
+    return idx.dropna(subset=["player_id", "season"]).drop_duplicates(["player_id", "season"])
 
 
 def _rank_lineup_players(player_ids, height_map, pos_map):
@@ -202,7 +203,7 @@ def compute_position_estimate_for_season(season: str, bios: pd.DataFrame) -> pd.
     if not path.exists():
         return pd.DataFrame()
 
-    poss = pd.read_parquet(path)
+    poss = load_standardized(path)
     if poss.empty:
         return pd.DataFrame()
 
@@ -220,7 +221,7 @@ def compute_position_estimate_for_season(season: str, bios: pd.DataFrame) -> pd.
     poss["duration_seconds"] = poss["duration_seconds"].fillna(fallback_duration)
     poss["duration_seconds"] = poss["duration_seconds"].clip(lower=1.0, upper=60.0)
 
-    bio_map = bios.set_index("PLAYER_ID") if not bios.empty else pd.DataFrame()
+    bio_map = bios.set_index("player_id") if not bios.empty else pd.DataFrame()
     height_map = bio_map["height_inches"].to_dict() if "height_inches" in bio_map.columns else {}
     pos_map = bio_map["primary_position"].to_dict() if "primary_position" in bio_map.columns else {}
 
@@ -245,11 +246,11 @@ def compute_position_estimate_for_season(season: str, bios: pd.DataFrame) -> pd.
     if not records:
         return pd.DataFrame()
 
-    raw = pd.DataFrame(records, columns=["PLAYER_ID", "SEASON", "slot", "seconds"])
-    agg = raw.groupby(["PLAYER_ID", "SEASON", "slot"], as_index=False)["seconds"].sum()
+    raw = pd.DataFrame(records, columns=["player_id", "season", "slot", "seconds"])
+    agg = raw.groupby(["player_id", "season", "slot"], as_index=False)["seconds"].sum()
 
     pivot = (
-        agg.pivot_table(index=["PLAYER_ID", "SEASON"], columns="slot", values="seconds", fill_value=0.0)
+        agg.pivot_table(index=["player_id", "season"], columns="slot", values="seconds", fill_value=0.0)
         .reset_index()
     )
 
@@ -284,10 +285,10 @@ def apply_bio_fallbacks(position_df: pd.DataFrame, season_index: pd.DataFrame, b
     if season_index.empty:
         return position_df
 
-    merged = season_index.merge(position_df, on=["PLAYER_ID", "SEASON"], how="left")
+    merged = season_index.merge(position_df, on=["player_id", "season"], how="left")
 
-    bios_c = bios[[c for c in ["PLAYER_ID", "primary_position", "height_inches"] if c in bios.columns]].copy()
-    merged = merged.merge(bios_c, on="PLAYER_ID", how="left", suffixes=("", "_bio"))
+    bios_c = bios[[c for c in ["player_id", "primary_position", "height_inches"] if c in bios.columns]].copy()
+    merged = merged.merge(bios_c, on="player_id", how="left", suffixes=("", "_bio"))
 
     if "height_inches" not in merged.columns:
         merged["height_inches"] = np.nan
@@ -332,7 +333,7 @@ def apply_bio_fallbacks(position_df: pd.DataFrame, season_index: pd.DataFrame, b
     merged["height_inches"] = merged["height_inches"].fillna(78)
 
     final_cols = [
-        "PLAYER_ID", "PLAYER_NAME", "SEASON", "GP", "MIN",
+        "player_id", "player_name", "season", "gp", "min",
         "primary_position", "height_inches",
         "primary_position_estimate", "position_band_5", "position_band_3",
         "position_estimate_method",
@@ -342,7 +343,7 @@ def apply_bio_fallbacks(position_df: pd.DataFrame, season_index: pd.DataFrame, b
     ]
     existing = [c for c in final_cols if c in merged.columns]
     out = merged[existing].copy()
-    out = out.drop_duplicates(["PLAYER_ID", "SEASON"]).sort_values(["SEASON", "PLAYER_NAME"])
+    out = out.drop_duplicates(["player_id", "season"]).sort_values(["season", "player_name"])
     return out
 
 
@@ -358,13 +359,13 @@ def main():
     for season in SEASONS:
         print(f"\nProcessing {season}...")
         season_est = compute_position_estimate_for_season(season, bios)
-        season_idx = season_index[season_index["SEASON"] == season].copy() if not season_index.empty else pd.DataFrame()
+        season_idx = season_index[season_index["season"] == season].copy() if not season_index.empty else pd.DataFrame()
         season_final = apply_bio_fallbacks(season_est, season_idx, bios)
         print(f"  Computed rows: {len(season_est)} | Final rows (with fallbacks): {len(season_final)}")
 
         season_out_parquet = OUTPUT_DIR / f"player_position_estimates_{season}.parquet"
         season_out_csv = OUTPUT_DIR / f"player_position_estimates_{season}.csv"
-        season_final.to_parquet(season_out_parquet, index=False)
+        save_standardized(season_final, season_out_parquet)
         season_final.to_csv(season_out_csv, index=False)
         print(f"  - {season_out_parquet}")
         print(f"  - {season_out_csv}")
@@ -375,7 +376,7 @@ def main():
     # Keep combined compatibility artifact for downstream scripts that still expect one file.
     out_parquet = OUTPUT_DIR / "player_position_estimates.parquet"
     out_csv = OUTPUT_DIR / "player_position_estimates.csv"
-    final_df.to_parquet(out_parquet, index=False)
+    save_standardized(final_df, out_parquet)
     final_df.to_csv(out_csv, index=False)
 
     print(f"\nSaved combined {len(final_df)} rows")

@@ -35,6 +35,8 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.simulation_config import (
     FORECAST_DIR,
     HISTORICAL_DIR,
@@ -53,14 +55,14 @@ LEAGUE_MARGIN_STD_PRIOR = 6.0
 def _load_projected(season: str) -> pd.DataFrame:
     """Load projected team features for a season from either features file."""
     if season == "2025-26" and PROJ_FEATURES_2026_PATH.exists():
-        df = pd.read_parquet(PROJ_FEATURES_2026_PATH)
+        df = load_standardized(PROJ_FEATURES_2026_PATH)
         df["season"] = season
         df["team_abbreviation"] = df["team_abbreviation"].str.upper()
         return df
 
     if not PROJ_FEATURES_PATH.exists():
         return pd.DataFrame()
-    df = pd.read_parquet(PROJ_FEATURES_PATH)
+    df = load_standardized(PROJ_FEATURES_PATH)
     df["season"] = df["season"].astype(str)
     df["team_abbreviation"] = df["team_abbreviation"].str.upper()
     return df[df["season"] == season]
@@ -83,31 +85,27 @@ def build_season_ytd(gl_season: pd.DataFrame, season: str) -> pd.DataFrame:
     margin_to_bke = preseason_std / LEAGUE_MARGIN_STD_PRIOR
 
     gl = gl_season.copy()
-    gl["GAME_DATE"] = pd.to_datetime(gl["GAME_DATE"])
-    gl["TEAM_ABBREVIATION"] = gl["TEAM_ABBREVIATION"].str.upper()
-    gl = gl.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"]).reset_index(drop=True)
+    gl["game_date"] = pd.to_datetime(gl["game_date"])
+    gl["team_abbreviation"] = gl["team_abbreviation"].str.upper()
+    gl = gl.sort_values(["team_abbreviation", "game_date"]).reset_index(drop=True)
 
     # OOS cumulative margin: shift(1) excludes the current game
-    gl["_n"] = gl.groupby("TEAM_ABBREVIATION").cumcount()  # 0 = first game of season
-    gl["_cum"] = gl.groupby("TEAM_ABBREVIATION")["margin"].cumsum()
-    gl["_cum_before"] = gl.groupby("TEAM_ABBREVIATION")["_cum"].shift(1)
+    gl["_n"] = gl.groupby("team_abbreviation").cumcount()  # 0 = first game of season
+    gl["_cum"] = gl.groupby("team_abbreviation")["margin"].cumsum()
+    gl["_cum_before"] = gl.groupby("team_abbreviation")["_cum"].shift(1)
 
     gl["games_played_before"] = gl["_n"]
     gl["ytd_avg_margin"] = (gl["_cum_before"] / gl["games_played_before"]).fillna(0.0)
     gl["ytd_bke"] = gl["ytd_avg_margin"] * margin_to_bke
     gl["alpha"] = np.sqrt(gl["games_played_before"].clip(lower=0).astype(float) / 82.0)
 
-    gl["preseason_mu"] = gl["TEAM_ABBREVIATION"].map(lambda t: float(proj_idx.get(t, 0.0)))
+    gl["preseason_mu"] = gl["team_abbreviation"].map(lambda t: float(proj_idx.get(t, 0.0)))
     gl["blended_mu"] = (1.0 - gl["alpha"]) * gl["preseason_mu"] + gl["alpha"] * gl["ytd_bke"]
 
     out = gl[
-        ["SEASON", "GAME_ID", "GAME_DATE", "TEAM_ABBREVIATION",
+        ["season", "game_id", "game_date", "team_abbreviation",
          "games_played_before", "ytd_avg_margin", "preseason_mu", "alpha", "blended_mu"]
     ].copy()
-    out.columns = [
-        "season", "game_id", "game_date", "team_abbreviation",
-        "games_played_before", "ytd_avg_margin", "preseason_mu", "alpha", "blended_mu",
-    ]
     out["game_date"] = out["game_date"].dt.strftime("%Y-%m-%d")
     out["game_id"] = out["game_id"].astype(str)
     return out
@@ -122,16 +120,16 @@ def main() -> None:
         print(f"ERROR: {GAME_LOGS_PATH} not found")
         return
 
-    gl = pd.read_parquet(GAME_LOGS_PATH)
+    gl = load_standardized(GAME_LOGS_PATH)
 
-    # margin column was only backfilled from 2022-23 onward; derive from PLUS_MINUS for older seasons.
-    # PLUS_MINUS is identical to margin for all populated rows (verified).
-    if "PLUS_MINUS" in gl.columns:
-        gl["margin"] = gl["margin"].fillna(gl["PLUS_MINUS"])
+    # margin column was only backfilled from 2022-23 onward; derive from plus_minus for older seasons.
+    # plus_minus is identical to margin for all populated rows (verified).
+    if "plus_minus" in gl.columns:
+        gl["margin"] = gl["margin"].fillna(gl["plus_minus"])
 
     # All seasons that now have margin data (skips 2017-18: no projected features)
     margin_seasons = sorted(
-        s for s in gl["SEASON"].unique() if not gl[gl["SEASON"] == s]["margin"].isna().all()
+        s for s in gl["season"].unique() if not gl[gl["season"] == s]["margin"].isna().all()
     )
     print(f"Seasons with margin data: {margin_seasons}")
 
@@ -142,7 +140,7 @@ def main() -> None:
             print(f"  {season}: no projected features — skipping")
             continue
 
-        gl_season = gl[gl["SEASON"] == season].copy()
+        gl_season = gl[gl["season"] == season].copy()
         part = build_season_ytd(gl_season, season)
         if part.empty:
             print(f"  {season}: build failed — skipping")

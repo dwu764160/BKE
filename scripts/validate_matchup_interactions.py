@@ -84,7 +84,6 @@ def main() -> int:
 
     off_of, def_of = load_archetypes()
     matchups = pd.read_parquet(MATCHUP_PARQUET)
-    matchups.columns = [c.upper() for c in matchups.columns]
 
     # --- 1-2. fit + shrink train-only cells, capture train FE ---
     train_cells, off_fe, def_fe, grand = estimate_fe_cells(
@@ -104,16 +103,16 @@ def main() -> int:
     sig_cells = {k for k in cell_map if abs(raw_map[k]) > 1.959963985 * max(se_map[k], 1e-9)}
 
     # --- 3. holdout rows ---
-    hd = matchups[matchups["SEASON"].astype(str) == HOLDOUT_SEASON].copy()
-    hd["OFF_PLAYER_ID"] = hd["OFF_PLAYER_ID"].map(_norm_id)
-    hd["DEF_PLAYER_ID"] = hd["DEF_PLAYER_ID"].map(_norm_id)
-    hd["PARTIAL_POSS"] = pd.to_numeric(hd["PARTIAL_POSS"], errors="coerce")
-    hd["PLAYER_PTS"] = pd.to_numeric(hd["PLAYER_PTS"], errors="coerce")
-    hd = hd[(hd["PARTIAL_POSS"] >= MIN_PARTIAL_POSS) & hd["PLAYER_PTS"].notna()]
-    hd["actual_ppp"] = hd["PLAYER_PTS"] / hd["PARTIAL_POSS"]
+    hd = matchups[matchups["season"].astype(str) == HOLDOUT_SEASON].copy()
+    hd["off_player_id"] = hd["off_player_id"].map(_norm_id)
+    hd["def_player_id"] = hd["def_player_id"].map(_norm_id)
+    hd["partial_poss"] = pd.to_numeric(hd["partial_poss"], errors="coerce")
+    hd["player_pts"] = pd.to_numeric(hd["player_pts"], errors="coerce")
+    hd = hd[(hd["partial_poss"] >= MIN_PARTIAL_POSS) & hd["player_pts"].notna()]
+    hd["actual_ppp"] = hd["player_pts"] / hd["partial_poss"]
 
-    off_ids = hd["OFF_PLAYER_ID"].to_numpy()
-    def_ids = hd["DEF_PLAYER_ID"].to_numpy()
+    off_ids = hd["off_player_id"].to_numpy()
+    def_ids = hd["def_player_id"].to_numpy()
     season = HOLDOUT_SEASON
 
     base = np.array([grand + off_fe.get(o, 0.0) + def_fe.get(d, 0.0) for o, d in zip(off_ids, def_ids)])
@@ -124,7 +123,7 @@ def main() -> int:
     has_cell = np.array([(a, b) in cell_map for a, b in zip(oa, da)])
 
     actual = hd["actual_ppp"].to_numpy(dtype=float)
-    w = hd["PARTIAL_POSS"].to_numpy(dtype=float)
+    w = hd["partial_poss"].to_numpy(dtype=float)
 
     err_base = np.abs(actual - base)
     err_model = np.abs(actual - (base + inter))

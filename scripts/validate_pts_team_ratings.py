@@ -46,12 +46,12 @@ def prior(season):
 def actual_net_ratings():
     """Per team-season net rating from PLUS_MINUS (available all seasons)."""
     gl = pd.read_parquet(HISTORICAL_DIR / "team_game_logs.parquet",
-                         columns=["SEASON", "TEAM_ABBREVIATION", "PLUS_MINUS", "MIN"])
-    gl["TEAM_ABBREVIATION"] = gl["TEAM_ABBREVIATION"].str.upper()
-    g = gl.groupby(["SEASON", "TEAM_ABBREVIATION"]).agg(
-        pm=("PLUS_MINUS", "sum"), mn=("MIN", "sum")).reset_index()
+                         columns=["season", "team_abbreviation", "plus_minus", "min"])
+    gl["team_abbreviation"] = gl["team_abbreviation"].str.upper()
+    g = gl.groupby(["season", "team_abbreviation"]).agg(
+        pm=("plus_minus", "sum"), mn=("min", "sum")).reset_index()
     g["actual_net"] = g["pm"] / g["mn"] * 48.0
-    return g.rename(columns={"SEASON": "season", "TEAM_ABBREVIATION": "team"})[
+    return g.rename(columns={"team_abbreviation": "team"})[
         ["season", "team", "actual_net"]]
 
 

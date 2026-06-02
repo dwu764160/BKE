@@ -14,6 +14,7 @@ from scripts.validate_lineup_pts_v2 import build_player_on_court_nrtg
 from scripts.pts_v32_posthoc_harness import patch_and_brier
 import subprocess
 import tempfile
+from src.data.schema_contract import load_standardized, save_standardized
 
 VALIDATE_LINEUP = REPO / "scripts/validate_lineup_pts_v2.py"
 
@@ -35,7 +36,7 @@ def run_lineup_validation(df_v40, label="v40_composite_tmp"):
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         tmp_path = f.name
     
-    df_v40.to_parquet(tmp_path, index=False)
+    save_standardized(df_v40, tmp_path)
     
     json_path = REPO / f"reports/lineup_v2_{label}.json"
     
@@ -91,8 +92,8 @@ if __name__ == "__main__":
     parser.add_argument("--sweep", action="store_true")
     args = parser.parse_args()
 
-    df_a = pd.read_parquet(args.pts_a)
-    df_c = pd.read_parquet(args.pts_c)
+    df_a = load_standardized(args.pts_a)
+    df_c = load_standardized(args.pts_c)
     
     if args.sweep:
         weights_c = [0.3, 0.4, 0.5, 0.6, 0.7]
@@ -125,7 +126,7 @@ if __name__ == "__main__":
     else:
         config = PtsV40CompositeConfig()
         df = build_composite(df_a, df_c, config.defense_v40c_weight)
-        df.to_parquet(args.output, index=False)
+        save_standardized(df, args.output)
         
         # Build features for forecast via patch_and_brier but saving
         df_brier = df.copy()
@@ -133,6 +134,6 @@ if __name__ == "__main__":
         df_brier['pts_d_v32'] = df_brier['pts_d_v40']
         
         # we can patch directly
-        features = pd.read_parquet(REPO / "data/processed/forecast/projected_team_features_v32.parquet")
+        features = load_standardized(REPO / "data/processed/forecast/projected_team_features_v32.parquet")
         # In practice we just write the composite df to output.
         print(f"Saved {args.output}")

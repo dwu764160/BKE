@@ -33,6 +33,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from src.data.schema_contract import load_standardized
 from src.simulation.simulation_config import HISTORICAL_DIR, FORECAST_DIR
 from src.modeling.model_config import SEASONS
 
@@ -49,17 +50,17 @@ ACTUAL_WEIGHT     = 0.70
 
 def actual_net_rating(logs: pd.DataFrame, team: str, season: str) -> float | None:
     """Compute season net rating in pts/100 poss from PLUS_MINUS game logs."""
-    rows = logs[(logs["TEAM_ABBREVIATION"] == team) & (logs["SEASON"] == season)]
-    if rows.empty or rows["MIN"].sum() == 0:
+    rows = logs[(logs["team_abbreviation"] == team) & (logs["season"] == season)]
+    if rows.empty or rows["min"].sum() == 0:
         return None
-    # PLUS_MINUS = team pts - opp pts per game. Per 48 min ≈ per 100 poss.
-    return float(rows["PLUS_MINUS"].sum() / rows["MIN"].sum() * 48.0)
+    # plus_minus = team pts - opp pts per game. Per 48 min ≈ per 100 poss.
+    return float(rows["plus_minus"].sum() / rows["min"].sum() * 48.0)
 
 
 def project_season(logs: pd.DataFrame, target_season: str,
                    prior_season: str, template_df: pd.DataFrame) -> pd.DataFrame:
     """Build projected_team_features rows for target_season using prior_season actuals."""
-    prior_teams = sorted(logs[logs["SEASON"] == prior_season]["TEAM_ABBREVIATION"].unique())
+    prior_teams = sorted(logs[logs["season"] == prior_season]["team_abbreviation"].unique())
     if not prior_teams:
         print(f"  {target_season}: no prior-season logs for {prior_season} — skipping")
         return pd.DataFrame()
@@ -115,15 +116,15 @@ def main() -> None:
     if not GAME_LOGS_PATH.exists():
         print(f"ERROR: {GAME_LOGS_PATH} not found"); return
 
-    logs = pd.read_parquet(GAME_LOGS_PATH)
-    logs["TEAM_ABBREVIATION"] = logs["TEAM_ABBREVIATION"].str.upper()
+    logs = load_standardized(GAME_LOGS_PATH)
+    logs["team_abbreviation"] = logs["team_abbreviation"].str.upper()
 
     # Load existing template so we can copy structural columns for old seasons.
     # We use whatever projected_team_features.parquet currently has (even if stale)
     # only for non-rating columns; we replace the rating column for every season.
     template_df = pd.DataFrame()
     if OUT_ALL.exists():
-        template_df = pd.read_parquet(OUT_ALL)
+        template_df = load_standardized(OUT_ALL)
         template_df["team_abbreviation"] = template_df["team_abbreviation"].str.upper()
         template_df["season"] = template_df["season"].astype(str)
 

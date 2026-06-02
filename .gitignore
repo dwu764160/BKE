@@ -10,6 +10,7 @@ data/
 data_temp_reprod/
 data_backup_20260208/
 data_backup_20260301/
+data_backup_20260601/
 models/
 reports/
 
@@ -37,3 +38,4 @@ aggregate/
 
 .claude/
 
+curr_handoff.md

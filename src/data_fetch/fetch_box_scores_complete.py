@@ -26,6 +26,7 @@ DATA_DIR = Path("data/historical")
 OUTPUT_DIR = Path("data/historical")
 
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 def _extract_result_payload(json_data):
@@ -190,7 +191,7 @@ def merge_and_save(base_dfs, adv_dfs):
     
     # Save
     out_path = OUTPUT_DIR / "complete_player_season_stats.parquet"
-    merged.to_parquet(out_path, index=False)
+    save_standardized(merged, out_path)
     print(f"\n✅ Saved {len(merged)} rows to {out_path}")
     
     # Also save CSV for inspection
@@ -213,7 +214,7 @@ def compare_coverage(merged_df):
         
         # Get players from possession data
         try:
-            poss_df = pd.read_parquet(f'data/historical/possessions_clean_{season}.parquet')
+            poss_df = load_standardized(f'data/historical/possessions_clean_{season}.parquet')
             poss_players = set()
             for col in ['off_lineup', 'def_lineup']:
                 for lineup in poss_df[col]:

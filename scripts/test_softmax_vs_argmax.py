@@ -73,12 +73,12 @@ def _norm(s: pd.Series) -> pd.Series:
 
 def load_matchups() -> pd.DataFrame:
     m = pd.read_parquet(MATCHUPS, columns=[
-        "OFF_PLAYER_ID", "DEF_PLAYER_ID", "PARTIAL_POSS", "PLAYER_PTS", "SEASON"])
-    m["OFF_PLAYER_ID"] = _norm(m["OFF_PLAYER_ID"])
-    m["DEF_PLAYER_ID"] = _norm(m["DEF_PLAYER_ID"])
-    m["SEASON"] = m["SEASON"].astype(str)
-    m = m[m["PARTIAL_POSS"] >= MIN_POSS].copy()
-    m["ppp"] = m["PLAYER_PTS"] / m["PARTIAL_POSS"]
+        "off_player_id", "def_player_id", "partial_poss", "player_pts", "season"])
+    m["off_player_id"] = _norm(m["off_player_id"])
+    m["def_player_id"] = _norm(m["def_player_id"])
+    m["season"] = m["season"].astype(str)
+    m = m[m["partial_poss"] >= MIN_POSS].copy()
+    m["ppp"] = m["player_pts"] / m["partial_poss"]
     return m.reset_index(drop=True)
 
 
@@ -132,8 +132,7 @@ def compute_predictions(df_pair, prof, mat, all_def_archs):
 
     # Merge off player probs
     off_prof = prof.rename(columns={
-        "player_id": "OFF_PLAYER_ID",
-        "season": "SEASON",
+        "player_id": "off_player_id",
         "off_primary_archetype": "off_arch",
         "def_primary_archetype": "off_def_arch_unused",
         "off_role_confidence": "off_confidence",
@@ -141,16 +140,15 @@ def compute_predictions(df_pair, prof, mat, all_def_archs):
     })
     # Merge def player probs (use their DEF archetype label + def prob columns)
     def_prof = prof[["player_id", "season", "def_primary_archetype"] + def_cols].rename(columns={
-        "player_id": "DEF_PLAYER_ID",
-        "season": "SEASON",
+        "player_id": "def_player_id",
         "def_primary_archetype": "def_arch",
     })
 
-    df = df_pair.merge(off_prof[["OFF_PLAYER_ID", "SEASON", "off_arch", "off_confidence"] +
+    df = df_pair.merge(off_prof[["off_player_id", "season", "off_arch", "off_confidence"] +
                                   [f"op_{v}" for v in off_cols]],
-                       on=["OFF_PLAYER_ID", "SEASON"], how="left")
-    df = df.merge(def_prof[["DEF_PLAYER_ID", "SEASON", "def_arch"] + def_cols],
-                  on=["DEF_PLAYER_ID", "SEASON"], how="left")
+                       on=["off_player_id", "season"], how="left")
+    df = df.merge(def_prof[["def_player_id", "season", "def_arch"] + def_cols],
+                  on=["def_player_id", "season"], how="left")
     df = df.dropna(subset=["off_arch", "def_arch"]).copy()
     df = df[~df["off_arch"].isin(DROP_ARCH) & ~df["def_arch"].isin(DROP_ARCH)]
 
@@ -236,23 +234,23 @@ def main():
 
     # Join archetypes onto matchup for FE demean (same as preflight)
     arch_join = prof[["player_id", "season", "off_primary_archetype", "def_primary_archetype"]].copy()
-    off_a = arch_join.rename(columns={"player_id": "OFF_PLAYER_ID", "season": "SEASON",
+    off_a = arch_join.rename(columns={"player_id": "off_player_id",
                                        "off_primary_archetype": "off_arch"}).drop(columns="def_primary_archetype")
-    def_a = arch_join.rename(columns={"player_id": "DEF_PLAYER_ID", "season": "SEASON",
+    def_a = arch_join.rename(columns={"player_id": "def_player_id",
                                        "def_primary_archetype": "def_arch"}).drop(columns="off_primary_archetype")
-    m = m.merge(off_a, on=["OFF_PLAYER_ID", "SEASON"], how="left")
-    m = m.merge(def_a, on=["DEF_PLAYER_ID", "SEASON"], how="left")
+    m = m.merge(off_a, on=["off_player_id", "season"], how="left")
+    m = m.merge(def_a, on=["def_player_id", "season"], how="left")
     m = m[~m["off_arch"].isin(DROP_ARCH) & ~m["def_arch"].isin(DROP_ARCH)].dropna(subset=["off_arch","def_arch"])
     print(f"Matchup rows after arch join: {len(m):,}")
 
     print("Computing FE residuals...")
-    m["resid"] = two_way_demean(m, "ppp", "PARTIAL_POSS", "OFF_PLAYER_ID", "DEF_PLAYER_ID", DEMEAN_ITERS)
+    m["resid"] = two_way_demean(m, "ppp", "partial_poss", "off_player_id", "def_player_id", DEMEAN_ITERS)
 
     # Aggregate to player-pair level (reduce possession noise)
-    pair = (m.groupby(["OFF_PLAYER_ID", "DEF_PLAYER_ID", "SEASON"])
+    pair = (m.groupby(["off_player_id", "def_player_id", "season"])
               .apply(lambda x: pd.Series({
-                  "actual_resid": np.average(x["resid"], weights=x["PARTIAL_POSS"]),
-                  "poss": x["PARTIAL_POSS"].sum(),
+                  "actual_resid": np.average(x["resid"], weights=x["partial_poss"]),
+                  "poss": x["partial_poss"].sum(),
               }), include_groups=False)
               .reset_index())
     print(f"Unique player-pairs: {len(pair):,}")
@@ -275,8 +273,8 @@ def main():
     # --- stratified by off_role_confidence ---
     pair_pred2 = pair_pred.merge(
         prof[["player_id", "season", "off_role_confidence"]].rename(
-            columns={"player_id": "OFF_PLAYER_ID", "season": "SEASON"}),
-        on=["OFF_PLAYER_ID", "SEASON"], how="left")
+            columns={"player_id": "off_player_id"}),
+        on=["off_player_id", "season"], how="left")
 
     print("\n--- By off_role_confidence tier ---")
     strata_results = []

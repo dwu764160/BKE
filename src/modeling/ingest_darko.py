@@ -9,6 +9,7 @@ import os
 from typing import List
 
 import pandas as pd
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 DARKO_PATH = "data/historical/darko/normalized/darko_normalized.parquet"
@@ -27,7 +28,7 @@ def clean_id(val) -> str:
 def load_darko() -> pd.DataFrame:
     if not os.path.exists(DARKO_PATH):
         return pd.DataFrame(columns=["player_id", "player_name", "season", "darko_dpm", "darko_odpm", "darko_ddpm"])
-    darko = pd.read_parquet(DARKO_PATH)
+    darko = load_standardized(DARKO_PATH)
     darko = darko.copy()
     darko["player_id"] = darko["player_id"].map(clean_id)
     darko["season"] = darko["season"].astype(str)
@@ -44,7 +45,7 @@ def load_rapm() -> pd.DataFrame:
     if not os.path.exists(RAPM_PATH):
         return pd.DataFrame(columns=["player_id", "season", "rapm", "orapm", "drapm", "rapm_type"])
 
-    rapm = pd.read_parquet(RAPM_PATH).copy()
+    rapm = load_standardized(RAPM_PATH).copy()
     rapm["player_id"] = rapm["player_id"].map(clean_id)
     rapm["season"] = rapm["season"].astype(str)
 
@@ -79,16 +80,16 @@ def load_rapm() -> pd.DataFrame:
 def load_linear() -> pd.DataFrame:
     if not os.path.exists(LINEAR_PATH):
         return pd.DataFrame(columns=["player_id", "season"])
-    linear = pd.read_parquet(LINEAR_PATH).copy()
-    if "PLAYER_ID" in linear.columns:
-        linear["player_id"] = linear["PLAYER_ID"].map(clean_id)
+    linear = load_standardized(LINEAR_PATH).copy()
+    if "player_id" in linear.columns:
+        linear["player_id"] = linear["player_id"].map(clean_id)
     elif "player_id" in linear.columns:
         linear["player_id"] = linear["player_id"].map(clean_id)
     else:
         linear["player_id"] = "0"
 
-    if "SEASON" in linear.columns:
-        linear["season"] = linear["SEASON"].astype(str)
+    if "season" in linear.columns:
+        linear["season"] = linear["season"].astype(str)
     elif "season" in linear.columns:
         linear["season"] = linear["season"].astype(str)
     else:
@@ -117,13 +118,13 @@ def load_linear() -> pd.DataFrame:
 def save_outputs(df: pd.DataFrame, seasons: List[str]) -> None:
     combined_parquet = os.path.join(OUT_DIR, "modeling_inputs_all.parquet")
     combined_csv = os.path.join(OUT_DIR, "modeling_inputs_all.csv")
-    df.to_parquet(combined_parquet, index=False)
+    save_standardized(df, combined_parquet)
     df.to_csv(combined_csv, index=False)
 
     for season in seasons:
         part = df[df["season"] == season].copy()
         part_path = os.path.join(OUT_DIR, f"modeling_inputs_{season}.parquet")
-        part.to_parquet(part_path, index=False)
+        save_standardized(part, part_path)
 
 
 def main() -> None:

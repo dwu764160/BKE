@@ -162,24 +162,23 @@ def estimate_fe_cells(
     but excluded from archetype cell aggregation.
     """
     df = matchups.copy()
-    df.columns = [c.upper() for c in df.columns]
-    df["SEASON"] = df["SEASON"].astype(str)
+    df["season"] = df["season"].astype(str)
     if seasons is not None:
-        df = df[df["SEASON"].isin(set(seasons))]
-    df["OFF_PLAYER_ID"] = df["OFF_PLAYER_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-    df["DEF_PLAYER_ID"] = df["DEF_PLAYER_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-    df["PARTIAL_POSS"] = pd.to_numeric(df["PARTIAL_POSS"], errors="coerce")
-    df["PLAYER_PTS"] = pd.to_numeric(df["PLAYER_PTS"], errors="coerce")
-    df = df[(df["PARTIAL_POSS"] >= min_partial_poss) & df["PLAYER_PTS"].notna()]
+        df = df[df["season"].isin(set(seasons))]
+    df["off_player_id"] = df["off_player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    df["def_player_id"] = df["def_player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    df["partial_poss"] = pd.to_numeric(df["partial_poss"], errors="coerce")
+    df["player_pts"] = pd.to_numeric(df["player_pts"], errors="coerce")
+    df = df[(df["partial_poss"] >= min_partial_poss) & df["player_pts"].notna()]
     if df.empty:
         return pd.DataFrame(columns=["off_arch", "def_arch", "raw_ppp", "ci_lo", "ci_hi", "poss"]), {}, {}, 0.0
 
-    df["ppp"] = df["PLAYER_PTS"] / df["PARTIAL_POSS"]
-    w = df["PARTIAL_POSS"].to_numpy(dtype=float)
+    df["ppp"] = df["player_pts"] / df["partial_poss"]
+    w = df["partial_poss"].to_numpy(dtype=float)
     y = df["ppp"].to_numpy(dtype=float)
 
-    off_key = df["OFF_PLAYER_ID"].to_numpy()
-    def_key = df["DEF_PLAYER_ID"].to_numpy()
+    off_key = df["off_player_id"].to_numpy()
+    def_key = df["def_player_id"].to_numpy()
 
     grand = float(np.sum(y * w) / np.sum(w))
     resid = y - grand
@@ -203,14 +202,14 @@ def estimate_fe_cells(
         resid = resid - np.array([def_fe[k] for k in def_key])
 
     df["_resid"] = resid
-    seasons_arr = df["SEASON"].to_numpy()
+    seasons_arr = df["season"].to_numpy()
     df["_off_arch"] = [off_arch_of.get((p, s)) for p, s in zip(off_key, seasons_arr)]
     df["_def_arch"] = [def_arch_of.get((p, s)) for p, s in zip(def_key, seasons_arr)]
     cell_df = df.dropna(subset=["_off_arch", "_def_arch"])
 
     rows = []
     for (oa, da), g in cell_df.groupby(["_off_arch", "_def_arch"]):
-        wi = g["PARTIAL_POSS"].to_numpy(dtype=float)
+        wi = g["partial_poss"].to_numpy(dtype=float)
         ri = g["_resid"].to_numpy(dtype=float)
         poss = float(wi.sum())
         if poss < min_cell_poss:
@@ -223,8 +222,8 @@ def estimate_fe_cells(
         rows.append({
             "off_arch": oa, "def_arch": da, "raw_ppp": round(mean, 6),
             "ci_lo": round(mean - Z95 * se, 6), "ci_hi": round(mean + Z95 * se, 6),
-            "poss": poss, "n_off_players": int(g["OFF_PLAYER_ID"].nunique()),
-            "n_def_players": int(g["DEF_PLAYER_ID"].nunique()),
+            "poss": poss, "n_off_players": int(g["off_player_id"].nunique()),
+            "n_def_players": int(g["def_player_id"].nunique()),
         })
     return pd.DataFrame(rows), off_fe, def_fe, grand
 

@@ -23,6 +23,7 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+from src.data.schema_contract import load_standardized, save_standardized
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -42,9 +43,9 @@ def load_player_team_mapping():
 
     game_logs_path = os.path.join(HISTORICAL_DIR, "final_player_game_logs.parquet")
     if os.path.exists(game_logs_path):
-        logs = pd.read_parquet(game_logs_path)
-        logs['team'] = logs['MATCHUP'].str[:3]
-        pt = logs.groupby(['Player_ID', 'SEASON'])['team'].agg(
+        logs = load_standardized(game_logs_path)
+        logs['team'] = logs['matchup'].str[:3]
+        pt = logs.groupby(['Player_ID', 'season'])['team'].agg(
             lambda x: x.value_counts().index[0]
         ).reset_index()
         pt.columns = ['player_id', 'season', 'team']
@@ -53,9 +54,9 @@ def load_player_team_mapping():
 
     stats_path = os.path.join(HISTORICAL_DIR, "complete_player_season_stats.parquet")
     if os.path.exists(stats_path):
-        stats = pd.read_parquet(stats_path)
+        stats = load_standardized(stats_path)
         # TEAM_ABBREVIATION is max-minutes team — acceptable for BPM team context
-        pt2 = stats[['PLAYER_ID', 'SEASON', 'TEAM_ABBREVIATION']].copy()
+        pt2 = stats[['player_id', 'season', 'team_abbreviation']].copy()
         pt2.columns = ['player_id', 'season', 'team']
         pt2['player_id'] = pt2['player_id'].astype(str)
         if frames:
@@ -81,14 +82,14 @@ def load_team_net_ratings():
         print(f"WARNING: {path} not found, team adjustment will be limited")
         return None
     
-    teams = pd.read_parquet(path)
+    teams = load_standardized(path)
     
     # PLUS_MINUS_PER_GAME already stores per-game point differential.
     # Keep this value directly as the coarse team net proxy.
-    teams['team_net_rtg'] = teams['PLUS_MINUS_PER_GAME']
+    teams['team_net_rtg'] = teams['plus_minus_per_game']
     
     # Rename for merge
-    teams = teams.rename(columns={'TEAM_ID': 'team', 'SEASON': 'season'})
+    teams = teams.rename(columns={'team_id': 'team', 'season': 'season'})
     
     return teams[['team', 'season', 'team_net_rtg']]
 
@@ -99,7 +100,7 @@ def load_player_data():
     if not os.path.exists(path):
         print(f"ERROR: {path} not found")
         return None
-    df = pd.read_parquet(path)
+    df = load_standardized(path)
 
     # Drop ghost columns from previous runs
     cols_to_drop = ['L_PPP', 'L_PPG', 'Pts_Per_Win', 'PProd', 'TotPoss', 'Ind_Poss',
@@ -109,13 +110,13 @@ def load_player_data():
     # Pre-2022 PBP lacks assistPersonId so player2_id is None for all made shots,
     # leaving AST=0 for every player. Fill from official box stats so BPM doesn't NaN.
     # Scale AST by the PBP minute coverage ratio so AST/min rates stay consistent.
-    seasons_missing_ast = df.groupby('season')['AST'].sum()
+    seasons_missing_ast = df.groupby('season')['ast'].sum()
     missing_seasons = seasons_missing_ast[seasons_missing_ast == 0].index.tolist()
     if missing_seasons:
         stats_path = os.path.join(HISTORICAL_DIR, "complete_player_season_stats.parquet")
         if os.path.exists(stats_path):
-            box = pd.read_parquet(stats_path)
-            box = box[box['SEASON'].isin(missing_seasons)][['PLAYER_ID', 'SEASON', 'AST', 'GP', 'MIN']].copy()
+            box = load_standardized(stats_path)
+            box = box[box['season'].isin(missing_seasons)][['player_id', 'season', 'ast', 'gp', 'min']].copy()
             box.columns = ['player_id', 'season', 'ast_per_game', 'gp', 'min_per_game']
             box['player_id'] = box['player_id'].astype(str)
             # Season totals from box stats
@@ -125,8 +126,8 @@ def load_player_data():
             df = df.merge(box, on=['player_id', 'season'], how='left')
             mask = df['season'].isin(missing_seasons)
             # Scale by coverage ratio so AST/min rates remain consistent with PBP minutes
-            coverage = (df.loc[mask, 'MIN'] / df.loc[mask, 'min_box_total'].replace(0, np.nan)).clip(0, 1)
-            df.loc[mask, 'AST'] = (df.loc[mask, 'ast_box_total'] * coverage).fillna(0).round().astype(int)
+            coverage = (df.loc[mask, 'min'] / df.loc[mask, 'min_box_total'].replace(0, np.nan)).clip(0, 1)
+            df.loc[mask, 'ast'] = (df.loc[mask, 'ast_box_total'] * coverage).fillna(0).round().astype(int)
             df = df.drop(columns=['ast_box_total', 'min_box_total'])
             print(f"  Filled AST from box stats for {missing_seasons} (PBP missing assistPersonId)")
     return df
@@ -142,13 +143,13 @@ def load_league_context():
         print(f"WARNING: {path} not found, using fallback constants")
         return None
     
-    logs = pd.read_parquet(path)
+    logs = load_standardized(path)
     
     # Aggregate by season
-    league = logs.groupby('SEASON').agg(
-        LEAGUE_PTS=('PTS', 'sum'),
-        LEAGUE_GAMES=('GAME_ID', 'nunique'),  # Unique games (each game has 2 rows)
-        TEAM_GAMES=('PTS', 'count')  # Total team-game rows
+    league = logs.groupby('season').agg(
+        LEAGUE_PTS=('pts', 'sum'),
+        LEAGUE_GAMES=('game_id', 'nunique'),  # Unique games (each game has 2 rows)
+        TEAM_GAMES=('pts', 'count')  # Total team-game rows
     ).reset_index()
     
     # League PPG = Total Points / Total Team-Games
@@ -157,7 +158,7 @@ def load_league_context():
     # Pts Per Win: 0.32 * League_PPG (pace-adjusted, but league avg pace = 1.0)
     league['Pts_Per_Win'] = 0.32 * league['L_PPG']
     
-    league = league.rename(columns={'SEASON': 'season'})
+    league = league.rename(columns={'season': 'season'})
     return league[['season', 'L_PPG', 'Pts_Per_Win', 'TEAM_GAMES']]
 
 
@@ -175,21 +176,21 @@ def build_team_season_totals(df):
     # Alternative: Sum all players by season to get league totals,
     # then divide by 30 teams for average team
     league_totals = df.groupby('season').agg(
-        LEAGUE_FGM=('FGM', 'sum'),
-        LEAGUE_FGA=('FGA', 'sum'),
-        LEAGUE_FG3M=('FG3M', 'sum'),
-        LEAGUE_FG3A=('FG3A', 'sum'),
-        LEAGUE_FTM=('FTM', 'sum'),
-        LEAGUE_FTA=('FTA', 'sum'),
-        LEAGUE_AST=('AST', 'sum'),
-        LEAGUE_ORB=('ORB', 'sum'),
-        LEAGUE_DRB=('DRB', 'sum'),
-        LEAGUE_TOV=('TOV', 'sum'),
-        LEAGUE_PTS=('PTS', 'sum'),
-        LEAGUE_MIN=('MIN', 'sum'),
-        LEAGUE_STL=('STL', 'sum'),
-        LEAGUE_BLK=('BLK', 'sum'),
-        LEAGUE_PF=('PF', 'sum'),
+        LEAGUE_FGM=('fgm', 'sum'),
+        LEAGUE_FGA=('fga', 'sum'),
+        LEAGUE_FG3M=('fg3m', 'sum'),
+        LEAGUE_FG3A=('fg3a', 'sum'),
+        LEAGUE_FTM=('ftm', 'sum'),
+        LEAGUE_FTA=('fta', 'sum'),
+        LEAGUE_AST=('ast', 'sum'),
+        LEAGUE_ORB=('orb', 'sum'),
+        LEAGUE_DRB=('drb', 'sum'),
+        LEAGUE_TOV=('tov', 'sum'),
+        LEAGUE_PTS=('pts', 'sum'),
+        LEAGUE_MIN=('min', 'sum'),
+        LEAGUE_STL=('stl', 'sum'),
+        LEAGUE_BLK=('blk', 'sum'),
+        LEAGUE_PF=('pf', 'sum'),
     ).reset_index()
     
     # Per-team averages (30 teams)
@@ -223,8 +224,8 @@ def compute_win_shares_bref(df, league_ctx):
     
     # L_PPP from player data (ratio is correct even if sums are 5x)
     l_ppp_season = df.groupby('season', as_index=False).agg(
-        team_pts_on_court=('TEAM_PTS_ON_COURT', 'sum'),
-        poss_off=('POSS_OFF', 'sum')
+        team_pts_on_court=('team_pts_on_court', 'sum'),
+        poss_off=('poss_off', 'sum')
     )
     l_ppp_season['L_PPP'] = np.where(
         l_ppp_season['poss_off'] > 0,
@@ -254,15 +255,15 @@ def compute_win_shares_bref(df, league_ctx):
     Team_ORB = df['TEAM_AVG_ORB']
     Team_TOV = df['TEAM_AVG_TOV']
     
-    MP = df['MIN']
-    AST = df['AST']
-    FGM = df['FGM']
-    FGA = df['FGA']
-    FG3M = df['FG3M']
-    PTS = df['PTS']
-    FTM = df['FTM']
-    ORB = df['ORB']
-    TOV = df['TOV']
+    MP = df['min']
+    AST = df['ast']
+    FGM = df['fgm']
+    FGA = df['fga']
+    FG3M = df['fg3m']
+    PTS = df['pts']
+    FTM = df['ftm']
+    ORB = df['orb']
+    TOV = df['tov']
     
     # Prevent division by zero
     Team_FGM = Team_FGM.replace(0, 1)
@@ -306,8 +307,8 @@ def compute_win_shares_bref(df, league_ctx):
     
     # --- Step 4: FT_Part of Scoring Possessions ---
     # FT_Part = (1 - (1 - (FTM/FTA))^2) * 0.4 * FTA
-    ft_pct = (FTM / df['FTA'].replace(0, 1)).clip(0, 1)
-    FT_Part = (1 - (1 - ft_pct)**2) * 0.4 * df['FTA']
+    ft_pct = (FTM / df['fta'].replace(0, 1)).clip(0, 1)
+    FT_Part = (1 - (1 - ft_pct)**2) * 0.4 * df['fta']
     
     # --- Step 5: Team Scoring Possessions and ORB factors ---
     Team_Scoring_Poss = Team_FGM + (1 - (1 - Team_FTM / df['TEAM_AVG_FTA'].replace(0, 1))**2) * df['TEAM_AVG_FTA'] * 0.4
@@ -337,7 +338,7 @@ def compute_win_shares_bref(df, league_ctx):
     
     # --- Step 7: Missed FG and FT Possessions ---
     FGxPoss = (FGA - FGM) * (1 - 1.07 * Team_ORB_pct)
-    FTxPoss = ((1 - ft_pct)**2) * 0.4 * df['FTA']
+    FTxPoss = ((1 - ft_pct)**2) * 0.4 * df['fta']
     
     # --- Step 8: Total Possessions (NO ORB!) ---
     TotPoss = ScPoss + FGxPoss + FTxPoss + TOV
@@ -390,16 +391,16 @@ def compute_win_shares_bref(df, league_ctx):
     # most of the team's defensive credit.
     # =========================================================================
     
-    STL = df['STL']
-    BLK = df['BLK']
-    DRB = df['DRB']
-    PF = df['PF']
+    STL = df['stl']
+    BLK = df['blk']
+    DRB = df['drb']
+    PF = df['pf']
     
     # Team minutes and defensive possessions (season totals)
-    Team_MP_season = 5 * 48 * df['GP'].clip(upper=82)
+    Team_MP_season = 5 * 48 * df['gp'].clip(upper=82)
     
     # Team defensive possessions: ~100 per game * games played
-    Team_Def_Poss = 100 * df['GP'].clip(upper=82)
+    Team_Def_Poss = 100 * df['gp'].clip(upper=82)
     
     # --- Opponent/Team Statistics (League Averages as Proxy) ---
     # DFG%: Opponent field goal percentage (league avg ~47%)
@@ -447,8 +448,8 @@ def compute_win_shares_bref(df, league_ctx):
     # Stops2 per minute
     Stops2_rate = missed_non_blk_rate * FMwt * (1 - 1.07 * DOR_pct) + non_stl_tov_rate
     # Additional credit from fouls (force missed FTs)
-    PF_credit = (PF / (Team_PF_pg * df['GP'].clip(upper=82)).clip(lower=1)) * \
-                0.4 * Opp_FTA_pg * df['GP'] * (1 - Opp_FT_pct) ** 2
+    PF_credit = (PF / (Team_PF_pg * df['gp'].clip(upper=82)).clip(lower=1)) * \
+                0.4 * Opp_FTA_pg * df['gp'] * (1 - Opp_FT_pct) ** 2
     
     Stops2 = Stops2_rate * MP + PF_credit
     
@@ -476,7 +477,7 @@ def compute_win_shares_bref(df, league_ctx):
     # 20% from team baseline. This prevents over-rewarding/penalizing based
     # on box score stats alone.
     
-    Team_DRtg = df['DRTG']  # On-court defensive rating
+    Team_DRtg = df['drtg']  # On-court defensive rating
     
     # "Raw" individual DRtg based purely on Stop%
     Raw_Ind_DRtg = 100 * D_Pts_per_ScPoss * (1 - Stop_pct)
@@ -559,31 +560,31 @@ def compute_bpm_bref(df):
     
     # Calculate league totals per season
     league_totals = df.groupby('season').agg(
-        LEAGUE_MIN=('MIN', 'sum'),
-        LEAGUE_TRB=('ORB', lambda x: (x + df.loc[x.index, 'DRB']).sum()),
-        LEAGUE_STL=('STL', 'sum'),
-        LEAGUE_AST=('AST', 'sum'),
-        LEAGUE_BLK=('BLK', 'sum'),
-        LEAGUE_PF=('PF', 'sum'),
-        LEAGUE_PTS=('PTS', 'sum'),
-        LEAGUE_FGM=('FGM', 'sum'),
-        LEAGUE_FGA=('FGA', 'sum'),
+        LEAGUE_MIN=('min', 'sum'),
+        LEAGUE_TRB=('orb', lambda x: (x + df.loc[x.index, 'drb']).sum()),
+        LEAGUE_STL=('stl', 'sum'),
+        LEAGUE_AST=('ast', 'sum'),
+        LEAGUE_BLK=('blk', 'sum'),
+        LEAGUE_PF=('pf', 'sum'),
+        LEAGUE_PTS=('pts', 'sum'),
+        LEAGUE_FGM=('fgm', 'sum'),
+        LEAGUE_FGA=('fga', 'sum'),
     ).reset_index()
     
     df = pd.merge(df, league_totals, on='season', how='left', suffixes=('', '_league'))
     
     # Calculate per-minute rates
-    player_min = df['MIN'].replace(0, 1)
+    player_min = df['min'].replace(0, 1)
     league_min = df['LEAGUE_MIN'].replace(0, 1)
     
     # Calculate % of team stats while on court
     # Formula: (player_per_min / league_per_min) * 0.20
     # This gives the player's share of team stats when they're on the floor
-    pct_TRB = ((df['ORB'] + df['DRB']) / player_min) / (df['LEAGUE_TRB'] / league_min) * 0.20
-    pct_STL = (df['STL'] / player_min) / (df['LEAGUE_STL'] / league_min) * 0.20
-    pct_AST = (df['AST'] / player_min) / (df['LEAGUE_AST'] / league_min) * 0.20
-    pct_BLK = (df['BLK'] / player_min) / (df['LEAGUE_BLK'] / league_min) * 0.20
-    pct_PF = (df['PF'] / player_min) / (df['LEAGUE_PF'] / league_min) * 0.20
+    pct_TRB = ((df['orb'] + df['drb']) / player_min) / (df['LEAGUE_TRB'] / league_min) * 0.20
+    pct_STL = (df['stl'] / player_min) / (df['LEAGUE_STL'] / league_min) * 0.20
+    pct_AST = (df['ast'] / player_min) / (df['LEAGUE_AST'] / league_min) * 0.20
+    pct_BLK = (df['blk'] / player_min) / (df['LEAGUE_BLK'] / league_min) * 0.20
+    pct_PF = (df['pf'] / player_min) / (df['LEAGUE_PF'] / league_min) * 0.20
     
     # Clamp to reasonable ranges (from B-REF documentation)
     pct_TRB = pct_TRB.clip(0.05, 0.40)
@@ -628,10 +629,10 @@ def compute_bpm_bref(df):
         # Calculate team-level adjustments
         # For each team-season, calculate minutes-weighted position average
         df_with_team['_pos_raw'] = position.values
-        df_with_team['_min_x_pos'] = df_with_team['MIN'] * df_with_team['_pos_raw']
+        df_with_team['_min_x_pos'] = df_with_team['min'] * df_with_team['_pos_raw']
         
         team_pos_avg = df_with_team.groupby(['team', 'season']).apply(
-            lambda g: g['_min_x_pos'].sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 3.0,
+            lambda g: g['_min_x_pos'].sum() / g['min'].sum() if g['min'].sum() > 0 else 3.0,
             include_groups=False
         ).reset_index(name='team_pos_avg')
         
@@ -659,7 +660,7 @@ def compute_bpm_bref(df):
         # Sum (NET_RTG * MIN) / sum(MIN) per team-season gives team's avg on-court rating
         # This approximates B-REF's team adjustment where all players get same boost
         team_net_rtg_calc = df_with_team.groupby(['team', 'season']).apply(
-            lambda g: (g['NET_RTG'] * g['MIN']).sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 0,
+            lambda g: (g['net_rtg'] * g['min']).sum() / g['min'].sum() if g['min'].sum() > 0 else 0,
             include_groups=False
         ).reset_index(name='team_avg_net_rtg')
         
@@ -673,7 +674,7 @@ def compute_bpm_bref(df):
 
         # Also compute team-level ORTG for adjusted points formula (B-REF style)
         team_ortg_calc = df_with_team.groupby(['team', 'season']).apply(
-            lambda g: (g['ORTG'] * g['MIN']).sum() / g['MIN'].sum() if g['MIN'].sum() > 0 else 113.0,
+            lambda g: (g['ortg'] * g['min']).sum() / g['min'].sum() if g['min'].sum() > 0 else 113.0,
             include_groups=False
         ).reset_index(name='team_avg_ortg')
         
@@ -698,12 +699,12 @@ def compute_bpm_bref(df):
     
     # Calculate points share similar to other percentages
     # Use (player_pts_per_min / league_pts_per_min) * 0.20
-    pct_PTS = (df['PTS'] / player_min) / (df['LEAGUE_PTS'] / league_min) * 0.20
+    pct_PTS = (df['pts'] / player_min) / (df['LEAGUE_PTS'] / league_min) * 0.20
     pct_PTS = pct_PTS.clip(0.05, 0.50)
     
     # Efficiency above threshold: TS% - 0.54 (54% is average)
     # B-REF uses threshold = team_avg - 0.33 pts/TSA
-    eff_above_avg = (df['TS_PCT'] - 0.54).clip(-0.15, 0.20)
+    eff_above_avg = (df['ts_pct'] - 0.54).clip(-0.15, 0.20)
     
     # Threshold points = pts_share * (1 + efficiency bonus)
     # Only players scoring above threshold efficiency contribute
@@ -718,21 +719,21 @@ def compute_bpm_bref(df):
     # STEP 4: Per-100 Possession Stats
     # =========================================================================
     
-    poss = df['POSS_OFF'].replace(0, 1)
-    poss_def = df['POSS_DEF'].replace(0, 1)
+    poss = df['poss_off'].replace(0, 1)
+    poss_def = df['poss_def'].replace(0, 1)
     
     # Per 100 team possessions
-    per100_pts = df['PTS'] / poss * 100
-    per100_fga = df['FGA'] / poss * 100
-    per100_fta = df['FTA'] / poss * 100
-    per100_fg3m = df['FG3M'] / poss * 100
-    per100_ast = df['AST'] / poss * 100
-    per100_tov = df['TOV'] / poss * 100
-    per100_orb = df['ORB'] / poss * 100
-    per100_drb = df['DRB'] / poss_def * 100  # DRB on defensive possessions
-    per100_stl = df['STL'] / poss_def * 100
-    per100_blk = df['BLK'] / poss_def * 100
-    per100_pf = df['PF'] / poss * 100
+    per100_pts = df['pts'] / poss * 100
+    per100_fga = df['fga'] / poss * 100
+    per100_fta = df['fta'] / poss * 100
+    per100_fg3m = df['fg3m'] / poss * 100
+    per100_ast = df['ast'] / poss * 100
+    per100_tov = df['tov'] / poss * 100
+    per100_orb = df['orb'] / poss * 100
+    per100_drb = df['drb'] / poss_def * 100  # DRB on defensive possessions
+    per100_stl = df['stl'] / poss_def * 100
+    per100_blk = df['blk'] / poss_def * 100
+    per100_pf = df['pf'] / poss * 100
     
     # =========================================================================
     # STEP 5: Calculate Raw BPM with Position-Adjusted Coefficients
@@ -806,7 +807,7 @@ def compute_bpm_bref(df):
     asa_factor = (1 + (player_asa - league_avg_asa) / 40).clip(0.4, 1.8)
     
     # PRIMARY: Individual ORTG premium (same source as before)
-    ortg_premium = (df['ORTG'] - league_avg_ortg).clip(-15, 25)
+    ortg_premium = (df['ortg'] - league_avg_ortg).clip(-15, 25)
     
     # Deduction uses ASA ratio instead of pts-based volume factor
     INDIVIDUAL_DEDUCTION_SCALE = 0.32
@@ -961,8 +962,8 @@ def compute_bpm_bref(df):
     
     # Center at league level (weighted average = 0)
     season_mean = df.groupby('season').apply(
-        lambda x: (raw_bpm_with_intercept.loc[x.index] * df.loc[x.index, 'POSS_OFF']).sum() / 
-                  df.loc[x.index, 'POSS_OFF'].sum(),
+        lambda x: (raw_bpm_with_intercept.loc[x.index] * df.loc[x.index, 'poss_off']).sum() / 
+                  df.loc[x.index, 'poss_off'].sum(),
         include_groups=False
     ).reset_index(name='_season_mean_bpm')
     df = pd.merge(df, season_mean, on='season', how='left')
@@ -980,8 +981,8 @@ def compute_bpm_bref(df):
     
     # Center OBPM at league level
     season_mean_obpm = df.groupby('season').apply(
-        lambda x: (raw_obpm_with_intercept.loc[x.index] * df.loc[x.index, 'POSS_OFF']).sum() / 
-                  df.loc[x.index, 'POSS_OFF'].sum(),
+        lambda x: (raw_obpm_with_intercept.loc[x.index] * df.loc[x.index, 'poss_off']).sum() / 
+                  df.loc[x.index, 'poss_off'].sum(),
         include_groups=False
     ).reset_index(name='_season_mean_obpm')
     df = pd.merge(df, season_mean_obpm, on='season', how='left')
@@ -1011,7 +1012,7 @@ def compute_bpm_bref(df):
     # Reduces overfitting: bench MAE 0.824→0.623, overall MAE 0.613→0.527
     
     # Calculate AST per minute for big playmaker adjustment
-    ast_per_min = df['AST'] / df['MIN'].replace(0, 1)
+    ast_per_min = df['ast'] / df['min'].replace(0, 1)
     
     # AST-based bonus for bigs: Position > 3 AND high AST rate (> 0.20 AST/min)
     # Only triggers for unique players like Jokić who are bigs with elite passing
@@ -1026,14 +1027,14 @@ def compute_bpm_bref(df):
     # This gives all players on good teams a boost, all on bad teams a penalty
     # Scale: Boston (+9) gets +2.25, Washington (-9) gets -2.25
     TEAM_NET_SCALE = 0.20
-    _team_net = df['TEAM_NET_RTG'].fillna(df['team_avg_net_rtg']) if 'TEAM_NET_RTG' in df.columns else df['team_avg_net_rtg']
+    _team_net = df['team_net_rtg'].fillna(df['team_avg_net_rtg']) if 'team_net_rtg' in df.columns else df['team_avg_net_rtg']
     team_net_adjustment = TEAM_NET_SCALE * _team_net
     
     # Individual on-court adjustment (how player differs from team average)
     # This captures individual impact beyond team context
     # Small scale since team adjustment captures most of the effect
     IND_NET_SCALE = 0.15
-    individual_net_diff = df['NET_RTG'] - _team_net
+    individual_net_diff = df['net_rtg'] - _team_net
     individual_adjustment = IND_NET_SCALE * individual_net_diff
     
     # Combined NET_RTG adjustment
@@ -1052,8 +1053,8 @@ def compute_bpm_bref(df):
     # B-REF handles this via full team adjustment; we add a small direct correction.
     USG_CORRECTION_SCALE = 3.5
     USG_CORRECTION_CENTER = 23.0
-    if 'USG_RATE' in df.columns:
-        usg_correction = USG_CORRECTION_SCALE * (df['USG_RATE'] - USG_CORRECTION_CENTER).fillna(0) / 100
+    if 'usg_rate' in df.columns:
+        usg_correction = USG_CORRECTION_SCALE * (df['usg_rate'] - USG_CORRECTION_CENTER).fillna(0) / 100
         adjusted_bpm = adjusted_bpm - usg_correction
         adjusted_obpm = adjusted_obpm - usg_correction * 0.7  # Most of USG impact is offensive
 
@@ -1094,7 +1095,7 @@ def compute_bpm_bref(df):
     MIN_REGRESSION_STRENGTH = 1.0    # Maximum penalty at 0 minutes (B-REF formula value)
     
     # Calculate penalty factor: 0 at threshold, 1 at 0 minutes
-    penalty_factor = np.clip(1.0 - (df['MIN'] / MIN_REGRESSION_THRESHOLD), 0, 1)
+    penalty_factor = np.clip(1.0 - (df['min'] / MIN_REGRESSION_THRESHOLD), 0, 1)
     
     # Apply base penalty
     df['BPM'] = df['BPM'] - MIN_REGRESSION_STRENGTH * penalty_factor
@@ -1114,7 +1115,7 @@ def compute_bpm_bref(df):
     VERY_LOW_MIN_PENALTY = 3.0  # Additional BPM penalty at 0 minutes for low-minute bigs (B-REF formula value)
     BIG_POSITION_THRESHOLD = 3.5  # Only apply to bigs
     
-    very_low_min_factor = np.clip(1.0 - (df['MIN'] / VERY_LOW_MIN_THRESHOLD), 0, 1)
+    very_low_min_factor = np.clip(1.0 - (df['min'] / VERY_LOW_MIN_THRESHOLD), 0, 1)
     very_low_min_penalty = VERY_LOW_MIN_PENALTY * very_low_min_factor
     
     # Only apply to BIGS under 500 minutes
@@ -1148,12 +1149,12 @@ def compute_bpm_bref(df):
     # % of minutes = player_MIN / (GP * 48)
     
     # Calculate percentage of available minutes played
-    available_minutes = df['GP'].clip(upper=82) * 48  # Max minutes player could have played
-    pct_minutes = df['MIN'] / available_minutes.replace(0, 1)
+    available_minutes = df['gp'].clip(upper=82) * 48  # Max minutes player could have played
+    pct_minutes = df['min'] / available_minutes.replace(0, 1)
     pct_minutes = pct_minutes.clip(0, 1)  # Can't play more than 100% of minutes
     
     # Games adjustment
-    games_pct = df['GP'].clip(upper=82) / 82
+    games_pct = df['gp'].clip(upper=82) / 82
     
     # VORP calculation (direct from B-REF formula)
     df['VORP'] = (df['BPM'] + 2.0) * pct_minutes * games_pct
@@ -1199,7 +1200,7 @@ def validate_results(df):
     # Top 5 by WS for latest season
     latest = df[df['season'] == df['season'].max()].nlargest(10, 'WS')
     print(f"\n--- Top 10 by WS ({df['season'].max()}) ---")
-    print(latest[['player_name', 'GP', 'WS', 'OWS', 'DWS', 'PProd', 'TotPoss']].to_string(index=False))
+    print(latest[['player_name', 'gp', 'WS', 'OWS', 'DWS', 'PProd', 'TotPoss']].to_string(index=False))
 
 
 def main():
@@ -1221,12 +1222,12 @@ def main():
     
     # Add Game Score
     df['GMSC_TOTAL'] = (
-        df['PTS'] + 0.4 * df['FGM'] - 0.7 * df['FGA'] -
-        0.4 * (df['FTA'] - df['FTM']) + 0.7 * df['ORB'] +
-        0.3 * df['DRB'] + df['STL'] + 0.7 * df['AST'] +
-        0.7 * df['BLK'] - 0.4 * df['PF'] - df['TOV']
+        df['pts'] + 0.4 * df['fgm'] - 0.7 * df['fga'] -
+        0.4 * (df['fta'] - df['ftm']) + 0.7 * df['orb'] +
+        0.3 * df['drb'] + df['stl'] + 0.7 * df['ast'] +
+        0.7 * df['blk'] - 0.4 * df['pf'] - df['tov']
     )
-    df['GMSC_AVG'] = df['GMSC_TOTAL'] / df['GP'].replace(0, 1)
+    df['GMSC_AVG'] = df['GMSC_TOTAL'] / df['gp'].replace(0, 1)
     
     # Compute Win Shares
     df = compute_win_shares_bref(df, league_ctx)
@@ -1235,7 +1236,7 @@ def main():
     validate_results(df)
     
     # Save output
-    output_cols = ['player_id', 'player_name', 'season', 'GP', 'MIN',
+    output_cols = ['player_id', 'player_name', 'season', 'gp', 'min',
                    'WS', 'OWS', 'DWS', 'BPM', 'OBPM', 'DBPM', 'VORP', 'GMSC_AVG',
                    'PProd', 'TotPoss', 'qAST', 'Marginal_Off', 'Marginal_Def',
                    'Position', 'OffRole']
@@ -1243,7 +1244,7 @@ def main():
     # Only keep columns that exist
     output_cols = [c for c in output_cols if c in df.columns]
     
-    df[output_cols].to_parquet(OUTPUT_FILE, index=False)
+    save_standardized(df[output_cols], OUTPUT_FILE)
     print(f"\n✅ Saved to {OUTPUT_FILE}")
 
 

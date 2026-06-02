@@ -192,7 +192,7 @@ def _load_team_id_map() -> Dict[str, str]:
     if not teams_path.exists():
         return {}
     try:
-        teams = pd.read_parquet(teams_path)
+        teams = load_standardized(teams_path)
     except Exception:
         return {}
 
@@ -236,7 +236,7 @@ def _apply_team_stint_split(flat_df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[s
         flat_df["team_assignment_source"] = "season"
         return flat_df, summary
 
-    stints = pd.read_parquet(PLAYER_TEAM_STINTS_PATH)
+    stints = load_standardized(PLAYER_TEAM_STINTS_PATH)
     if stints.empty:
         flat_df = flat_df.copy()
         flat_df["stint_number"] = 1
@@ -546,7 +546,7 @@ def main() -> None:
         raise FileNotFoundError(f"Missing required file: {BKE_DECOMP_PATH}")
 
     # ── 1. Load BKE decomposition (spine) ──────────────────────────────
-    base = pd.read_parquet(BKE_DECOMP_PATH).copy()
+    base = load_standardized(BKE_DECOMP_PATH).copy()
     base["player_id"] = _norm_player_id(base["player_id"])
     base["season"] = base["season"].astype(str)
 
@@ -568,16 +568,16 @@ def main() -> None:
         v30["season"] = v30["season"].astype(str)
 
     # ── 4. Load box-score stats (keep only TOT rows for traded players) ─
-    stats = pd.read_parquet(COMPLETE_STATS_PATH)
+    stats = load_standardized(COMPLETE_STATS_PATH)
     stats = stats.rename(
         columns={
-            "PLAYER_ID": "player_id",
-            "SEASON": "season",
-            "TEAM_ID": "team_id",
-            "TEAM_ABBREVIATION": "team_abbreviation",
+            "player_id": "player_id",
+            "season": "season",
+            "team_id": "team_id",
+            "team_abbreviation": "team_abbreviation",
             "AGE": "age",
-            "GP": "games",
-            "MIN": "minutes_box",
+            "gp": "games",
+            "min": "minutes_box",
             "PF": "pf_box",
         }
     )
@@ -597,12 +597,12 @@ def main() -> None:
     stats = stats[stats_keep]
 
     # ── 5. Load offensive archetypes (all 11 embedding dims) ───────────
-    arche = pd.read_parquet(PLAYER_ARCHETYPES_PATH)
+    arche = load_standardized(PLAYER_ARCHETYPES_PATH)
     arche = arche.rename(
         columns={
-            "PLAYER_ID": "player_id",
-            "SEASON": "season",
-            "TEAM_ABBREVIATION": "team_abbreviation_arche",
+            "player_id": "player_id",
+            "season": "season",
+            "team_abbreviation": "team_abbreviation_arche",
             "USG_PCT": "usage_pct",
             "TS_PCT": "ts_pct",
             "EFG_PCT": "efg_pct",
@@ -617,28 +617,28 @@ def main() -> None:
     arche["season"] = arche["season"].astype(str)
 
     # ── 6. Load defensive archetypes ───────────────────────────────────
-    def_arche = pd.read_parquet(DEF_ARCHETYPES_PATH)
-    def_arche = def_arche.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    def_arche = load_standardized(DEF_ARCHETYPES_PATH)
+    def_arche = def_arche.rename(columns={"player_id": "player_id", "season": "season"})
     def_arche["player_id"] = _norm_player_id(def_arche["player_id"])
     def_arche["season"] = def_arche["season"].astype(str)
 
     # ── 7. Load position estimates ─────────────────────────────────────
-    pos = pd.read_parquet(POSITION_ESTIMATES_PATH)
-    pos = pos.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season", "GP": "games_pos", "MIN": "minutes_pos"})
+    pos = load_standardized(POSITION_ESTIMATES_PATH)
+    pos = pos.rename(columns={"player_id": "player_id", "season": "season", "gp": "games_pos", "min": "minutes_pos"})
     pos["player_id"] = _norm_player_id(pos["player_id"])
     pos["season"] = pos["season"].astype(str)
 
     # ── 8. Load linear metrics (WS, BPM, VORP) ────────────────────────
     metrics_lin = pd.DataFrame()
     if METRICS_LINEAR_PATH.exists():
-        metrics_lin = pd.read_parquet(METRICS_LINEAR_PATH)
+        metrics_lin = load_standardized(METRICS_LINEAR_PATH)
         metrics_lin["player_id"] = _norm_player_id(metrics_lin["player_id"])
         metrics_lin["season"] = metrics_lin["season"].astype(str)
 
     # ── 9. Load player bio metadata ────────────────────────────────────
     players_meta = pd.DataFrame()
     if PLAYERS_META_PATH.exists():
-        players_meta = pd.read_parquet(PLAYERS_META_PATH)
+        players_meta = load_standardized(PLAYERS_META_PATH)
         players_meta = players_meta.rename(columns={"player_id": "player_id_meta"})
         players_meta["player_id_meta"] = _norm_player_id(players_meta["player_id_meta"])
 
@@ -649,7 +649,7 @@ def main() -> None:
     salary_name_frames = []  # for name-based fallback
     for sf in salary_files:
         try:
-            sdf = pd.read_parquet(sf)
+            sdf = load_standardized(sf)
             # Rows with valid player_id
             has_id = sdf["player_id"].notna()
             if has_id.any():
@@ -779,6 +779,7 @@ def main() -> None:
     # Name-based salary fallback for players without salary after ID merge
     if not salary_name_df.empty:
         from src.utils.player_name_normalizer import canonical_name_key
+from src.data.schema_contract import load_standardized, save_standardized
         salary_missing = data["salary"].isna()
         if salary_missing.any():
             data["_canon_key"] = data["player_name"].astype(str).map(canonical_name_key)
@@ -847,7 +848,7 @@ def main() -> None:
 
     # FIX: foul_rate = personal fouls per 36 minutes
     pf = pd.to_numeric(_first_existing(data, ["pf_box", "PF"]), errors="coerce")
-    mins = pd.to_numeric(data.get("MIN"), errors="coerce").fillna(
+    mins = pd.to_numeric(data.get("min"), errors="coerce").fillna(
         pd.to_numeric(data.get("minutes_box"), errors="coerce")
     )
     data["foul_rate"] = (pf * 36.0 / mins.replace(0, np.nan)).clip(lower=0.0)
@@ -913,10 +914,10 @@ def main() -> None:
     data[def_prob_cols] = _softmax_df(data[def_prob_cols].fillna(0.0))
 
     # --- Volume ---
-    data["minutes"] = pd.to_numeric(data.get("MIN"), errors="coerce").fillna(
+    data["minutes"] = pd.to_numeric(data.get("min"), errors="coerce").fillna(
         pd.to_numeric(data.get("minutes_box"), errors="coerce")
     )
-    data["games"] = pd.to_numeric(data.get("GP"), errors="coerce").fillna(
+    data["games"] = pd.to_numeric(data.get("gp"), errors="coerce").fillna(
         pd.to_numeric(data.get("games"), errors="coerce")
     )
     data["possessions"] = pd.to_numeric(data.get("possessions_played"), errors="coerce")
@@ -943,9 +944,9 @@ def main() -> None:
     # ── Name normalization (ID-first, alias-aware) ────────────────────
     name_sources = [
         (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
-        (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
-        (COMPLETE_STATS_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
-        (BKE_DECOMP_PATH, ["player_id", "PLAYER_ID"], ["player_name", "PLAYER_NAME"], 3),
+        (PLAYER_ARCHETYPES_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 2),
+        (COMPLETE_STATS_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 2),
+        (BKE_DECOMP_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 3),
     ]
     id_to_name, key_to_name = build_player_name_maps(name_sources)
     data = apply_player_name_normalization(
@@ -1189,7 +1190,7 @@ def main() -> None:
     STEP4_VALIDATION_REPORT.write_text(json.dumps(avail_report, indent=2), encoding="utf-8")
 
     PLAYER_PROFILES_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    flat_df.to_parquet(PLAYER_PROFILES_PARQUET, index=False)
+    save_standardized(flat_df, PLAYER_PROFILES_PARQUET)
     with open(PLAYER_PROFILES_PKL, "wb") as handle:
         pickle.dump(profile_rows, handle)
     STEP1_VALIDATION_REPORT.write_text(json.dumps(validation_report, indent=2), encoding="utf-8")

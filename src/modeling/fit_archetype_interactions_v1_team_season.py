@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.preprocessing import StandardScaler
+from src.data.schema_contract import load_standardized, save_standardized
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Paths
@@ -218,11 +219,11 @@ def fit_ridge(team_df: pd.DataFrame, outcomes: pd.DataFrame) -> dict:
 
     # Merge team features with outcomes
     outcomes = outcomes.copy()
-    outcomes["TEAM_ID"] = outcomes["TEAM_ID"].astype(np.int64)
+    outcomes["team_id"] = outcomes["team_id"].astype(np.int64)
     data = team_df.merge(
-        outcomes[["season", "TEAM_ID", "NET_RATING"]],
+        outcomes[["season", "team_id", "NET_RATING"]],
         left_on=["season", "team_id"],
-        right_on=["season", "TEAM_ID"],
+        right_on=["season", "team_id"],
         how="inner",
     )
     print(f"  Matched {len(data)} team-seasons (of {len(team_df)} built, {len(outcomes)} in outcomes)")
@@ -374,17 +375,17 @@ def main():
     args = parser.parse_args()
 
     print("Loading data...")
-    agg = pd.read_parquet(AGGREGATE_PATH)
+    agg = load_standardized(AGGREGATE_PATH)
     # Normalize key columns
-    min_col = "min" if "min" in agg.columns else "MIN"
+    min_col = "min" if "min" in agg.columns else "min"
     agg["_min"] = pd.to_numeric(agg[min_col], errors="coerce").fillna(0)
     arch_col = "primary_archetype"
     print(f"  Aggregate: {len(agg)} rows, {agg['season'].nunique()} seasons")
 
-    rapm = pd.read_parquet(MODELING_INPUTS_PATH)
+    rapm = load_standardized(MODELING_INPUTS_PATH)
     print(f"  RAPM inputs: {len(rapm)} rows")
 
-    outcomes = pd.read_parquet(TEAM_OUTCOMES_PATH)
+    outcomes = load_standardized(TEAM_OUTCOMES_PATH)
     print(f"  Team outcomes: {len(outcomes)} rows, {outcomes['season'].nunique()} seasons")
 
     print("Building team-season feature matrix...")

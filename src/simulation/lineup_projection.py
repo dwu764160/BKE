@@ -48,6 +48,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.simulation_config import (
     CLUTCH_STATS_ALL_PATH,
     CLUTCH_WEIGHT_C,
@@ -544,8 +546,7 @@ class Step2Config:
 def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
     if not TEAMS_PATH.exists():
         return {}, {}, {}
-    teams = pd.read_parquet(TEAMS_PATH)
-    teams.columns = [str(c).lower() for c in teams.columns]
+    teams = load_standardized(TEAMS_PATH)
 
     full_to_abbr = {}
     abbr_to_conf = {}
@@ -578,7 +579,7 @@ def _load_team_map() -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
 
 def load_player_pool(cfg: Step2Config, source_path: Optional[Path] = None) -> pd.DataFrame:
     src = source_path or PLAYER_PROFILES_PATH
-    df = pd.read_parquet(src)
+    df = load_standardized(src)
     repl_mask = _replacement_pool_mask(df)
     if int(repl_mask.sum()) > 0:
         df = df.loc[~repl_mask].copy()
@@ -658,12 +659,7 @@ def load_positions() -> pd.DataFrame:
     if not POSITION_ESTIMATES_PATH.exists():
         return pd.DataFrame(columns=["season", "player_id"])
 
-    pos = pd.read_parquet(POSITION_ESTIMATES_PATH)
-    rename = {
-        "PLAYER_ID": "player_id",
-        "SEASON": "season",
-    }
-    pos = pos.rename(columns=rename)
+    pos = load_standardized(POSITION_ESTIMATES_PATH)
     pos["player_id"] = _norm_id(pos["player_id"])
     pos["season"] = pos["season"].astype(str)
 
@@ -724,7 +720,7 @@ def _load_returning_flags(players: pd.DataFrame) -> pd.DataFrame:
         players["continuity_factor"] = 1.0
         return players
 
-    hist = pd.read_parquet(PLAYER_PROFILES_PATH, columns=["player_id", "season", "team_abbreviation"])
+    hist = load_standardized(PLAYER_PROFILES_PATH, columns=["player_id", "season", "team_abbreviation"])
     hist["player_id"] = _norm_id(hist["player_id"])
     hist["season"] = hist["season"].astype(str)
     hist["team_abbreviation"] = hist["team_abbreviation"].astype(str).str.upper()
@@ -841,7 +837,7 @@ def _candidate_pool(
 def load_clutch_stats() -> pd.DataFrame:
     if not CLUTCH_STATS_ALL_PATH.exists():
         return pd.DataFrame(columns=["player_id", "season", "team_abbreviation", "clutch_minutes", "clutch_gp"])
-    clutch = pd.read_parquet(CLUTCH_STATS_ALL_PATH)
+    clutch = load_standardized(CLUTCH_STATS_ALL_PATH)
     clutch["player_id"] = _norm_id(clutch["player_id"])
     clutch["season"] = clutch["season"].astype(str)
     clutch["team_abbreviation"] = clutch["team_abbreviation"].astype(str).str.upper()
@@ -859,16 +855,16 @@ def load_clutch_stats() -> pd.DataFrame:
 
 def load_metrics_lineups(full_to_abbr: Dict[str, str]) -> pd.DataFrame:
     if not METRICS_LINEUPS_PATH.exists():
-        return pd.DataFrame(columns=["season", "team_abbreviation", "NET_RTG", "total_poss", "lineup_ids"])
-    lineups = pd.read_parquet(METRICS_LINEUPS_PATH)
+        return pd.DataFrame(columns=["season", "team_abbreviation", "net_rtg", "total_poss", "lineup_ids"])
+    lineups = load_standardized(METRICS_LINEUPS_PATH)
     lineups["season"] = lineups["season"].astype(str)
     lineups["team_name"] = lineups["team_name"].astype(str)
     lineups["team_abbreviation"] = lineups["team_name"].map(full_to_abbr)
-    lineups["NET_RTG"] = pd.to_numeric(lineups["NET_RTG"], errors="coerce")
+    lineups["net_rtg"] = pd.to_numeric(lineups["net_rtg"], errors="coerce")
     lineups["total_poss"] = pd.to_numeric(lineups["total_poss"], errors="coerce").fillna(0.0)
     lineups["lineup_ids"] = lineups["lineup_ids"].apply(_to_id_list)
-    lineups = lineups.dropna(subset=["team_abbreviation", "NET_RTG"])
-    return lineups[["season", "team_abbreviation", "NET_RTG", "total_poss", "lineup_ids"]]
+    lineups = lineups.dropna(subset=["team_abbreviation", "net_rtg"])
+    return lineups[["season", "team_abbreviation", "net_rtg", "total_poss", "lineup_ids"]]
 
 
 def _select_best_lineup(
@@ -1268,7 +1264,7 @@ def build_actual_maps(
     # Using player-level profiles (deduced from game logs) rather than lineup-level
     # NET_RTG avoids noise from specific 5-man combination sample sizes.
     try:
-        actual_profiles = pd.read_parquet(
+        actual_profiles = load_standardized(
             PLAYER_PROFILES_PATH,
             columns=["player_id", "season", "team_abbreviation",
                       "minutes", "impact_total_impact"],
@@ -1335,7 +1331,7 @@ def build_actual_maps(
             candidates = tmp[(tmp["overlap"] <= 2) & (tmp["total_poss"] >= 50)]
             if candidates.empty:
                 continue
-            rating = _weighted_avg(candidates["NET_RTG"].to_numpy(dtype=float), candidates["total_poss"].to_numpy(dtype=float))
+            rating = _weighted_avg(candidates["net_rtg"].to_numpy(dtype=float), candidates["total_poss"].to_numpy(dtype=float))
             actual_rotation_net[key] = rating
 
     return actual_starters, actual_clutch, actual_rotation_net, starter_meta

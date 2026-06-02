@@ -30,6 +30,7 @@ CACHE_DIR = Path("data/matchup_cache")
 OUTPUT_DIR = Path("data/matchup")
 
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 # Defense categories for LeagueDashPtDefend (already fetched in tracking_data.py)
 DEFENSE_CATEGORIES = {
@@ -338,10 +339,10 @@ def compute_matchup_difficulty(matchups_df: pd.DataFrame,
     
     # Load player stats for opponent quality
     try:
-        player_stats = pd.read_parquet(player_stats_path)
-        # Create lookup: (PLAYER_ID, SEASON) -> PPG, USG_PCT
-        player_stats['PPG'] = player_stats['PTS'] / player_stats['GP']
-        stats_lookup = player_stats.set_index(['PLAYER_ID', 'SEASON'])[['PPG', 'USG_PCT', 'MIN']].to_dict('index')
+        player_stats = load_standardized(player_stats_path)
+        # Create lookup: (player_id, season) -> ppg, usg_pct, min
+        player_stats['ppg'] = player_stats['pts'] / player_stats['gp']
+        stats_lookup = player_stats.set_index(['player_id', 'season'])[['ppg', 'usg_pct', 'min']].to_dict('index')
     except:
         print("⚠️ Could not load player stats for difficulty calculation")
         return pd.DataFrame()
@@ -372,8 +373,8 @@ def compute_matchup_difficulty(matchups_df: pd.DataFrame,
             key = (off_id, season)
             if key in stats_lookup:
                 stats = stats_lookup[key]
-                ppg = stats.get('PPG', 0)
-                usg = stats.get('USG_PCT', 0.15)
+                ppg = stats.get('ppg', 0)
+                usg = stats.get('usg_pct', 0.15)
                 
                 opp_ppg.append(ppg)
                 opp_usage.append(usg)
@@ -447,22 +448,22 @@ def main():
     
     if all_matchups:
         matchups_df = pd.concat(all_matchups, ignore_index=True)
-        matchups_df.to_parquet(OUTPUT_DIR / "league_season_matchups.parquet", index=False)
+        save_standardized(matchups_df, OUTPUT_DIR / "league_season_matchups.parquet")
         print(f"   ✅ Saved {len(matchups_df)} matchups to league_season_matchups.parquet")
     
     if all_rollups:
         rollups_df = pd.concat(all_rollups, ignore_index=True)
-        rollups_df.to_parquet(OUTPUT_DIR / "matchups_rollup.parquet", index=False)
+        save_standardized(rollups_df, OUTPUT_DIR / "matchups_rollup.parquet")
         print(f"   ✅ Saved {len(rollups_df)} rollup entries to matchups_rollup.parquet")
     
     if all_versatility:
         versatility_df = pd.concat(all_versatility, ignore_index=True)
-        versatility_df.to_parquet(OUTPUT_DIR / "matchup_versatility.parquet", index=False)
+        save_standardized(versatility_df, OUTPUT_DIR / "matchup_versatility.parquet")
         print(f"   ✅ Saved {len(versatility_df)} versatility scores to matchup_versatility.parquet")
     
     if all_difficulty:
         difficulty_df = pd.concat(all_difficulty, ignore_index=True)
-        difficulty_df.to_parquet(OUTPUT_DIR / "matchup_difficulty.parquet", index=False)
+        save_standardized(difficulty_df, OUTPUT_DIR / "matchup_difficulty.parquet")
         print(f"   ✅ Saved {len(difficulty_df)} difficulty scores to matchup_difficulty.parquet")
     
     print("\n" + "=" * 70)

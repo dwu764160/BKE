@@ -44,6 +44,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.player_eval.constants import (
+from src.data.schema_contract import load_standardized, save_standardized
     AGE_CURVE_BREAKPOINTS,
     AGE_CURVE_DELTAS,
     MINUTE_PREDICTIONS_PATH,
@@ -400,7 +401,7 @@ def load_target_salary_data(target_season: str) -> Tuple[Dict[str, float], Dict[
     if not salary_path.exists():
         return {}, {}
 
-    df = pd.read_parquet(salary_path)
+    df = load_standardized(salary_path)
     if df.empty or "player_id" not in df.columns:
         return {}, {}
 
@@ -417,7 +418,7 @@ def load_target_salary_data(target_season: str) -> Tuple[Dict[str, float], Dict[
     team_name_to_abbr = {}
     teams_path = HISTORICAL_DIR / "teams.parquet"
     if teams_path.exists():
-        teams = pd.read_parquet(teams_path)
+        teams = load_standardized(teams_path)
         for _, r in teams.iterrows():
             abbr = str(r.get("abbreviation", "")).upper()
             full_name = str(r.get("full_name", "")).lower().strip()
@@ -444,7 +445,7 @@ def load_draft_data() -> pd.DataFrame:
     parts = []
 
     if PROFILE_AGGREGATE_PATH.exists():
-        agg = pd.read_parquet(PROFILE_AGGREGATE_PATH)
+        agg = load_standardized(PROFILE_AGGREGATE_PATH)
         wanted = [
             "player_id",
             "player_name",
@@ -463,7 +464,7 @@ def load_draft_data() -> pd.DataFrame:
             parts.append(draft.drop_duplicates(subset=["player_id"], keep="first"))
 
     if PLAYER_DRAFT_HISTORY_PATH.exists():
-        draft = pd.read_parquet(PLAYER_DRAFT_HISTORY_PATH)
+        draft = load_standardized(PLAYER_DRAFT_HISTORY_PATH)
         if not draft.empty and "player_id" in draft.columns:
             draft = draft.copy()
             draft["player_id"] = _norm_id(draft["player_id"])
@@ -721,7 +722,7 @@ def project_minutes(
 
     # Load Ridge predictions
     try:
-        preds = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
+        preds = load_standardized(MINUTE_PREDICTIONS_PATH)
         # We need to match on player_id and season
         preds["player_id"] = _norm_id(preds["player_id"])
         preds["season"] = preds["season"].astype(str)
@@ -899,7 +900,7 @@ def load_preseason_roster_maps(
     if not src:
         return {}, {}
 
-    df = pd.read_parquet(src)
+    df = load_standardized(src)
     if df.empty or "player_id" not in df.columns:
         return {}, {}
 
@@ -1161,7 +1162,7 @@ def build_rookie_profiles_from_draft(
 
     meta_map = {}
     if (HISTORICAL_DIR / "players.parquet").exists():
-        meta = pd.read_parquet(HISTORICAL_DIR / "players.parquet")
+        meta = load_standardized(HISTORICAL_DIR / "players.parquet")
         if "player_id" in meta.columns:
             meta["player_id"] = _norm_id(meta["player_id"])
             meta = meta.drop_duplicates(subset=["player_id"], keep="first")
@@ -1431,7 +1432,7 @@ def project_season(
         try:
             roster_src = _resolve_preseason_roster_path(target_season, preseason_rosters_path)
             if roster_src and roster_src.exists():
-                rdf = pd.read_parquet(roster_src)
+                rdf = load_standardized(roster_src)
                 if "player_name" in rdf.columns and ("team_abbreviation" in rdf.columns or "team" in rdf.columns):
                     team_col = "team_abbreviation" if "team_abbreviation" in rdf.columns else "team"
                     rdf = rdf.copy()
@@ -1676,7 +1677,7 @@ def main() -> None:
     if not PLAYER_PROFILES_PARQUET.exists():
         raise FileNotFoundError(f"Missing: {PLAYER_PROFILES_PARQUET}")
 
-    all_profiles = pd.read_parquet(PLAYER_PROFILES_PARQUET)
+    all_profiles = load_standardized(PLAYER_PROFILES_PARQUET)
     all_profiles["player_id"] = _norm_id(all_profiles["player_id"])
     all_profiles["season"] = all_profiles["season"].astype(str)
     seasons = sorted(all_profiles["season"].unique())
@@ -1843,7 +1844,7 @@ def main() -> None:
 
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result.to_parquet(output_path, index=False)
+    save_standardized(result, output_path)
     print(f"\nSaved projected profiles: {output_path}")
     print(f"  Shape: {result.shape}")
     print(f"  Seasons: {sorted(result['season'].unique())}")

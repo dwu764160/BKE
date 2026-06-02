@@ -46,6 +46,7 @@ from src.player_eval.constants import (  # noqa: E402
     PRESEASON_ROSTERS_PATH,
     PRESEASON_ROSTERS_REPORT,
 )
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 def _norm_id(series: pd.Series) -> pd.Series:
@@ -57,7 +58,7 @@ def _load_teams() -> pd.DataFrame:
     if not teams_path.exists():
         raise FileNotFoundError(f"Missing teams file: {teams_path}")
 
-    teams = pd.read_parquet(teams_path)
+    teams = load_standardized(teams_path)
     cols = {c.lower(): c for c in teams.columns}
     tid_col = cols.get("team_id") or cols.get("id")
     abbr_col = cols.get("abbreviation")
@@ -259,7 +260,7 @@ def _load_existing_combined() -> pd.DataFrame:
     if not PRESEASON_ROSTERS_PATH.exists():
         return pd.DataFrame()
     try:
-        existing = pd.read_parquet(PRESEASON_ROSTERS_PATH)
+        existing = load_standardized(PRESEASON_ROSTERS_PATH)
     except Exception:
         return pd.DataFrame()
     if existing.empty:
@@ -327,13 +328,13 @@ def fetch_preseason_rosters(seasons: List[str], force_refresh: bool = False) -> 
         combined = combined.sort_values(["season", "team_abbreviation", "player_name"]).reset_index(drop=True)
 
     PRESEASON_ROSTERS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_parquet(PRESEASON_ROSTERS_PATH, index=False)
+    save_standardized(combined, PRESEASON_ROSTERS_PATH)
 
     PRESEASON_ROSTERS_DIR.mkdir(parents=True, exist_ok=True)
     for season in sorted(combined["season"].unique()) if not combined.empty else []:
         one = combined[combined["season"] == season].copy()
         season_path = PRESEASON_ROSTERS_DIR / f"preseason_rosters_{season}.parquet"
-        one.to_parquet(season_path, index=False)
+        save_standardized(one, season_path)
 
     report = {
         "seasons_requested": seasons,

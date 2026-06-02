@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix, identity, vstack
 from sklearn.linear_model import RidgeCV
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -68,7 +69,7 @@ def load_clean_possessions() -> pd.DataFrame:
     print(f"Loading {len(files)} possession files...")
     all_parts: List[pd.DataFrame] = []
     for path in files:
-        part = pd.read_parquet(path)
+        part = load_standardized(path)
         if "season" not in part.columns:
             season = os.path.basename(path).replace("possessions_clean_", "").replace(".parquet", "")
             part["season"] = season
@@ -458,7 +459,7 @@ def enrich_names(df: pd.DataFrame) -> pd.DataFrame:
             df["player_name"] = df["player_id"]
             return df
 
-        players = pd.read_parquet(players_path)
+        players = load_standardized(players_path)
         if "id" not in players.columns:
             df["player_name"] = df["player_id"]
             return df
@@ -557,7 +558,7 @@ def main() -> None:
 
     out_parquet = os.path.join(OUTPUT_DIR, "player_rapm.parquet")
     out_csv = os.path.join(OUTPUT_DIR, "player_rapm.csv")
-    final_df.to_parquet(out_parquet, index=False)
+    save_standardized(final_df, out_parquet)
     final_df.to_csv(out_csv, index=False)
 
     print(f"\n✅ Saved {out_parquet}")

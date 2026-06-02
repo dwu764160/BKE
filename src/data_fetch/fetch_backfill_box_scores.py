@@ -27,6 +27,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 try:
     from nba_api.stats.endpoints import (
@@ -123,14 +124,14 @@ def merge_season(season: str) -> pd.DataFrame:
 def save_official_advanced(season: str, adv_df: pd.DataFrame) -> None:
     """Save official advanced stats per season (matches existing format)."""
     out = OFFICIAL_DIR / f"official_advanced_{season}.parquet"
-    adv_df.to_parquet(out, index=False)
+    save_standardized(adv_df, out)
     print(f"  Saved: {out}")
 
 
 def main(seasons: list[str]) -> None:
     existing_path = HISTORICAL_DIR / "complete_player_season_stats.parquet"
     if existing_path.exists():
-        existing = pd.read_parquet(existing_path)
+        existing = load_standardized(existing_path)
         # The existing file may use 'SEASON' (upper) instead of 'season'
         season_col = "season" if "season" in existing.columns else "SEASON"
         existing["season"] = existing[season_col].astype(str)
@@ -169,7 +170,7 @@ def main(seasons: list[str]) -> None:
     # Normalize PLAYER_ID type to match existing parquet
     new_combined["PLAYER_ID"] = new_combined["PLAYER_ID"].astype(str)
     new_out = HISTORICAL_DIR / "complete_player_season_stats_backfill.parquet"
-    new_combined.to_parquet(new_out, index=False)
+    save_standardized(new_combined, new_out)
     print(f"\nSaved backfill: {new_out} — {len(new_combined)} rows, seasons: {sorted(new_combined['season'].unique())}")
 
 

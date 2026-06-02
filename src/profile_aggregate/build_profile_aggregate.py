@@ -88,7 +88,7 @@ def _norm_id(series: pd.Series) -> pd.Series:
 def _safe_load(path: Path, **kwargs) -> pd.DataFrame:
     """Load parquet, return empty DataFrame on failure."""
     try:
-        return pd.read_parquet(path, **kwargs)
+        return load_standardized(path, **kwargs)
     except Exception:
         return pd.DataFrame()
 
@@ -117,11 +117,11 @@ def _load_complete_stats() -> pd.DataFrame:
     df = _safe_load(COMPLETE_STATS_PATH)
     if df.empty:
         return df
-    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df = df.rename(columns={"player_id": "player_id", "season": "season"})
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
-    df["MIN"] = pd.to_numeric(df.get("MIN"), errors="coerce")
-    df = df.sort_values("MIN", ascending=False).drop_duplicates(
+    df["min"] = pd.to_numeric(df.get("min"), errors="coerce")
+    df = df.sort_values("min", ascending=False).drop_duplicates(
         subset=["player_id", "season"], keep="first"
     )
     # Prefix rank columns to avoid collisions
@@ -135,7 +135,7 @@ def _load_archetypes() -> pd.DataFrame:
     df = _safe_load(PLAYER_ARCHETYPES_PATH)
     if df.empty:
         return df
-    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df = df.rename(columns={"player_id": "player_id", "season": "season"})
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
     return _dedup(df)
@@ -146,7 +146,7 @@ def _load_def_archetypes() -> pd.DataFrame:
     df = _safe_load(DEF_ARCHETYPES_PATH)
     if df.empty:
         return df
-    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df = df.rename(columns={"player_id": "player_id", "season": "season"})
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
     return _dedup(df)
@@ -156,7 +156,7 @@ def _load_positions() -> pd.DataFrame:
     df = _safe_load(POSITION_ESTIMATES_PATH)
     if df.empty:
         return df
-    df = df.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    df = df.rename(columns={"player_id": "player_id", "season": "season"})
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
     return _dedup(df)
@@ -282,29 +282,29 @@ def _load_game_log_aggregates() -> pd.DataFrame:
         return pd.DataFrame()
     # Normalize columns — handle both Player_ID and PLAYER_ID
     # Drop duplicate player id column first
-    if "Player_ID" in df.columns and "PLAYER_ID" in df.columns:
+    if "Player_ID" in df.columns and "player_id" in df.columns:
         df = df.drop(columns=["Player_ID"])
-        df = df.rename(columns={"PLAYER_ID": "player_id"})
+        df = df.rename(columns={"player_id": "player_id"})
     elif "Player_ID" in df.columns:
         df = df.rename(columns={"Player_ID": "player_id"})
-    elif "PLAYER_ID" in df.columns:
-        df = df.rename(columns={"PLAYER_ID": "player_id"})
-    df = df.rename(columns={"SEASON": "season"})
+    elif "player_id" in df.columns:
+        df = df.rename(columns={"player_id": "player_id"})
+    df = df.rename(columns={"season": "season"})
     if "player_id" not in df.columns:
         return pd.DataFrame()
     df["player_id"] = _norm_id(df["player_id"])
     df["season"] = df["season"].astype(str)
-    df["MIN"] = pd.to_numeric(df["MIN"], errors="coerce")
+    df["min"] = pd.to_numeric(df["min"], errors="coerce")
 
     agg = df.groupby(["player_id", "season"]).agg(
-        gl_games_total=("MIN", "count"),
-        gl_mpg_mean=("MIN", "mean"),
-        gl_mpg_std=("MIN", "std"),
-        gl_mpg_median=("MIN", "median"),
-        gl_mpg_max=("MIN", "max"),
-        gl_mpg_min=("MIN", "min"),
-        gl_dnp_count=("MIN", lambda x: (x.fillna(0) == 0).sum()),
-        gl_low_min_count=("MIN", lambda x: ((x.fillna(0) > 0) & (x.fillna(0) < 5)).sum()),
+        gl_games_total=("min", "count"),
+        gl_mpg_mean=("min", "mean"),
+        gl_mpg_std=("min", "std"),
+        gl_mpg_median=("min", "median"),
+        gl_mpg_max=("min", "max"),
+        gl_mpg_min=("min", "min"),
+        gl_dnp_count=("min", lambda x: (x.fillna(0) == 0).sum()),
+        gl_low_min_count=("min", lambda x: ((x.fillna(0) > 0) & (x.fillna(0) < 5)).sum()),
     ).reset_index()
     agg["gl_mpg_std"] = agg["gl_mpg_std"].fillna(0.0)
     return agg
@@ -329,10 +329,10 @@ def _load_clutch_stats() -> pd.DataFrame:
 
     df = pd.concat(frames, ignore_index=True)
     rename_map = {}
-    if "PLAYER_ID" in df.columns:
-        rename_map["PLAYER_ID"] = "player_id"
-    if "SEASON" in df.columns:
-        rename_map["SEASON"] = "season"
+    if "player_id" in df.columns:
+        rename_map["player_id"] = "player_id"
+    if "season" in df.columns:
+        rename_map["season"] = "season"
     df = df.rename(columns=rename_map)
 
     if "player_id" not in df.columns or "season" not in df.columns:
@@ -462,6 +462,7 @@ def _load_diagnostics() -> pd.DataFrame:
 def _load_pts_v40() -> pd.DataFrame:
     """Load PTS v4.0 composite scores (production metric)."""
     from src.modeling.model_config import PTS_V40_PARQUET
+from src.data.schema_contract import load_standardized, save_standardized
     df = _safe_load(Path(PTS_V40_PARQUET))
     if df.empty:
         return df
@@ -660,9 +661,9 @@ def main() -> None:
     # 19. Name normalization (ID-first and alias-aware)
     name_sources = [
         (PLAYERS_META_PATH, ["id", "player_id"], ["full_name", "player_name"], 1),
-        (PLAYER_ARCHETYPES_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
-        (COMPLETE_STATS_PATH, ["PLAYER_ID", "player_id"], ["PLAYER_NAME", "player_name"], 2),
-        (BKE_DECOMP_PATH, ["player_id", "PLAYER_ID"], ["player_name", "PLAYER_NAME"], 3),
+        (PLAYER_ARCHETYPES_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 2),
+        (COMPLETE_STATS_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 2),
+        (BKE_DECOMP_PATH, ["player_id", "player_id"], ["player_name", "player_name"], 3),
     ]
     id_to_name, key_to_name = build_player_name_maps(name_sources)
     if "player_name" in spine.columns:
@@ -676,12 +677,12 @@ def main() -> None:
 
     # ── Computed fields ────────────────────────────────────────────────
     # MPG from game logs or box stats
-    mins = pd.to_numeric(spine.get("MIN", spine.get("min")), errors="coerce")
-    gp = pd.to_numeric(spine.get("GP", spine.get("gp")), errors="coerce")
+    mins = pd.to_numeric(spine.get("min", spine.get("min")), errors="coerce")
+    gp = pd.to_numeric(spine.get("gp", spine.get("gp")), errors="coerce")
     spine["agg_mpg"] = mins / gp.replace(0, np.nan)
 
     # Minute share within team
-    team_mins = spine.groupby(["season", spine.columns[spine.columns.str.contains("TEAM_ABBREVIATION", case=False)].tolist()[0] if any(spine.columns.str.contains("TEAM_ABBREVIATION", case=False)) else "season"])["MIN"].transform("sum")
+    team_mins = spine.groupby(["season", spine.columns[spine.columns.str.contains("team_abbreviation", case=False)].tolist()[0] if any(spine.columns.str.contains("team_abbreviation", case=False)) else "season"])["min"].transform("sum")
     # Safer team abbreviation lookup
     team_col = None
     for c in spine.columns:
@@ -689,7 +690,7 @@ def main() -> None:
             team_col = c
             break
     if team_col:
-        min_col = "MIN" if "MIN" in spine.columns else "min"
+        min_col = "min" if "min" in spine.columns else "min"
         team_min_sum = spine.groupby(["season", team_col])[min_col].transform("sum")
         spine["agg_minute_share"] = mins / team_min_sum.replace(0, np.nan)
 
@@ -697,7 +698,7 @@ def main() -> None:
     # Tiers: Superstar / All-Star / Starter / Rotation Player / Reserve / Fringe
     # Percentiles computed within each season among BKE-scored players only.
     _score_col = 'total_impact_score' if 'total_impact_score' in spine.columns else None
-    _min_col = 'min' if 'min' in spine.columns else ('MIN' if 'MIN' in spine.columns else None)
+    _min_col = 'min' if 'min' in spine.columns else ('min' if 'min' in spine.columns else None)
     if _score_col and _min_col:
         _mins = pd.to_numeric(spine[_min_col], errors='coerce').fillna(0)
         _scores = pd.to_numeric(spine[_score_col], errors='coerce')
@@ -720,7 +721,7 @@ def main() -> None:
 
     # ── Save ───────────────────────────────────────────────────────────
     AGGREGATE_DIR.mkdir(parents=True, exist_ok=True)
-    spine.to_parquet(PROFILE_AGGREGATE_PATH, index=False)
+    save_standardized(spine, PROFILE_AGGREGATE_PATH)
     print(f"\nSaved aggregate: {PROFILE_AGGREGATE_PATH}")
     print(f"  rows={len(spine)}, cols={len(spine.columns)}")
 

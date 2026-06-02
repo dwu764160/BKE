@@ -42,6 +42,7 @@ from src.player_eval.constants import (  # noqa: E402
     PLAYER_PROFILES_PARQUET,
     PLAYERS_META_PATH,
 )
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 def _norm_id(series: pd.Series) -> pd.Series:
@@ -50,7 +51,7 @@ def _norm_id(series: pd.Series) -> pd.Series:
 
 def _safe_read(path: Path) -> pd.DataFrame:
     try:
-        return pd.read_parquet(path)
+        return load_standardized(path)
     except Exception:
         return pd.DataFrame()
 
@@ -115,11 +116,11 @@ def _build_player_universe() -> pd.DataFrame:
 
     if COMPLETE_STATS_PATH.exists():
         p = _safe_read(COMPLETE_STATS_PATH)
-        if not p.empty and "PLAYER_ID" in p.columns:
-            cols = ["PLAYER_ID"]
-            if "PLAYER_NAME" in p.columns:
-                cols.append("PLAYER_NAME")
-            tmp = p[cols].copy().rename(columns={"PLAYER_ID": "player_id", "PLAYER_NAME": "player_name"})
+        if not p.empty and "player_id" in p.columns:
+            cols = ["player_id"]
+            if "player_name" in p.columns:
+                cols.append("player_name")
+            tmp = p[cols].copy()
             frames.append(tmp)
 
     if PLAYER_PROFILES_PARQUET.exists():
@@ -246,7 +247,7 @@ def _load_common_info_cache() -> pd.DataFrame:
             "draft_pick_in_round", "draft_source", "fetched_at",
         ])
     try:
-        cached = pd.read_parquet(DRAFT_COMMONPLAYERINFO_CACHE_PATH)
+        cached = load_standardized(DRAFT_COMMONPLAYERINFO_CACHE_PATH)
         if "player_id" in cached.columns:
             cached["player_id"] = _norm_id(cached["player_id"])
         return cached
@@ -327,7 +328,7 @@ def _enrich_missing_with_common_info(
         cache = cache.drop_duplicates(subset=["player_id"], keep="last")
 
         DRAFT_COMMONPLAYERINFO_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        cache.to_parquet(DRAFT_COMMONPLAYERINFO_CACHE_PATH, index=False)
+        save_standardized(cache, DRAFT_COMMONPLAYERINFO_CACHE_PATH)
         print(f"  Updated cache: {DRAFT_COMMONPLAYERINFO_CACHE_PATH}")
 
     return cache
@@ -424,7 +425,7 @@ def main() -> None:
     result = build_player_draft_history(use_common_info=not args.no_common_info)
 
     PLAYER_DRAFT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    result.to_parquet(PLAYER_DRAFT_HISTORY_PATH, index=False)
+    save_standardized(result, PLAYER_DRAFT_HISTORY_PATH)
     csv_path = PLAYER_DRAFT_HISTORY_PATH.with_suffix(".csv")
     result.to_csv(csv_path, index=False)
 

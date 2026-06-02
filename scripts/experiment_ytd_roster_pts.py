@@ -59,11 +59,9 @@ def player_skill_by_season():
 def build_ytd_roster_pts():
     """Return DataFrame [game_id, team, ytd_pts] (strictly-prior, current-roster)."""
     pgl = pd.read_parquet(HISTORICAL_DIR / "final_player_game_logs.parquet",
-                          columns=["SEASON", "PLAYER_ID", "Game_ID", "GAME_DATE", "MIN", "MATCHUP"])
-    pgl = pgl.rename(columns={"SEASON": "season", "PLAYER_ID": "player_id",
-                              "Game_ID": "game_id", "GAME_DATE": "game_date", "MIN": "min"})
+                          columns=["season", "player_id", "game_id", "game_date", "min", "matchup"])
     pgl["game_date"] = pd.to_datetime(pgl["game_date"], format="mixed")
-    pgl["team"] = pgl["MATCHUP"].str.split(r"\s+(?:vs\.|@)\s+", regex=True).str[0].str.upper()
+    pgl["team"] = pgl["matchup"].str.split(r"\s+(?:vs\.|@)\s+", regex=True).str[0].str.upper()
     pgl["min"] = pd.to_numeric(pgl["min"], errors="coerce").fillna(0.0)
 
     skill = player_skill_by_season()

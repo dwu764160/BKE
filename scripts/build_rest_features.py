@@ -33,6 +33,8 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from src.data.schema_contract import load_standardized  # noqa: E402
+
 DEFAULT_INPUT  = REPO / "data/historical/team_game_logs.parquet"
 DEFAULT_OUTPUT = REPO / "data/processed/forecast/game_rest_features.parquet"
 
@@ -40,17 +42,17 @@ DEFAULT_OUTPUT = REPO / "data/processed/forecast/game_rest_features.parquet"
 def _compute_team_rest(df: pd.DataFrame) -> pd.DataFrame:
     """Add days_rest, is_b2b, is_3in4 per team-game row."""
     df = df.copy()
-    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-    df = df.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"]).reset_index(drop=True)
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    df = df.sort_values(["team_abbreviation", "game_date"]).reset_index(drop=True)
 
-    df["_prev_date"] = df.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(1)
+    df["_prev_date"] = df.groupby("team_abbreviation")["game_date"].shift(1)
     # Convention: days_rest = calendar_day_difference - 1  (0 = B2B, 1 = standard)
-    raw_diff = (df["GAME_DATE"] - df["_prev_date"]).dt.days - 1
+    raw_diff = (df["game_date"] - df["_prev_date"]).dt.days - 1
     df["days_rest"] = raw_diff.fillna(3).clip(lower=0, upper=7).astype(int)
     df["is_b2b"] = df["days_rest"] == 0
 
-    df["_prev2_date"] = df.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(2)
-    calendar_span = (df["GAME_DATE"] - df["_prev2_date"]).dt.days.fillna(99)
+    df["_prev2_date"] = df.groupby("team_abbreviation")["game_date"].shift(2)
+    calendar_span = (df["game_date"] - df["_prev2_date"]).dt.days.fillna(99)
     df["is_3in4"] = (calendar_span <= 3) & df["is_b2b"]
 
     return df
@@ -63,7 +65,7 @@ def build_game_rest_features(df: pd.DataFrame) -> pd.DataFrame:
     # Per-team-game lookup
     per_team: dict[tuple[str, str], dict] = {}
     for _, row in df.iterrows():
-        per_team[(str(row["GAME_ID"]), str(row["TEAM_ABBREVIATION"]).upper())] = {
+        per_team[(str(row["game_id"]), str(row["team_abbreviation"]).upper())] = {
             "days_rest": int(row["days_rest"]),
             "is_b2b":    bool(row["is_b2b"]),
             "is_3in4":   bool(row["is_3in4"]),
@@ -72,12 +74,12 @@ def build_game_rest_features(df: pd.DataFrame) -> pd.DataFrame:
     _default = {"days_rest": 1, "is_b2b": False, "is_3in4": False}
 
     # Build one row per game from home-team rows only
-    home_rows = df[df["MATCHUP"].str.contains("vs.", na=False)].copy()
+    home_rows = df[df["matchup"].str.contains("vs.", na=False)].copy()
     rows = []
     for _, row in home_rows.iterrows():
-        gid  = str(row["GAME_ID"])
-        home = str(row["TEAM_ABBREVIATION"]).upper()
-        parts = str(row["MATCHUP"]).split(" vs. ")
+        gid  = str(row["game_id"])
+        home = str(row["team_abbreviation"]).upper()
+        parts = str(row["matchup"]).split(" vs. ")
         away  = parts[1].strip().upper() if len(parts) > 1 else ""
 
         h = per_team.get((gid, home), _default)
@@ -85,8 +87,8 @@ def build_game_rest_features(df: pd.DataFrame) -> pd.DataFrame:
 
         rows.append({
             "game_id":        gid,
-            "game_date":      row["GAME_DATE"].strftime("%Y-%m-%d"),
-            "season":         str(row["SEASON"]),
+            "game_date":      row["game_date"].strftime("%Y-%m-%d"),
+            "season":         str(row["season"]),
             "home_team":      home,
             "away_team":      away,
             "home_days_rest": h["days_rest"],
@@ -114,8 +116,8 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Reading {input_path}...")
-    df = pd.read_parquet(input_path)
-    print(f"  {len(df)} team-game rows, {df['SEASON'].nunique()} seasons")
+    df = load_standardized(input_path)
+    print(f"  {len(df)} team-game rows, {df['season'].nunique()} seasons")
 
     out = build_game_rest_features(df)
     print(f"  Built {len(out)} game-level rest rows")

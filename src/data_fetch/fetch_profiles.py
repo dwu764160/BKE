@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.data.schema_contract import load_standardized
 from src.utils.db_utils import (
     create_tables,
     mark_player_fetched,
@@ -274,13 +275,13 @@ def main(parquet_file=None, db_path=None):
         conn.close()
         return
 
-    df = pd.read_parquet(parquet_file)
-    if 'PLAYER_ID' not in df.columns:
-        print("PLAYER_ID column not found in parquet. Skipping.")
+    df = load_standardized(parquet_file)
+    if 'player_id' not in df.columns:
+        print("player_id column not found in parquet. Skipping.")
         conn.close()
         return
 
-    player_ids = df['PLAYER_ID'].dropna().unique().tolist()
+    player_ids = df['player_id'].dropna().unique().tolist()
 
     print(f"Fetching profiles for {len(player_ids)} players...")
 

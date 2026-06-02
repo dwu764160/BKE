@@ -357,7 +357,7 @@ def run_backtest(
         if not os.path.exists(parquet_path):
             print(f"ERROR: {parquet_path} not found. Run decomposition first.")
             return {}
-        df = pd.read_parquet(parquet_path)
+        df = load_standardized(parquet_path)
 
     # Default seasons
     train_seasons = train_seasons or ["2022-23", "2023-24"]
@@ -532,7 +532,7 @@ def run_consecutive_season_backtest(
         parquet_path = os.path.join(BKE_DIR, "bke_v27_decomposition.parquet")
         if not os.path.exists(parquet_path):
             return {}
-        df = pd.read_parquet(parquet_path)
+        df = load_standardized(parquet_path)
 
     results = {}
 
@@ -565,6 +565,7 @@ def run_consecutive_season_backtest(
 
 if __name__ == "__main__":
     import argparse
+from src.data.schema_contract import load_standardized, save_standardized
 
     parser = argparse.ArgumentParser(description="BKE v2.7 Backtesting")
     parser.add_argument("--all-pairs", action="store_true",

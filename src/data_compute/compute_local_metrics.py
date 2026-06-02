@@ -20,6 +20,7 @@ import os
 import math
 import pandas as pd
 import numpy as np
+from src.data.schema_contract import load_standardized, save_standardized
 
 # Try common locations for player/team game logs (prefer project-level, then historical/)
 PLAYER_LOGS_CANDIDATES = [
@@ -69,36 +70,36 @@ def compute_team_aggregates_from_player_logs(player_df):
     """
     # determine team id column if present; if missing try to derive from MATCHUP
     team_col = None
-    for candidate in ["TEAM_ID", "TEAM_ABBREVIATION", "TEAM"]:
+    for candidate in ["team_id", "team_abbreviation", "team"]:
         if candidate in player_df.columns:
             team_col = candidate
             break
     if team_col is None:
         # attempt to extract team abbreviation from MATCHUP (format 'TOR vs. MIL' or 'TOR @ MIL')
-        if "MATCHUP" in player_df.columns:
+        if "matchup" in player_df.columns:
             player_df = player_df.copy()
             def _extract_team(matchup):
                 try:
                     return str(matchup).split()[0]
                 except Exception:
                     return None
-            player_df["TEAM_ABBREVIATION"] = player_df["MATCHUP"].apply(_extract_team)
-            team_col = "TEAM_ABBREVIATION"
+            player_df["team_abbreviation"] = player_df["matchup"].apply(_extract_team)
+            team_col = "team_abbreviation"
         else:
             raise ValueError("No TEAM column found in player logs and MATCHUP not available to derive team. Provide team_game_logs.parquet or include TEAM_ID/TEAM_ABBREVIATION in player logs.")
 
-    agg = player_df.groupby(["GAME_ID", team_col]).agg(
-        TEAM_FGA=("FGA", "sum"),
-        TEAM_FGM=("FGM", "sum"),
-        TEAM_FG3A=("FG3A", "sum"),
-        TEAM_FG3M=("FG3M", "sum"),
-        TEAM_FTA=("FTA", "sum"),
-        TEAM_FTM=("FTM", "sum"),
-        TEAM_TOV=("TOV", "sum"),
-        TEAM_OREB=("OREB", "sum"),
-        TEAM_DREB=("DREB", "sum"),
-        TEAM_MIN=("MIN", "sum")
-    ).reset_index().rename(columns={team_col: "TEAM_ID"})
+    agg = player_df.groupby(["game_id", team_col]).agg(
+        TEAM_FGA=("fga", "sum"),
+        TEAM_FGM=("fgm", "sum"),
+        TEAM_FG3A=("fg3a", "sum"),
+        TEAM_FG3M=("fg3m", "sum"),
+        TEAM_FTA=("fta", "sum"),
+        TEAM_FTM=("ftm", "sum"),
+        TEAM_TOV=("tov", "sum"),
+        TEAM_OREB=("oreb", "sum"),
+        TEAM_DREB=("dreb", "sum"),
+        TEAM_MIN=("min", "sum")
+    ).reset_index().rename(columns={team_col: "team_id"})
     # Note: TEAM_MIN should be about 240 minutes for full team (5 players * 48), but substitution can change sums.
     return agg
 
@@ -108,7 +109,7 @@ def estimate_player_possessions(row):
     player_poss = FGA + 0.44 * FTA + TOV
     (This ignores offensive rebounds as possessions preserved; it's a common approximation.)
     """
-    return row.get("FGA", 0) + 0.44 * row.get("FTA", 0) + row.get("TOV", 0)
+    return row.get("fga", 0) + 0.44 * row.get("fta", 0) + row.get("tov", 0)
 
 def team_possessions_formula(team_row):
     """
@@ -132,7 +133,7 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
 
     # Normalize / ensure we have a GAME_ID column on player logs.
     # Many sources use different names (game_id, Game_ID, GAMEID, etc.). Try to detect and rename.
-    if "GAME_ID" not in df.columns:
+    if "game_id" not in df.columns:
         found_game_col = None
         for c in df.columns:
             cl = c.lower().replace(' ', '').replace('-', '')
@@ -140,33 +141,33 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
                 found_game_col = c
                 break
         if found_game_col:
-            df = df.rename(columns={found_game_col: 'GAME_ID'})
+            df = df.rename(columns={found_game_col: 'game_id'})
         else:
             # If no explicit game id column, try to synthesize one from GAME_DATE + TEAM/MATCHUP + SEASON
-            if 'GAME_DATE' in df.columns and any(k in df.columns for k in ['TEAM_ABBREVIATION', 'TEAM', 'TEAM_ID', 'MATCHUP']):
+            if 'game_date' in df.columns and any(k in df.columns for k in ['team_abbreviation', 'team', 'team_id', 'matchup']):
                 print("Info: no GAME_ID column found — synthesizing GAME_ID from GAME_DATE + TEAM/MATCHUP + SEASON")
                 def _mk_game_id(row):
                     parts = []
-                    if 'SEASON' in df.columns:
-                        parts.append(str(row.get('SEASON')))
-                    parts.append(str(row.get('GAME_DATE')))
+                    if 'season' in df.columns:
+                        parts.append(str(row.get('season')))
+                    parts.append(str(row.get('game_date')))
                     # prefer TEAM_ABBREVIATION, fallback to TEAM_ID or MATCHUP
-                    if 'TEAM_ABBREVIATION' in df.columns:
-                        parts.append(str(row.get('TEAM_ABBREVIATION')))
-                    elif 'TEAM' in df.columns:
-                        parts.append(str(row.get('TEAM')))
-                    elif 'TEAM_ID' in df.columns:
-                        parts.append(str(row.get('TEAM_ID')))
-                    elif 'MATCHUP' in df.columns:
-                        parts.append(str(row.get('MATCHUP')))
+                    if 'team_abbreviation' in df.columns:
+                        parts.append(str(row.get('team_abbreviation')))
+                    elif 'team' in df.columns:
+                        parts.append(str(row.get('team')))
+                    elif 'team_id' in df.columns:
+                        parts.append(str(row.get('team_id')))
+                    elif 'matchup' in df.columns:
+                        parts.append(str(row.get('matchup')))
                     return "::".join(parts)
-                df['GAME_ID'] = df.apply(_mk_game_id, axis=1)
+                df['game_id'] = df.apply(_mk_game_id, axis=1)
             else:
                 # helpful error listing available columns
                 raise KeyError(f"No GAME_ID-like column found in player logs and cannot synthesize one. Available columns: {list(df.columns)}")
 
     # Ensure numeric columns exist and fillna with 0 where appropriate
-    numeric_cols = ["PTS","AST","REB","OREB","DREB","MIN","FGM","FGA","FG3M","FG3A","FTA","FTM","TOV"]
+    numeric_cols = ["pts","ast","reb","oreb","dreb","min","fgm","fga","fg3m","fg3a","fta","ftm","tov"]
     for c in numeric_cols:
         if c not in df.columns:
             df[c] = 0
@@ -174,14 +175,14 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
 
     # If team_game_df isn't provided, compute team aggregates per game from player logs
     # Ensure we have a team identifier on player logs. If TEAM_ID/TEAM_ABBREVIATION missing, try to derive from MATCHUP
-    team_col_present = any(c in df.columns for c in ["TEAM_ID", "TEAM_ABBREVIATION", "TEAM"])
-    if not team_col_present and "MATCHUP" in df.columns:
+    team_col_present = any(c in df.columns for c in ["team_id", "team_abbreviation", "team"])
+    if not team_col_present and "matchup" in df.columns:
         def _extract_team(matchup):
             try:
                 return str(matchup).split()[0]
             except Exception:
                 return None
-        df["TEAM_ABBREVIATION"] = df["MATCHUP"].apply(_extract_team)
+        df["team_abbreviation"] = df["matchup"].apply(_extract_team)
 
     if team_game_df is None:
         team_agg = compute_team_aggregates_from_player_logs(df)
@@ -192,7 +193,7 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
             print("Warning: provided team_game_df is empty — computing team aggregates from player logs instead.")
             team_agg = None
         # If the provided team_game_df lacks critical stat columns, fall back to player logs
-        elif not any(c in team_agg.columns for c in ['FGA', 'TEAM_FGA', 'FGM', 'TEAM_FGM']):
+        elif not any(c in team_agg.columns for c in ['fga', 'TEAM_FGA', 'fgm', 'TEAM_FGM']):
             print("Warning: provided team_game_df lacks stat columns (FGA, FGM, etc.) — computing team aggregates from player logs instead.")
             team_agg = None
         
@@ -201,15 +202,15 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
         team_agg = compute_team_aggregates_from_player_logs(df)
     else:
         # Normalize common GAME_ID / TEAM_ID variations (case-insensitive) so downstream merges work
-        # Detect a GAME_ID-like column (e.g., 'Game_ID', 'game_id', 'GAMEID') and rename to 'GAME_ID'
+        # Detect a GAME_ID-like column (e.g., 'Game_ID', 'game_id', 'GAMEID') and rename to 'game_id'
         game_col = None
         for c in team_agg.columns:
             cl = c.lower().replace(' ', '').replace('-', '')
             if 'game' in cl and 'id' in cl:
                 game_col = c
                 break
-        if game_col and game_col != 'GAME_ID':
-            team_agg = team_agg.rename(columns={game_col: 'GAME_ID'})
+        if game_col and game_col != 'game_id':
+            team_agg = team_agg.rename(columns={game_col: 'game_id'})
 
         # Detect a TEAM identifier column and normalize to TEAM_ID or TEAM_ABBREVIATION
         teamid_col = None
@@ -217,40 +218,40 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
             cl = c.lower()
             if 'team' in cl and ('id' in cl or 'teamid' in cl):
                 teamid_col = c
-                team_agg = team_agg.rename(columns={c: 'TEAM_ID'})
+                team_agg = team_agg.rename(columns={c: 'team_id'})
                 break
         if teamid_col is None:
             for c in team_agg.columns:
                 cl = c.lower()
                 if 'team' in cl and ('abbrev' in cl or 'abbreviation' in cl):
                     teamid_col = c
-                    team_agg = team_agg.rename(columns={c: 'TEAM_ABBREVIATION'})
+                    team_agg = team_agg.rename(columns={c: 'team_abbreviation'})
                     break
         # normalize column names expected by later merges
         # ensure columns TEAM_FGA, TEAM_FGM, TEAM_FTA, TEAM_TOV, TEAM_OREB, TEAM_DREB, TEAM_MIN exist
         mapping = {}
         # handle likely column names
-        if "FGA" in team_agg.columns and "TEAM_FGA" not in team_agg.columns:
-            mapping["FGA"] = "TEAM_FGA"
-        if "FGM" in team_agg.columns and "TEAM_FGM" not in team_agg.columns:
-            mapping["FGM"] = "TEAM_FGM"
-        if "FTA" in team_agg.columns and "TEAM_FTA" not in team_agg.columns:
-            mapping["FTA"] = "TEAM_FTA"
-        if "TOV" in team_agg.columns and "TEAM_TOV" not in team_agg.columns:
-            mapping["TOV"] = "TEAM_TOV"
-        if "OREB" in team_agg.columns and "TEAM_OREB" not in team_agg.columns:
-            mapping["OREB"] = "TEAM_OREB"
-        if "DREB" in team_agg.columns and "TEAM_DREB" not in team_agg.columns:
-            mapping["DREB"] = "TEAM_DREB"
-        if "MIN" in team_agg.columns and "TEAM_MIN" not in team_agg.columns:
-            mapping["MIN"] = "TEAM_MIN"
+        if "fga" in team_agg.columns and "TEAM_FGA" not in team_agg.columns:
+            mapping["fga"] = "TEAM_FGA"
+        if "fgm" in team_agg.columns and "TEAM_FGM" not in team_agg.columns:
+            mapping["fgm"] = "TEAM_FGM"
+        if "fta" in team_agg.columns and "TEAM_FTA" not in team_agg.columns:
+            mapping["fta"] = "TEAM_FTA"
+        if "tov" in team_agg.columns and "TEAM_TOV" not in team_agg.columns:
+            mapping["tov"] = "TEAM_TOV"
+        if "oreb" in team_agg.columns and "TEAM_OREB" not in team_agg.columns:
+            mapping["oreb"] = "TEAM_OREB"
+        if "dreb" in team_agg.columns and "TEAM_DREB" not in team_agg.columns:
+            mapping["dreb"] = "TEAM_DREB"
+        if "min" in team_agg.columns and "TEAM_MIN" not in team_agg.columns:
+            mapping["min"] = "TEAM_MIN"
         if mapping:
             team_agg = team_agg.rename(columns=mapping)
 
     # Merge team aggregate info into player logs by GAME_ID and TEAM_ID (or TEAM_ABBREVIATION)
     # Determine team key column on player logs
     team_col = None
-    for candidate in ["TEAM_ID", "TEAM_ABBREVIATION", "TEAM"]:
+    for candidate in ["team_id", "team_abbreviation", "team"]:
         if candidate in df.columns:
             team_col = candidate
             break
@@ -260,16 +261,16 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     # Determine team key in team_agg; prioritize matching the player-log team key.
     if team_col in team_agg.columns:
         merge_team_col = team_col
-    elif team_col == "TEAM" and "TEAM_ABBREVIATION" in team_agg.columns:
-        merge_team_col = "TEAM_ABBREVIATION"
-    elif team_col == "TEAM_ABBREVIATION" and "TEAM" in team_agg.columns:
-        merge_team_col = "TEAM"
-    elif "TEAM_ABBREVIATION" in team_agg.columns and "TEAM_ABBREVIATION" in df.columns:
-        merge_team_col = "TEAM_ABBREVIATION"
-    elif "TEAM_ID" in team_agg.columns and "TEAM_ID" in df.columns:
-        merge_team_col = "TEAM_ID"
+    elif team_col == "team" and "team_abbreviation" in team_agg.columns:
+        merge_team_col = "team_abbreviation"
+    elif team_col == "team_abbreviation" and "team" in team_agg.columns:
+        merge_team_col = "team"
+    elif "team_abbreviation" in team_agg.columns and "team_abbreviation" in df.columns:
+        merge_team_col = "team_abbreviation"
+    elif "team_id" in team_agg.columns and "team_id" in df.columns:
+        merge_team_col = "team_id"
     else:
-        other_cols = [c for c in team_agg.columns if c != "GAME_ID"]
+        other_cols = [c for c in team_agg.columns if c != "game_id"]
         if len(other_cols) == 0:
             # No explicit team column available in team_agg: fall back to merging only on GAME_ID
             merge_team_col = None
@@ -280,45 +281,45 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     # Perform merge: if we don't have a team column in team_agg, merge on GAME_ID only
     if merge_team_col is None:
         # Drop overlapping columns from team_agg to avoid _x/_y suffixes (e.g. SEASON, GAME_DATE)
-        merge_keys = ["GAME_ID"]
+        merge_keys = ["game_id"]
         overlap = [c for c in team_agg.columns if c in df.columns and c not in merge_keys]
         if overlap:
             team_agg = team_agg.drop(columns=overlap)
         df = df.merge(team_agg, on=merge_keys, how="left")
     else:
         # Cast merge keys to string to avoid object vs float64 type mismatch
-        if team_col in ["TEAM_ABBREVIATION", "TEAM"] and merge_team_col in ["TEAM_ABBREVIATION", "TEAM"]:
+        if team_col in ["team_abbreviation", "team"] and merge_team_col in ["team_abbreviation", "team"]:
             df[team_col] = df[team_col].astype(str).str.upper()
             team_agg[merge_team_col] = team_agg[merge_team_col].astype(str).str.upper()
         else:
             df[team_col] = df[team_col].astype(str)
             team_agg[merge_team_col] = team_agg[merge_team_col].astype(str)
         # Drop overlapping columns from team_agg to avoid _x/_y suffixes (e.g. SEASON, GAME_DATE)
-        merge_keys_right = ["GAME_ID", merge_team_col]
+        merge_keys_right = ["game_id", merge_team_col]
         overlap = [c for c in team_agg.columns if c in df.columns and c not in merge_keys_right]
         if overlap:
             team_agg = team_agg.drop(columns=overlap)
-        df = df.merge(team_agg, left_on=["GAME_ID", team_col], right_on=["GAME_ID", merge_team_col], how="left")
+        df = df.merge(team_agg, left_on=["game_id", team_col], right_on=["game_id", merge_team_col], how="left")
 
     # Compute per-game derived columns (player-level)
     df["PLAYER_POSSESSIONS_EST"] = df.apply(estimate_player_possessions, axis=1)
 
     # Group by player & season
-    group_cols = ["PLAYER_ID", "SEASON"]
+    group_cols = ["player_id", "season"]
     agg_funcs = {
-        "PTS": ["sum", "mean"],
-        "AST": ["sum", "mean"],
-        "REB": ["sum", "mean"],
-        "OREB": ["sum", "mean"],
-        "DREB": ["sum", "mean"],
-        "MIN": ["sum", "mean"],
-        "FGA": ["sum", "mean"],
-        "FGM": ["sum", "mean"],
-        "FG3A": ["sum", "mean"],
-        "FG3M": ["sum", "mean"],
-        "FTA": ["sum", "mean"],
-        "FTM": ["sum", "mean"],
-        "TOV": ["sum", "mean"],
+        "pts": ["sum", "mean"],
+        "ast": ["sum", "mean"],
+        "reb": ["sum", "mean"],
+        "oreb": ["sum", "mean"],
+        "dreb": ["sum", "mean"],
+        "min": ["sum", "mean"],
+        "fga": ["sum", "mean"],
+        "fgm": ["sum", "mean"],
+        "fg3a": ["sum", "mean"],
+        "fg3m": ["sum", "mean"],
+        "fta": ["sum", "mean"],
+        "ftm": ["sum", "mean"],
+        "tov": ["sum", "mean"],
         "PLAYER_POSSESSIONS_EST": ["sum", "mean"]
     }
 
@@ -337,11 +338,11 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
         return out
 
     # compute games played explicitly:
-    gp = df.groupby(["PLAYER_ID","SEASON"]).size().reset_index(name="GAMES")
-    grouped = grouped.merge(gp, on=["PLAYER_ID","SEASON"], how="left")
+    gp = df.groupby(["player_id","season"]).size().reset_index(name="GAMES")
+    grouped = grouped.merge(gp, on=["player_id","season"], how="left")
 
     # compute MPG
-    grouped["MPG"] = grouped["MIN_sum"] / grouped["GAMES"].replace(0, np.nan)
+    grouped["mpg"] = grouped["MIN_sum"] / grouped["GAMES"].replace(0, np.nan)
 
     # True Shooting % (TS%) = PTS / (2*(FGA + 0.44*FTA))
     grouped["TS_pct"] = safe_div(grouped["PTS_sum"], 2*(grouped["FGA_sum"] + 0.44*grouped["FTA_sum"]))
@@ -356,7 +357,7 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     # AST% = 100 * AST * (TEAM_MIN/5) / (MIN * (TEAM_FGM - FGM))
     # Use team totals over the exact games each player appeared in.
     # Mixing player season totals with team per-game means can distort rates.
-    team_stats_for_player = df.groupby(["PLAYER_ID","SEASON"]).agg({
+    team_stats_for_player = df.groupby(["player_id","season"]).agg({
         "TEAM_FGM": "sum",
         "TEAM_MIN": "sum",
         "TEAM_FGA": "sum",
@@ -371,7 +372,7 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     team_stats_for_player = team_stats_for_player.rename(columns=rename_map)
 
     # merge team averages into grouped
-    grouped = grouped.merge(team_stats_for_player, on=["PLAYER_ID","SEASON"], how="left")
+    grouped = grouped.merge(team_stats_for_player, on=["player_id","season"], how="left")
 
     # AST% compute (using season sums and team means)
     # AST% = 100 * AST * (TEAM_MIN/5) / (MIN * (TEAM_FGM - FGM))
@@ -424,7 +425,7 @@ def aggregate_player_season(player_df, team_game_df=None, min_games_threshold=1)
     # Clean up columns to return useful fields
     out_cols = [
         # identity
-        "PLAYER_ID","SEASON","GAMES","MPG",
+        "player_id","season","GAMES","mpg",
         # raw season sums
         "PTS_sum","AST_sum","REB_sum","MIN_sum","FGM_sum","FGA_sum","FG3M_sum","FG3A_sum","FTA_sum","FTM_sum","TOV_sum",
         # rate metrics
@@ -468,19 +469,19 @@ def main():
         )
 
     print("Loading player game logs...")
-    player_df = pd.read_parquet(PLAYER_LOGS_PATH)
+    player_df = load_standardized(PLAYER_LOGS_PATH)
 
     team_df = None
     if TEAM_LOGS_PATH and os.path.exists(TEAM_LOGS_PATH):
         print(f"Loading team game logs from {TEAM_LOGS_PATH}...")
-        team_df = pd.read_parquet(TEAM_LOGS_PATH)
+        team_df = load_standardized(TEAM_LOGS_PATH)
 
     print("Aggregating and computing local advanced metrics (this may take a bit)...")
     adv = aggregate_player_season(player_df, team_game_df=team_df)
 
     print(f"Saving {len(adv)} player-season rows to {OUTPUT_PATH}")
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    adv.to_parquet(OUTPUT_PATH, index=False)
+    save_standardized(adv, OUTPUT_PATH)
     print("Done.")
 
 if __name__ == "__main__":

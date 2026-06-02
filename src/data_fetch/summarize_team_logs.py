@@ -23,6 +23,9 @@ from typing import List
 
 import pandas as pd
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.data.schema_contract import load_standardized, save_standardized
+
 
 CORE_STATS = [
     'PTS', 'REB', 'OREB', 'DREB', 'AST', 'STL', 'BLK', 'TOV', 'PF',
@@ -57,7 +60,7 @@ def _extract_team_abbrev(matchup: str) -> str | None:
 def _load_team_abbrev_map(teams_path: str) -> dict[str, str]:
     if not os.path.exists(teams_path):
         return {}
-    teams_df = pd.read_parquet(teams_path)
+    teams_df = load_standardized(teams_path)
     if teams_df.empty:
         return {}
     cols = {c.lower(): c for c in teams_df.columns}
@@ -80,7 +83,7 @@ def _load_team_abbrev_map(teams_path: str) -> dict[str, str]:
 def _build_player_team_stats(player_logs_path: str, teams_path: str) -> pd.DataFrame:
     if not os.path.exists(player_logs_path):
         return pd.DataFrame()
-    pdf = pd.read_parquet(player_logs_path)
+    pdf = load_standardized(player_logs_path)
     if pdf.empty:
         return pd.DataFrame()
 
@@ -116,7 +119,7 @@ def summarize(path: str | None = None) -> pd.DataFrame:
         print(f'ERROR: {path} not found', file=sys.stderr)
         return pd.DataFrame()
 
-    df = pd.read_parquet(path)
+    df = load_standardized(path)
     if df.empty:
         print('WARN: team game logs are empty')
         return pd.DataFrame()
@@ -244,7 +247,7 @@ def summarize(path: str | None = None) -> pd.DataFrame:
         # write per-game details without modifying the seasonal summary
         out_dir = hist_dir
         os.makedirs(out_dir, exist_ok=True)
-        games_df.to_parquet(os.path.join(out_dir, 'team_game_details.parquet'), index=False)
+        save_standardized(games_df, os.path.join(out_dir, 'team_game_details.parquet'))
         games_df.to_csv(os.path.join(out_dir, 'team_game_details.csv'), index=False)
         print(f'Wrote per-game team details to {os.path.join(out_dir, "team_game_details.csv")} rows={len(games_df)}')
     except Exception:
@@ -534,7 +537,7 @@ def main():
     summary['TEAM_NAME'] = summary['TEAM_ID'].apply(resolve_team_name)
     p_parquet = os.path.join(out_dir, 'team_summaries.parquet')
     p_csv = os.path.join(out_dir, 'team_summaries.csv')
-    summary.to_parquet(p_parquet, index=False)
+    save_standardized(summary, p_parquet)
     summary.to_csv(p_csv, index=False)
     print(f'Wrote summaries to {p_parquet} and {p_csv}; rows={len(summary)}')
 

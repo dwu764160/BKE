@@ -27,6 +27,7 @@ from src.utils.db_utils import (
     mark_player_fetched_conn,
 )
 from src.data_fetch.fetch_profiles import fetch_player_info, upsert_player
+from src.data.schema_contract import load_standardized
 
 DB_PATH = ROOT / "data" / "player_team_profiles.db"
 
@@ -44,15 +45,15 @@ def run(parquet_file=None):
             print(f"Parquet file not found: {parquet_file}. Exiting.")
             return
 
-        df = pd.read_parquet(parquet_file)
+        df = load_standardized(parquet_file)
         # Debug: print sample rows to confirm structure
         try:
             print("[DEBUG] Parquet sample rows:")
             print(df.head(5))
         except Exception as e:
             print(f"[DEBUG] Could not print parquet sample: {e}")
-        if 'PLAYER_ID' not in df.columns:
-            print("PLAYER_ID column not found in parquet. Exiting.")
+        if 'player_id' not in df.columns:
+            print("player_id column not found in parquet. Exiting.")
             return
 
         # load player id->name mappings from data/historical CSVs (best-effort)
@@ -74,7 +75,7 @@ def run(parquet_file=None):
             pass
 
         # First pass: fetch each unique player via CommonPlayerInfo and store
-        unique_ids = pd.Series(df['PLAYER_ID'].dropna().unique()).astype(int).tolist()
+        unique_ids = pd.Series(df['player_id'].dropna().unique()).astype(int).tolist()
         print(f"Fetching common player info for {len(unique_ids)} players...")
         print(f"[DEBUG] First 10 PLAYER_IDs: {unique_ids[:10]}")
         if 'POSITION' in df.columns:

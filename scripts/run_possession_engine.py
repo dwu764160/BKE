@@ -43,6 +43,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from src.data.schema_contract import load_standardized  # noqa: E402
 from src.simulation.possession_engine import (  # noqa: E402
     GlobalConstants, Player, Lineup, RateModel, OutcomeSamplerResolver, simulate_game,
 )
@@ -170,14 +171,19 @@ def build_lineup(season: str, team: str, opp: str, starter_ids: List[str], rates
             used += p.mpg
             players.append(p)
         players.append(_bench_unit(season, used))
-    else:  # v1: top 9-11 by mpg from the roster
+    else:  # v1: tight 9-man rotation by mpg from the roster
         roster = team_roster or starter_ids
         cand = []
         for pid in roster:
             p = _player_from_rate(pid, season, rates.get((pid, season)), pts_o, pts_d, padj.get(pid, 0.0))
             cand.append(p)
         cand.sort(key=lambda x: x.mpg, reverse=True)
-        players = cand[:11]
+        # Step 2.1 Defect 3 — tighten to 9. Season-average projected minutes spread
+        # across 11+ bodies, but any single game uses ~8-9 players at 12+ min. Simulating
+        # an 11-man rotation leaked shot volume to a phantom 10th/11th man (excluded from
+        # the >=12min validation), systematically under-crediting the real rotation. A
+        # 9-man cap redistributes that share proportionally back to ranks 1-8.
+        players = cand[:9]
         players = [p for p in players if p.mpg > 0] or cand[:5]
         # normalize minutes to 240
         tot = sum(p.mpg for p in players)
@@ -191,23 +197,21 @@ def build_lineup(season: str, team: str, opp: str, starter_ids: List[str], rates
 def _all_team_logs() -> pd.DataFrame:
     global _TEAM_LOGS_CACHE
     if _TEAM_LOGS_CACHE is None:
-        tg = pd.read_parquet(TEAM_LOGS)
-        tg = tg.rename(columns={c: c.upper() for c in tg.columns})
-        tg["SEASON"] = tg["SEASON"].astype(str)
+        tg = load_standardized(TEAM_LOGS)
+        tg["season"] = tg["season"].astype(str)
         _TEAM_LOGS_CACHE = tg
     return _TEAM_LOGS_CACHE
 
 
 def load_team_logs(season: str) -> pd.DataFrame:
     tg = _all_team_logs()
-    tg = tg[tg["SEASON"] == str(season)].copy()
-    tg["GAME_ID"] = tg["GAME_ID"].astype(str)
-    # parse team + opp + home from MATCHUP "ABC vs. XYZ" / "ABC @ XYZ"
-    parts = tg["MATCHUP"].str.replace("vs.", "@VS@", regex=False)
-    tg["TEAM_ABBR"] = tg["MATCHUP"].str.split().str[0]
-    tg["HOME"] = tg["MATCHUP"].str.contains("vs.", regex=False)
-    tg["OPP_ABBR"] = tg["MATCHUP"].str.split().str[-1]
-    poss = tg["FGA"] + 0.44 * tg["FTA"] - tg["OREB"] + tg["TOV"]
+    tg = tg[tg["season"] == str(season)].copy()
+    tg["game_id"] = tg["game_id"].astype(str)
+    # parse team + opp + home from matchup "ABC vs. XYZ" / "ABC @ XYZ"
+    tg["TEAM_ABBR"] = tg["matchup"].str.split().str[0]
+    tg["HOME"] = tg["matchup"].str.contains("vs.", regex=False)
+    tg["OPP_ABBR"] = tg["matchup"].str.split().str[-1]
+    poss = tg["fga"] + 0.44 * tg["fta"] - tg["oreb"] + tg["tov"]
     tg["POSS_EST"] = poss
     return tg
 
@@ -231,15 +235,15 @@ def calibrate(rates, pts_o, pts_d, adjs, overload, lineup_map, mode: str,
     paces, orebs, fts, threes, ptss = [], [], [], [], []
     all_tg = _all_team_logs()
     for s in TRAIN_SEASONS:
-        tg = all_tg[all_tg["SEASON"] == str(s)]
+        tg = all_tg[all_tg["season"] == str(s)]
         if tg.empty:
             continue
-        poss = tg["FGA"] + 0.44 * tg["FTA"] - tg["OREB"] + tg["TOV"]
+        poss = tg["fga"] + 0.44 * tg["fta"] - tg["oreb"] + tg["tov"]
         paces.append(poss.mean())
-        orebs.append((tg["OREB"] / (tg["OREB"] + tg["DREB"]).replace(0, np.nan)).mean())
-        fts.append((tg["FTM"] / tg["FTA"].replace(0, np.nan)).mean())
-        threes.append((tg["FG3M"] / tg["FG3A"].replace(0, np.nan)).mean())
-        ptss.append(tg["PTS"].mean())
+        orebs.append((tg["oreb"] / (tg["oreb"] + tg["dreb"]).replace(0, np.nan)).mean())
+        fts.append((tg["ftm"] / tg["fta"].replace(0, np.nan)).mean())
+        threes.append((tg["fg3m"] / tg["fg3a"].replace(0, np.nan)).mean())
+        ptss.append(tg["pts"].mean())
     g = GlobalConstants(
         pace=float(np.nanmean(paces)) if paces else 99.0,
         oreb=float(np.nanmean(orebs)) if orebs else 0.26,
@@ -309,7 +313,7 @@ def main() -> int:
     adjs, overload = load_matchup()
 
     # starter map from lineup profiles
-    lp = pd.read_parquet(LINEUPS)
+    lp = load_standardized(LINEUPS)
     lp["season"] = lp["season"].astype(str)
     lp["team_abbreviation"] = lp["team_abbreviation"].astype(str).str.upper()
     for r in lp.itertuples():
@@ -330,7 +334,7 @@ def main() -> int:
 
     # simulate target season schedule
     tg = load_team_logs(args.season)
-    games = tg[["GAME_ID", "TEAM_ABBR", "OPP_ABBR", "HOME"]].drop_duplicates()
+    games = tg[["game_id", "TEAM_ABBR", "OPP_ABBR", "HOME"]].drop_duplicates()
     rows = []
     n_done = 0
     for r in games.itertuples():
@@ -341,15 +345,15 @@ def main() -> int:
             continue
         res = simulate_game(off, deff, resolver, args.sims, rng)
         for pr in res["player_rows"]:
-            rows.append({"game_id": r.GAME_ID, "season": args.season, "team": team,
+            rows.append({"game_id": r.game_id, "season": args.season, "team": team,
                          "opponent": opp, "home": bool(r.HOME), "mode": args.mode,
                          "side": "off", **pr})
         # defensive contributions accrue to the DEFENDING players (team=opp)
         for dr in res["def_rows"]:
-            rows.append({"game_id": r.GAME_ID, "season": args.season, "team": opp,
+            rows.append({"game_id": r.game_id, "season": args.season, "team": opp,
                          "opponent": team, "home": not bool(r.HOME), "mode": args.mode,
                          "side": "def", **dr})
-        rows.append({"game_id": r.GAME_ID, "season": args.season, "team": team,
+        rows.append({"game_id": r.game_id, "season": args.season, "team": team,
                      "opponent": opp, "home": bool(r.HOME), "mode": args.mode,
                      "player_id": "TEAM", "is_bench_unit": False,
                      "pts_mean": res["team_pts_mean"], "pts_p10": res["team_pts_p10"],

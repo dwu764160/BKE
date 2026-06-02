@@ -27,6 +27,7 @@ from curl_cffi import requests
 from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.data.schema_contract import load_standardized, save_standardized
 
 DATA_DIR = Path("data/tracking")
 CACHE_DIR = Path("data/tracking_cache")
@@ -283,7 +284,7 @@ def main():
         outfile = season_dir / "shot_zones.parquet"
 
         if outfile.exists():
-            existing = pd.read_parquet(outfile)
+            existing = load_standardized(outfile)
             print(f"\n✅ {season}: Already cached ({len(existing)} players)")
             continue
 
@@ -298,7 +299,7 @@ def main():
         df = compute_shot_zone_features(df)
         df['SEASON'] = season
 
-        df.to_parquet(outfile, index=False)
+        save_standardized(df, outfile)
         print(f"   ✅ Saved {len(df)} players → {outfile}")
 
         # Print summary stats

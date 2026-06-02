@@ -823,7 +823,7 @@ def main(
     if not src_path.exists():
         raise FileNotFoundError(f"Profiles not found: {src_path}")
 
-    profiles = pd.read_parquet(src_path)
+    profiles = load_standardized(src_path)
     print(f"  Loaded {len(profiles)} player-season profiles from {src_path.name}")
 
     profiles["player_id"] = profiles["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
@@ -840,7 +840,7 @@ def main(
     if not forecast_mode:
         predictions = pd.DataFrame()
         if MINUTE_PREDICTIONS_PATH.exists():
-            predictions = pd.read_parquet(MINUTE_PREDICTIONS_PATH)
+            predictions = load_standardized(MINUTE_PREDICTIONS_PATH)
             predictions["player_id"] = predictions["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
             predictions["season"] = predictions["season"].astype(str)
 
@@ -961,24 +961,24 @@ def main(
         # Build team_id → abbreviation mapping
         team_id_to_abbr = {}
         if teams_path.exists():
-            teams_meta = pd.read_parquet(teams_path)
+            teams_meta = load_standardized(teams_path)
             for _, t in teams_meta.iterrows():
                 tid = str(int(float(t["team_id"])))
                 team_id_to_abbr[tid] = str(t["abbreviation"]).upper()
 
         if game_logs_path.exists():
-            game_logs = pd.read_parquet(game_logs_path)
-            game_logs["TEAM_ID"] = game_logs["TEAM_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-            game_logs["SEASON"] = game_logs["SEASON"].astype(str)
-            game_logs["PTS"] = pd.to_numeric(game_logs["PTS"], errors="coerce")
+            game_logs = load_standardized(game_logs_path)
+            game_logs["team_id"] = game_logs["team_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+            game_logs["season"] = game_logs["season"].astype(str)
+            game_logs["pts"] = pd.to_numeric(game_logs["pts"], errors="coerce")
             game_logs["OPP_PTS"] = pd.to_numeric(game_logs["OPP_PTS"], errors="coerce")
-            game_logs["margin"] = game_logs["PTS"] - game_logs["OPP_PTS"]
-            team_net = game_logs.groupby(["SEASON", "TEAM_ID"]).agg(
+            game_logs["margin"] = game_logs["pts"] - game_logs["OPP_PTS"]
+            team_net = game_logs.groupby(["season", "team_id"]).agg(
                 games=("margin", "count"),
                 avg_margin=("margin", "mean"),
             ).reset_index()
-            team_net["team_abbreviation"] = team_net["TEAM_ID"].map(team_id_to_abbr)
-            team_net = team_net.rename(columns={"SEASON": "season", "avg_margin": "actual_net_rating"})
+            team_net["team_abbreviation"] = team_net["team_id"].map(team_id_to_abbr)
+            team_net = team_net.rename(columns={"season": "season", "avg_margin": "actual_net_rating"})
             actual_team_data = team_net[["season", "team_abbreviation", "actual_net_rating", "games"]].dropna()
             if len(actual_team_data) > 0:
                 league_std_net = float(actual_team_data["actual_net_rating"].std())
@@ -1303,7 +1303,7 @@ def main(
     # ── Save outputs ──────────────────────────────────────────────
     dst_path = output_path or (PROJECTED_TEAM_FEATURES_PATH if forecast_mode else TEAM_FEATURES_PATH)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
-    result_df.to_parquet(dst_path, index=False)
+    save_standardized(result_df, dst_path)
 
     report_path = STEP3_VALIDATION_REPORT
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1392,6 +1392,7 @@ def _validate(
 
                 # Rank correlation
                 from scipy.stats import spearmanr
+from src.data.schema_contract import load_standardized, save_standardized
                 spearman_r, spearman_p = spearmanr(
                     merged["team_net_rating_projected"],
                     merged["actual_net_rating"]
@@ -1402,17 +1403,17 @@ def _validate(
                 # Also compute wins correlation using team_summaries if available
                 ts_path = HISTORICAL_DIR / "team_summaries.parquet"
                 if ts_path.exists():
-                    ts = pd.read_parquet(ts_path)
-                    if "WINS" in ts.columns and "TEAM_ID" in ts.columns:
-                        ts["TEAM_ID"] = ts["TEAM_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-                        ts["SEASON"] = ts["SEASON"].astype(str)
+                    ts = load_standardized(ts_path)
+                    if "WINS" in ts.columns and "team_id" in ts.columns:
+                        ts["team_id"] = ts["team_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+                        ts["season"] = ts["season"].astype(str)
                         # Map team_id to abbreviation
-                        ts["team_abbreviation"] = ts["TEAM_ID"].map(
+                        ts["team_abbreviation"] = ts["team_id"].map(
                             {str(int(float(k))): v for k, v in
-                             (pd.read_parquet(HISTORICAL_DIR / "teams.parquet")[["team_id", "abbreviation"]]
+                             (load_standardized(HISTORICAL_DIR / "teams.parquet")[["team_id", "abbreviation"]]
                               .itertuples(index=False))} if (HISTORICAL_DIR / "teams.parquet").exists() else {}
                         )
-                        ts = ts.rename(columns={"SEASON": "season"})
+                        ts = ts.rename(columns={"season": "season"})
                         merged_w = result_df.merge(
                             ts[["season", "team_abbreviation", "WINS"]].dropna(),
                             on=["season", "team_abbreviation"], how="inner"

@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.player_eval.constants import AGE_CURVE_BREAKPOINTS, AGE_CURVE_DELTAS
 from src.simulation.simulation_config import REPORTS_DIR
+from src.data.schema_contract import load_standardized, save_standardized
 
 PROFILE_AGGREGATE_PATH = Path("aggregate/player_profile_aggregate.parquet")
 
@@ -42,7 +43,7 @@ MIN_GP = 20
 
 def load_profiles() -> pd.DataFrame:
     """Load player profile aggregate and filter to qualified players."""
-    df = pd.read_parquet(PROFILE_AGGREGATE_PATH)
+    df = load_standardized(PROFILE_AGGREGATE_PATH)
 
     # Normalize column names
     df.columns = [str(c).lower() for c in df.columns]

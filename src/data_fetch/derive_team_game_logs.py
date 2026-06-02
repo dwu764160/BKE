@@ -31,6 +31,7 @@ from nba_api.stats.static import teams
 
 # Adjust path to find src if run directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.data.schema_contract import load_standardized, save_standardized
 
 DATA_DIR = "data/historical"
 OUTPUT_FILE = os.path.join(DATA_DIR, "team_game_logs.parquet")
@@ -116,6 +117,10 @@ def _normalize_team_logs(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if out.empty:
         return out
+
+    # Normalize to uppercase so this function handles both canonical (lowercase)
+    # and raw API (uppercase) input uniformly.
+    out.columns = [c.upper() for c in out.columns]
 
     rename_map = {
         "Game_ID": "GAME_ID",
@@ -326,24 +331,24 @@ def _fallback_from_pbp(seasons: List[str]) -> pd.DataFrame:
         path = os.path.join(DATA_DIR, f"play_by_play_{season}.parquet")
         if not os.path.exists(path):
             continue
-        df = pd.read_parquet(path)
-        if df.empty or "GAME_ID" not in df.columns:
+        df = load_standardized(path)
+        if df.empty or "game_id" not in df.columns:
             continue
 
-        for gid, gdf in df.groupby("GAME_ID"):
-            if "scoreHome" not in gdf.columns or "scoreAway" not in gdf.columns:
+        for gid, gdf in df.groupby("game_id"):
+            if "scorehome" not in gdf.columns or "scoreaway" not in gdf.columns:
                 continue
             gdf = gdf.copy()
-            gdf["scoreHome"] = pd.to_numeric(gdf["scoreHome"], errors="coerce")
-            gdf["scoreAway"] = pd.to_numeric(gdf["scoreAway"], errors="coerce")
-            gdf = gdf.dropna(subset=["scoreHome", "scoreAway"])
+            gdf["scorehome"] = pd.to_numeric(gdf["scorehome"], errors="coerce")
+            gdf["scoreaway"] = pd.to_numeric(gdf["scoreaway"], errors="coerce")
+            gdf = gdf.dropna(subset=["scorehome", "scoreaway"])
             if gdf.empty:
                 continue
 
-            home_score = int(gdf["scoreHome"].iloc[-1])
-            away_score = int(gdf["scoreAway"].iloc[-1])
+            home_score = int(gdf["scorehome"].iloc[-1])
+            away_score = int(gdf["scoreaway"].iloc[-1])
 
-            team_col = "teamId" if "teamId" in gdf.columns else "TEAM_ID" if "TEAM_ID" in gdf.columns else None
+            team_col = "teamid" if "teamid" in gdf.columns else "team_id" if "team_id" in gdf.columns else None
             if team_col is None:
                 continue
             teams_seen = (
@@ -359,8 +364,8 @@ def _fallback_from_pbp(seasons: List[str]) -> pd.DataFrame:
             # Heuristic only in fallback path.
             t1, t2 = teams_seen[0], teams_seen[1]
             game_date = None
-            if "timeActual" in gdf.columns:
-                game_date = str(gdf.iloc[0]["timeActual"]).split("T")[0]
+            if "timeactual" in gdf.columns:
+                game_date = str(gdf.iloc[0]["timeactual"]).split("T")[0]
 
             all_rows.append({
                 "SEASON": season,
@@ -398,13 +403,13 @@ def main() -> None:
 
     if os.path.exists(OUTPUT_FILE) and not args.force_rebuild:
         try:
-            existing = _normalize_team_logs(pd.read_parquet(OUTPUT_FILE))
+            existing = _normalize_team_logs(load_standardized(OUTPUT_FILE))
             rep = _quality_report(existing)
             present = sorted(existing["SEASON"].astype(str).unique().tolist())
             missing = [s for s in seasons if s not in present]
             if rep.get("ok", False) and not missing:
                 existing = existing.sort_values(["SEASON", "GAME_ID", "TEAM_ID"]).reset_index(drop=True)
-                existing.to_parquet(OUTPUT_FILE, index=False)
+                save_standardized(existing, OUTPUT_FILE)
                 print(f"Existing team_game_logs passed quality checks. Keeping {OUTPUT_FILE}")
                 print(rep)
                 return
@@ -429,7 +434,7 @@ def main() -> None:
                 rep = _quality_report(rebuilt)
                 if rep.get("ok", False):
                     rebuilt = rebuilt.sort_values(["SEASON", "GAME_ID", "TEAM_ID"]).reset_index(drop=True)
-                    rebuilt.to_parquet(OUTPUT_FILE, index=False)
+                    save_standardized(rebuilt, OUTPUT_FILE)
                     print(f"Wrote authoritative team logs to {OUTPUT_FILE}; rows={len(rebuilt)}")
                     print(rep)
                     return
@@ -445,7 +450,7 @@ def main() -> None:
         raise RuntimeError(f"Fallback team logs failed quality checks: {rep.get('reason')}")
 
     rebuilt = rebuilt.sort_values(["SEASON", "GAME_ID", "TEAM_ID"]).reset_index(drop=True)
-    rebuilt.to_parquet(OUTPUT_FILE, index=False)
+    save_standardized(rebuilt, OUTPUT_FILE)
     print(f"Wrote fallback team logs to {OUTPUT_FILE}; rows={len(rebuilt)}")
     print(rep)
 

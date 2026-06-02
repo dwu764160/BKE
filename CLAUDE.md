@@ -88,20 +88,23 @@ This repo has a comprehensive skill library: **portable governance skills**, **B
 
 **Every task MUST follow this sequence before editing or planning:**
 
-1. **Load mandatory skills** via the Skill tool:
-   - `scope-creep-guard` — enforce phase boundaries before any edits
-   - `detailed-chat-output` — structured output for every task
-   
+> **Note:** Project skills live in `.github/skills/` as markdown files. The harness
+> `Skill` tool does **not** support these — invoking them via `Skill` always errors.
+> Load them with the `Read` tool instead.
+
+1. **Load mandatory skills** by reading their files directly:
+   - `Read .github/skills/scope-creep-guard/SKILL.md` — enforce phase boundaries before any edits
+   - `Read .github/skills/detailed-chat-output/SKILL.md` — structured output for every task
+
 2. **Determine task domain** by reading the user request and current work context (`loop/in_progress_context.txt`).
 
 3. **Load applicable domain skills** by:
    - Consulting `.github/skills/SKILL_MAP.md` **Selection Order** (lines 11–60)
-   - Using the Skill tool to invoke each skill that matches your task
-   - Reading each skill's guidance before planning or editing
+   - Reading each matching skill file (`Read .github/skills/<name>/SKILL.md`) before planning or editing
 
 4. **Do not skip or rely on memory:** SKILL_MAP.md is the canonical source; it changes over time. Always consult it before treating a skill as deprecated or adding new trigger conditions.
 
-**Example:** For a modeling change, load: `scope-creep-guard` → `detailed-chat-output` → `audit-model` → then proceed.
+**Example:** For a modeling change, read: `scope-creep-guard/SKILL.md` → `detailed-chat-output/SKILL.md` → `audit-model/SKILL.md` → then proceed.
 
 For a complete reference of all skills and when to use them, see `.github/skills/SKILL_MAP.md` **Selection Order** and **Skill Registry**.
 
@@ -115,6 +118,10 @@ Every response MUST follow the **detailed-chat-output** structure:
 4. **Next Steps** — What comes next or what's pending.
 
 Read `loop/in_progress_context.txt` at the start of each session for current task context.
+
+### Handoff Prompts
+
+When asked to produce a handoff prompt: **always display it in chat AND save it to `curr_handoff.md` at the repo root** (overwrite every time). Never save handoff prompts to `docs/` or any subdirectory — `docs/` is for reference material, not session prompts. `curr_handoff.md` is gitignored and ephemeral.
 
 ## Basketball Terminology — Decoding Statistical Jargon
 

@@ -56,6 +56,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.game_model import SimConfig, build_schedule
 from src.simulation.simulation_config import REPORTS_DIR, HISTORICAL_DIR, LEAGUE_AVG_HCA_FITTED
 from src.simulation.validate_forecast import (
@@ -99,7 +101,7 @@ def build_feature_frame(config: SimConfig) -> pd.DataFrame:
     seasons = sorted(forecast_params.keys())  # 2018-26 (2017-18 has no YTD)
 
     gl_path = HISTORICAL_DIR / "team_game_logs.parquet"
-    gl_seasons = set(pd.read_parquet(gl_path, columns=["SEASON"])["SEASON"].unique())
+    gl_seasons = set(load_standardized(gl_path, columns=["season"])["season"].unique())
 
     rows: List[dict] = []
     for season in seasons:

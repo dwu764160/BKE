@@ -26,6 +26,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 GAME_LOGS_PATH = Path("data/historical/team_game_logs.parquet")
@@ -36,10 +37,10 @@ POSS_FTA_WEIGHT = 0.44
 
 
 def compute_possessions(df: pd.DataFrame) -> pd.Series:
-    fga = pd.to_numeric(df.get("FGA"), errors="coerce")
-    oreb = pd.to_numeric(df.get("OREB"), errors="coerce")
-    tov = pd.to_numeric(df.get("TOV"), errors="coerce")
-    fta = pd.to_numeric(df.get("FTA"), errors="coerce")
+    fga = pd.to_numeric(df.get("fga"), errors="coerce")
+    oreb = pd.to_numeric(df.get("oreb"), errors="coerce")
+    tov = pd.to_numeric(df.get("tov"), errors="coerce")
+    fta = pd.to_numeric(df.get("fta"), errors="coerce")
     return fga - oreb + tov + POSS_FTA_WEIGHT * fta
 
 
@@ -48,37 +49,37 @@ def main():
     print("TEAM PACE FITTING")
     print("=" * 72)
 
-    df = pd.read_parquet(GAME_LOGS_PATH)
+    df = load_standardized(GAME_LOGS_PATH)
     df = df.copy()
     df["possessions"] = compute_possessions(df)
-    df["minutes"] = pd.to_numeric(df["MIN"], errors="coerce")
+    df["minutes"] = pd.to_numeric(df["min"], errors="coerce")
 
     # Pace per game per team: possessions normalized to 240 team-minutes (48 min regulation)
-    # Each row in team_game_logs is a team-game with team minutes column "MIN"
+    # Each row in team_game_logs is a team-game with team minutes column "min"
     # Standard regulation: MIN = 240 (5 players × 48 min); OT adds ~25 per period.
     df["pace_per_48"] = df["possessions"] / df["minutes"] * 240.0
 
     # Aggregate to team-season
-    team_season = df.groupby(["SEASON", "TEAM_ABBREVIATION"]).agg(
+    team_season = df.groupby(["season", "team_abbreviation"]).agg(
         pace_per_48=("pace_per_48", "mean"),
-        n_games=("GAME_ID", "count"),
+        n_games=("game_id", "count"),
     ).reset_index()
 
     league_avg_pace_per_season = {}
     team_pace_nested: dict = {}
 
-    for season, season_df in team_season.groupby("SEASON"):
+    for season, season_df in team_season.groupby("season"):
         league_avg = float(season_df["pace_per_48"].mean())
         league_avg_pace_per_season[str(season)] = league_avg
         team_pace_nested[str(season)] = {
-            str(row["TEAM_ABBREVIATION"]): float(row["pace_per_48"])
+            str(row["team_abbreviation"]): float(row["pace_per_48"])
             for _, row in season_df.iterrows()
         }
         # Print summary
         sorted_teams = season_df.sort_values("pace_per_48", ascending=False)
         print(f"\nSeason {season}: league avg pace = {league_avg:.2f} (n_teams={len(season_df)})")
-        print(f"  Fastest: {sorted_teams.iloc[0]['TEAM_ABBREVIATION']} @ {sorted_teams.iloc[0]['pace_per_48']:.2f}")
-        print(f"  Slowest: {sorted_teams.iloc[-1]['TEAM_ABBREVIATION']} @ {sorted_teams.iloc[-1]['pace_per_48']:.2f}")
+        print(f"  Fastest: {sorted_teams.iloc[0]['team_abbreviation']} @ {sorted_teams.iloc[0]['pace_per_48']:.2f}")
+        print(f"  Slowest: {sorted_teams.iloc[-1]['team_abbreviation']} @ {sorted_teams.iloc[-1]['pace_per_48']:.2f}")
 
     league_avg_overall = float(team_season["pace_per_48"].mean())
 

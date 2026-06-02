@@ -35,6 +35,7 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.modeling.model_config import (
+from src.data.schema_contract import load_standardized, save_standardized
     BKE_OUTPUT_PARQUET,
     BKE_SCORES_V27_JSON,
 )
@@ -136,12 +137,12 @@ def _valid_name(val) -> bool:
 def _load_name_map_from_parquet(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         return pd.DataFrame(columns=["player_id", "season", "player_name"])
-    df = pd.read_parquet(path)
+    df = load_standardized(path)
     if df.empty:
         return pd.DataFrame(columns=["player_id", "season", "player_name"])
 
     id_col = None
-    for cand in ["player_id", "PLAYER_ID", "PERSON_ID"]:
+    for cand in ["player_id", "player_id", "PERSON_ID"]:
         if cand in df.columns:
             id_col = cand
             break
@@ -149,7 +150,7 @@ def _load_name_map_from_parquet(path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["player_id", "season", "player_name"])
 
     name_col = None
-    for cand in ["player_name", "PLAYER_NAME", "full_name"]:
+    for cand in ["player_name", "player_name", "full_name"]:
         if cand in df.columns:
             name_col = cand
             break
@@ -157,7 +158,7 @@ def _load_name_map_from_parquet(path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["player_id", "season", "player_name"])
 
     season_col = None
-    for cand in ["season", "SEASON"]:
+    for cand in ["season", "season"]:
         if cand in df.columns:
             season_col = cand
             break
@@ -215,7 +216,7 @@ def construct_bke_scores_v27(
             "Run src/modeling/decomposition_engine.py first."
         )
 
-    df = pd.read_parquet(input_parquet)
+    df = load_standardized(input_parquet)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:

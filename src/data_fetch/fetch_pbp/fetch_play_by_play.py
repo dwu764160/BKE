@@ -16,9 +16,13 @@ import pandas as pd
 import argparse
 import time
 import os
+import sys
 import json
 from pathlib import Path
 import re
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
+from src.data.schema_contract import load_standardized, save_standardized
 
 DATA_DIR = "data/historical"
 PBP_CACHE_DIR = f"{DATA_DIR}/pbp_cache"
@@ -39,7 +43,7 @@ PBP_URL = "https://www.nba.com/game/{game_id}/play-by-play"
 def load_team_game_logs():
     for p in SOURCE_CANDIDATES:
         if os.path.exists(p):
-            return pd.read_parquet(p)
+            return load_standardized(p)
     raise FileNotFoundError("team_game_logs.parquet not found")
 
 
@@ -58,7 +62,7 @@ def save_cache(cache: set):
 def save_game_pbp(game_id: str, df: pd.DataFrame):
     Path(PBP_CACHE_DIR).mkdir(parents=True, exist_ok=True)
     out = f"{PBP_CACHE_DIR}/pbp_{game_id}.parquet"
-    df.to_parquet(out, index=False)
+    save_standardized(df, out)
 
 
 # -----------------------------
@@ -240,12 +244,12 @@ def main(seasons):
     print(f"Loaded cache: {len(fetched_cache)} games")
 
     games = load_team_game_logs()
-    games["GAME_ID"] = games["GAME_ID"].astype(str)
+    games["game_id"] = games["game_id"].astype(str)
 
     for season in seasons:
         print(f"\nProcessing season {season}")
-        season_games = games[games["SEASON"] == season]
-        game_ids = season_games["GAME_ID"].unique().tolist()
+        season_games = games[games["season"] == season]
+        game_ids = season_games["game_id"].unique().tolist()
 
         fetch_season(season, game_ids, fetched_cache)
 
@@ -254,12 +258,12 @@ def main(seasons):
         for gid in game_ids:
             p = f"{PBP_CACHE_DIR}/pbp_{gid}.parquet"
             if os.path.exists(p):
-                dfs.append(pd.read_parquet(p))
+                dfs.append(load_standardized(p))
 
         if dfs:
             out = pd.concat(dfs, ignore_index=True)
             out_path = f"{DATA_DIR}/play_by_play_{season}.parquet"
-            out.to_parquet(out_path, index=False)
+            save_standardized(out, out_path)
             print(f"✓ Season saved → {out_path} ({len(out)} rows)")
 
 

@@ -59,14 +59,14 @@ def _norm(s: pd.Series) -> pd.Series:
 def load() -> pd.DataFrame:
     m = pd.read_parquet(
         MATCHUPS,
-        columns=["OFF_PLAYER_ID", "DEF_PLAYER_ID", "PARTIAL_POSS", "PLAYER_PTS",
-                 "MATCHUP_FGM", "MATCHUP_FGA", "MATCHUP_FG3M", "SEASON"],
+        columns=["off_player_id", "def_player_id", "partial_poss", "player_pts",
+                 "matchup_fgm", "matchup_fga", "matchup_fg3m", "season"],
     )
-    m["OFF_PLAYER_ID"] = _norm(m["OFF_PLAYER_ID"])
-    m["DEF_PLAYER_ID"] = _norm(m["DEF_PLAYER_ID"])
-    m["SEASON"] = m["SEASON"].astype(str)
-    m = m[m["PARTIAL_POSS"] >= MIN_POSS].copy()
-    m["ppp"] = m["PLAYER_PTS"] / m["PARTIAL_POSS"]
+    m["off_player_id"] = _norm(m["off_player_id"])
+    m["def_player_id"] = _norm(m["def_player_id"])
+    m["season"] = m["season"].astype(str)
+    m = m[m["partial_poss"] >= MIN_POSS].copy()
+    m["ppp"] = m["player_pts"] / m["partial_poss"]
 
     prof = pd.read_parquet(
         PROFILES, columns=["player_id", "season", "off_primary_archetype", "def_primary_archetype"]
@@ -75,13 +75,13 @@ def load() -> pd.DataFrame:
     prof["season"] = prof["season"].astype(str)
 
     off = prof[["player_id", "season", "off_primary_archetype"]].rename(
-        columns={"player_id": "OFF_PLAYER_ID", "season": "SEASON", "off_primary_archetype": "off_arch"}
+        columns={"player_id": "off_player_id", "off_primary_archetype": "off_arch"}
     )
     deff = prof[["player_id", "season", "def_primary_archetype"]].rename(
-        columns={"player_id": "DEF_PLAYER_ID", "season": "SEASON", "def_primary_archetype": "def_arch"}
+        columns={"player_id": "def_player_id", "def_primary_archetype": "def_arch"}
     )
-    m = m.merge(off, on=["OFF_PLAYER_ID", "SEASON"], how="left")
-    m = m.merge(deff, on=["DEF_PLAYER_ID", "SEASON"], how="left")
+    m = m.merge(off, on=["off_player_id", "season"], how="left")
+    m = m.merge(deff, on=["def_player_id", "season"], how="left")
     m = m[~m["off_arch"].isin(DROP_ARCH) & ~m["def_arch"].isin(DROP_ARCH)]
     m = m.dropna(subset=["off_arch", "def_arch"])
     return m.reset_index(drop=True)
@@ -113,8 +113,8 @@ def two_way_demean(df: pd.DataFrame, val: str, w: str, g1: str, g2: str, iters: 
 
 def cell_means(df: pd.DataFrame, val_col: str) -> pd.DataFrame:
     g = df.groupby(["off_arch", "def_arch"])
-    num = g.apply(lambda x: np.average(x[val_col], weights=x["PARTIAL_POSS"]))
-    poss = g["PARTIAL_POSS"].sum()
+    num = g.apply(lambda x: np.average(x[val_col], weights=x["partial_poss"]))
+    poss = g["partial_poss"].sum()
     n = g.size()
     out = pd.DataFrame({"value": num, "poss": poss, "n_pairs": n}).reset_index()
     return out
@@ -124,10 +124,10 @@ def cluster_bootstrap(df: pd.DataFrame, val_col: str, n_boot: int) -> pd.DataFra
     """Resample offensive players -> 95% CI per (off_arch,def_arch) cell."""
     # Pre-aggregate each off_player's contribution per cell: sum(w*resid), sum(w)
     df = df.copy()
-    df["wv"] = df["PARTIAL_POSS"] * df[val_col]
+    df["wv"] = df["partial_poss"] * df[val_col]
     agg = (
-        df.groupby(["OFF_PLAYER_ID", "off_arch", "def_arch"])
-        .agg(wv=("wv", "sum"), w=("PARTIAL_POSS", "sum"))
+        df.groupby(["off_player_id", "off_arch", "def_arch"])
+        .agg(wv=("wv", "sum"), w=("partial_poss", "sum"))
         .reset_index()
     )
     cells = sorted(set(zip(agg["off_arch"], agg["def_arch"])))
@@ -135,8 +135,8 @@ def cluster_bootstrap(df: pd.DataFrame, val_col: str, n_boot: int) -> pd.DataFra
     agg["cidx"] = list(zip(agg["off_arch"], agg["def_arch"]))
     agg["cidx"] = agg["cidx"].map(cell_idx)
 
-    players = agg["OFF_PLAYER_ID"].unique()
-    p_to_rows = {p: g for p, g in agg.groupby("OFF_PLAYER_ID")}
+    players = agg["off_player_id"].unique()
+    p_to_rows = {p: g for p, g in agg.groupby("off_player_id")}
     # Stack per-player contributions for fast resampled summation
     pl_wv = {}
     pl_w = {}
@@ -183,21 +183,21 @@ def bh_fdr(pvals: np.ndarray, alpha: float = 0.05) -> np.ndarray:
 
 def main() -> None:
     df = load()
-    print(f"Matchup rows after filter/join: {len(df)} | seasons {sorted(df['SEASON'].unique())}")
+    print(f"Matchup rows after filter/join: {len(df)} | seasons {sorted(df['season'].unique())}")
     print(f"Offensive players: {df['OFF_PLAYER_ID'].nunique()} | defenders: {df['DEF_PLAYER_ID'].nunique()}")
     print(f"Total partial possessions: {df['PARTIAL_POSS'].sum():,.0f}")
 
     # ---- NAIVE (talent-confounded): cell ppp minus offensive-archetype mean ----
     naive_cells = cell_means(df, "ppp")
     off_mean = (
-        df.groupby("off_arch").apply(lambda x: np.average(x["ppp"], weights=x["PARTIAL_POSS"]))
+        df.groupby("off_arch").apply(lambda x: np.average(x["ppp"], weights=x["partial_poss"]))
     ).to_dict()
     naive_cells["naive_delta"] = naive_cells.apply(
         lambda r: r["value"] - off_mean[r["off_arch"]], axis=1
     )
 
     # ---- FE-ADJUSTED: two-way demean ppp by off & def player, then residual cells ----
-    df["resid"] = two_way_demean(df, "ppp", "PARTIAL_POSS", "OFF_PLAYER_ID", "DEF_PLAYER_ID", DEMEAN_ITERS)
+    df["resid"] = two_way_demean(df, "ppp", "partial_poss", "off_player_id", "def_player_id", DEMEAN_ITERS)
     print(f"Residual weighted-mean (should be ~0): {np.average(df['resid'], weights=df['PARTIAL_POSS']):.4e}")
     print(f"ppp weighted std: {np.sqrt(np.average((df['ppp']-np.average(df['ppp'],weights=df['PARTIAL_POSS']))**2, weights=df['PARTIAL_POSS'])):.3f} "
           f"| residual weighted std: {np.sqrt(np.average(df['resid']**2, weights=df['PARTIAL_POSS'])):.3f}")
@@ -245,8 +245,8 @@ def main() -> None:
             "significance": f"cluster bootstrap over offensive players, n={N_BOOT}, 95% CI + BH-FDR",
         },
         "n_matchup_rows": int(len(df)),
-        "n_off_players": int(df["OFF_PLAYER_ID"].nunique()),
-        "n_def_players": int(df["DEF_PLAYER_ID"].nunique()),
+        "n_off_players": int(df["off_player_id"].nunique()),
+        "n_def_players": int(df["def_player_id"].nunique()),
         "n_cells": n_cells,
         "n_significant_95": n_sig,
         "expected_false_positives": expected_fp,

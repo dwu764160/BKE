@@ -43,6 +43,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.game_model import (
     Game,
     SimConfig,
@@ -258,21 +260,20 @@ def _load_team_pace_history() -> pd.DataFrame:
     if not gl_path.exists():
         return pd.DataFrame(columns=["season", "team_abbreviation", "pace_per_48"])
 
-    gl = pd.read_parquet(gl_path)
-    gl["SEASON"] = gl["SEASON"].astype(str)
-    gl["TEAM_ABBREVIATION"] = gl["TEAM_ABBREVIATION"].astype(str).str.upper()
+    gl = load_standardized(gl_path)
+    gl["season"] = gl["season"].astype(str)
+    gl["team_abbreviation"] = gl["team_abbreviation"].astype(str).str.upper()
 
-    for col in ["FGA", "OREB", "TOV", "FTA", "MIN"]:
+    for col in ["fga", "oreb", "tov", "fta", "min"]:
         gl[col] = pd.to_numeric(gl[col], errors="coerce")
 
-    poss = gl["FGA"] - gl["OREB"] + gl["TOV"] + POSSESSION_FTA_WEIGHT * gl["FTA"]
-    pace = poss * (240.0 / gl["MIN"].replace(0, np.nan))
+    poss = gl["fga"] - gl["oreb"] + gl["tov"] + POSSESSION_FTA_WEIGHT * gl["fta"]
+    pace = poss * (240.0 / gl["min"].replace(0, np.nan))
     gl["pace_per_48"] = pace
 
     pace_df = (
-        gl.groupby(["SEASON", "TEAM_ABBREVIATION"], as_index=False)["pace_per_48"]
+        gl.groupby(["season", "team_abbreviation"], as_index=False)["pace_per_48"]
         .mean()
-        .rename(columns={"SEASON": "season", "TEAM_ABBREVIATION": "team_abbreviation"})
     )
     pace_df["season"] = pace_df["season"].astype(str)
     pace_df["team_abbreviation"] = pace_df["team_abbreviation"].astype(str).str.upper()
@@ -715,14 +716,14 @@ def get_actual_records(season: str) -> Dict[str, Dict]:
     if not gl_path.exists():
         return {}
 
-    gl = pd.read_parquet(gl_path)
-    gl = gl[gl["SEASON"] == season].copy()
-    gl["TEAM_ABBREVIATION"] = gl["TEAM_ABBREVIATION"].astype(str).str.upper()
+    gl = load_standardized(gl_path)
+    gl = gl[gl["season"] == season].copy()
+    gl["team_abbreviation"] = gl["team_abbreviation"].astype(str).str.upper()
 
     records = {}
-    for team, group in gl.groupby("TEAM_ABBREVIATION"):
-        wins = (group["WL"] == "W").sum()
-        losses = (group["WL"] == "L").sum()
+    for team, group in gl.groupby("team_abbreviation"):
+        wins = (group["wl"] == "W").sum()
+        losses = (group["wl"] == "L").sum()
         records[team] = {
             "actual_wins": int(wins),
             "actual_losses": int(losses),

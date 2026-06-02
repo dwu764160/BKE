@@ -96,7 +96,7 @@ class PtsV32Config:
     matchup_dim6_components: Dict[str, float] = field(default_factory=lambda: {
         # column → weight (within matchup composite, normalized)
         "d_results_pctl": 0.35,           # opponent eFG% percentile (inverted lower=better is applied)
-        "D_FG_DIFF": 0.30,                # DFG% vs expected
+        "d_fg_diff": 0.30,                # DFG% vs expected
         "contested_shots_pctl": 0.15,
         "rim_protection_index_pctl": 0.20,
     })
@@ -156,9 +156,9 @@ def build_matchup_dim6_z(
 
     Output: DataFrame with [player_id, season, dim6_matchup_z]
     """
-    df = def_arch[["PLAYER_ID", "SEASON"]].copy()
-    df["player_id"] = df["PLAYER_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-    df["season"] = df["SEASON"].astype(str)
+    df = def_arch[["player_id", "season"]].copy()
+    df["player_id"] = df["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    df["season"] = df["season"].astype(str)
 
     components = cfg.matchup_dim6_components
     z_components = []
@@ -171,8 +171,8 @@ def build_matchup_dim6_z(
         # d_results_pctl: high pctl = good (defense allows worse opp results)
         # contested_shots_pctl: high = active = good
         # rim_protection_index_pctl: high = good
-        invert = col in {"D_FG_DIFF"}  # D_FG_DIFF "low=good" so invert
-        z = vals.groupby(def_arch["SEASON"].astype(str)).transform(
+        invert = col in {"d_fg_diff"}  # d_fg_diff "low=good" so invert
+        z = vals.groupby(def_arch["season"].astype(str)).transform(
             lambda x: (x - x.mean()) / max(x.std(), 1e-6)
         )
         if invert:

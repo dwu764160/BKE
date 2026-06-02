@@ -26,6 +26,7 @@ import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from src.modeling.model_config import (
+from src.data.schema_contract import load_standardized, save_standardized
     BKE_DIR,
     BKE_V28_OUTPUT_PARQUET,
     DEFENSIVE_ARCHETYPES_PATH,
@@ -327,8 +328,8 @@ def _export_scores_json(
     out = df[["player_id", "season"]].copy()
     if "player_name" in df.columns:
         out["player_name"] = df["player_name"]
-    elif "PLAYER_NAME" in df.columns:
-        out["player_name"] = df["PLAYER_NAME"]
+    elif "player_name" in df.columns:
+        out["player_name"] = df["player_name"]
     else:
         out["player_name"] = None
 
@@ -402,9 +403,9 @@ def _build_base(df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series, pd.S
 def _load_confidence(df: pd.DataFrame) -> pd.Series:
     if not os.path.exists(DEFENSIVE_ARCHETYPES_PATH):
         return pd.Series(0.5, index=df.index)
-    conf_df = pd.read_parquet(DEFENSIVE_ARCHETYPES_PATH)
-    merge = conf_df[["PLAYER_ID", "SEASON", "defensive_confidence"]].copy()
-    merge = merge.rename(columns={"PLAYER_ID": "player_id", "SEASON": "season"})
+    conf_df = load_standardized(DEFENSIVE_ARCHETYPES_PATH)
+    merge = conf_df[["player_id", "season", "defensive_confidence"]].copy()
+    merge = merge.rename(columns={"player_id": "player_id", "season": "season"})
     merge["player_id"] = merge["player_id"].astype(str)
     merge["season"] = merge["season"].astype(str)
 
@@ -419,7 +420,7 @@ def _build_d_stabilized(df: pd.DataFrame, def_portable: pd.Series) -> pd.Series:
     out = df[["player_id", "season"]].copy()
     out["D_port"] = pd.to_numeric(def_portable, errors="coerce").fillna(0.0)
     out["D_rapm"] = pd.to_numeric(df.get("drapm", 0.0), errors="coerce").fillna(0.0)
-    poss = pd.to_numeric(df.get("possessions_played", df.get("MIN", 0.0)), errors="coerce").fillna(0.0).clip(lower=0.0)
+    poss = pd.to_numeric(df.get("possessions_played", df.get("min", 0.0)), errors="coerce").fillna(0.0).clip(lower=0.0)
 
     shrink_k = 2000.0
     prior_alpha = 0.65
@@ -514,7 +515,7 @@ def run_v31_experiments(
     if not os.path.exists(parquet_path):
         raise FileNotFoundError(f"Missing decomposition parquet: {parquet_path}")
 
-    raw = pd.read_parquet(parquet_path)
+    raw = load_standardized(parquet_path)
     df = raw[raw["qualified"] == True].copy()
     if df.empty:
         raise ValueError("No qualified rows in decomposition parquet.")

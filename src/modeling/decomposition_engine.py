@@ -1085,7 +1085,7 @@ def run_full_decomposition(
     # Save outputs
     if save_output:
         print("\n  Saving outputs...")
-        df.to_parquet(BKE_V28_OUTPUT_PARQUET, index=False)
+        save_standardized(df, BKE_V28_OUTPUT_PARQUET)
         df.to_csv(BKE_V28_OUTPUT_CSV, index=False)
         print(f"  Saved: {BKE_V28_OUTPUT_PARQUET}")
         print(f"  Saved: {BKE_V28_OUTPUT_CSV}")
@@ -1128,6 +1128,7 @@ def run_full_decomposition(
 
 if __name__ == "__main__":
     import argparse
+from src.data.schema_contract import load_standardized, save_standardized
 
     parser = argparse.ArgumentParser(description="BKE v2.8 Decomposition Engine")
     parser.add_argument("--seasons", nargs="*", default=None,

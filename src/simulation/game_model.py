@@ -37,6 +37,8 @@ from scipy.stats import norm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.simulation_config import (
     HISTORICAL_DIR,
     REPORTS_DIR,
@@ -226,31 +228,31 @@ def build_schedule(season: str, game_logs_path: Path = None) -> List[Game]:
     if game_logs_path is None:
         game_logs_path = HISTORICAL_DIR / "team_game_logs.parquet"
 
-    gl = pd.read_parquet(game_logs_path)
-    gl = gl[gl["SEASON"] == season].copy()
-    gl["TEAM_ABBREVIATION"] = gl["TEAM_ABBREVIATION"].astype(str).str.upper()
+    gl = load_standardized(game_logs_path)
+    gl = gl[gl["season"] == season].copy()
+    gl["team_abbreviation"] = gl["team_abbreviation"].astype(str).str.upper()
 
-    # Keep only home games (MATCHUP contains 'vs.')
-    home_games = gl[gl["MATCHUP"].str.contains("vs.", na=False)].copy()
+    # Keep only home games (matchup contains 'vs.')
+    home_games = gl[gl["matchup"].str.contains("vs.", na=False)].copy()
 
     games = []
     for _, row in home_games.iterrows():
-        matchup = str(row["MATCHUP"])
+        matchup = str(row["matchup"])
         parts = matchup.split(" vs. ")
         home = parts[0].strip().upper()
         away = parts[1].strip().upper() if len(parts) > 1 else ""
 
-        pts = float(row.get("PTS", np.nan))
-        opp_pts = float(row.get("OPP_PTS", np.nan))
+        pts = float(row.get("pts", np.nan))
+        opp_pts = float(row.get("opp_pts", np.nan))
         if not (np.isnan(pts) or np.isnan(opp_pts)):
             margin = pts - opp_pts
         else:
-            # Fallback: PLUS_MINUS is pre-computed point differential (positive = team won)
-            margin = float(row.get("PLUS_MINUS", np.nan))
+            # Fallback: plus_minus is pre-computed point differential (positive = team won)
+            margin = float(row.get("plus_minus", np.nan))
 
         games.append(Game(
-            game_id=str(row.get("GAME_ID", "")),
-            date=str(row.get("GAME_DATE", "")),
+            game_id=str(row.get("game_id", "")),
+            date=str(row.get("game_date", "")),
             home_team=home,
             away_team=away,
             season=season,
@@ -277,7 +279,7 @@ def load_team_params(
       dict of {season: {team_abbr: TeamParams}}
     """
     src = features_path or TEAM_FEATURES_PATH
-    tf = pd.read_parquet(src)
+    tf = load_standardized(src)
     tf["season"] = tf["season"].astype(str)
     tf["team_abbreviation"] = tf["team_abbreviation"].astype(str).str.upper()
 

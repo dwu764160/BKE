@@ -95,9 +95,9 @@ PAIR_COLS = [f"{a}__{b}" for a, b in ALL_PAIRS]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_player_arch_map() -> pd.DataFrame:
-    arche = pd.read_parquet(ARCHETYPES_PATH)
+    arche = load_standardized(ARCHETYPES_PATH)
     # Keep player_id, season, primary_archetype only
-    cols = {"PLAYER_ID": "player_id", "SEASON": "season",
+    cols = {"player_id": "player_id", "season": "season",
             "primary_archetype": "primary_archetype"}
     arche = arche.rename(columns=cols)[list(cols.values())]
     arche["player_id"] = arche["player_id"].astype(np.int64)
@@ -107,7 +107,7 @@ def load_player_arch_map() -> pd.DataFrame:
 def load_player_talent() -> pd.DataFrame:
     """Load oRAPM per (player_id, season). Z-score within season to handle inconsistent
     cross-season calibration (2019-20 to 2021-22 use a compressed RAPM scale)."""
-    agg = pd.read_parquet(AGGREGATE_PATH)
+    agg = load_standardized(AGGREGATE_PATH)
     talent = agg[["player_id", "season", "orapm"]].copy()
     talent["player_id"] = pd.to_numeric(talent["player_id"], errors="coerce")
     talent = talent.dropna(subset=["player_id"])
@@ -167,6 +167,7 @@ def build_lineup_features(lineups: pd.DataFrame,
 
         # Count pair occurrences for each of the 66 archetype pairs
         from collections import Counter
+from src.data.schema_contract import load_standardized, save_standardized
         arch_counts = Counter(archs)
         pair_features = {col: 0 for col in PAIR_COLS}
         for a, b in ALL_PAIRS:
@@ -331,7 +332,7 @@ def main():
     MIN_POSSESSIONS = args.min_poss
 
     print("Loading inputs...")
-    lineups = pd.read_parquet(LINEUPS_PATH)
+    lineups = load_standardized(LINEUPS_PATH)
     print(f"  Lineups: {len(lineups)} stints, {lineups['season'].nunique()} seasons")
     arche_map = load_player_arch_map()
     print(f"  Archetypes: {len(arche_map)} player-seasons classified")

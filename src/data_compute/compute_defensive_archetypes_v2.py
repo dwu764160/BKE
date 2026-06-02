@@ -58,6 +58,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 # Minimum requirements
 MIN_MINUTES = 200
@@ -71,14 +72,14 @@ MIN_GP = 10
 def load_matchup_versatility() -> pd.DataFrame:
     path = MATCHUP_DIR / "matchup_versatility.parquet"
     if path.exists():
-        return pd.read_parquet(path)
+        return load_standardized(path)
     return pd.DataFrame()
 
 
 def load_matchup_difficulty() -> pd.DataFrame:
     path = MATCHUP_DIR / "matchup_difficulty.parquet"
     if path.exists():
-        return pd.read_parquet(path)
+        return load_standardized(path)
     return pd.DataFrame()
 
 
@@ -96,58 +97,58 @@ def load_defense_tracking(season: str) -> pd.DataFrame:
     merged = pd.DataFrame()
     path_ov = season_dir / "defense_Overall.parquet"
     if path_ov.exists():
-        ov = pd.read_parquet(path_ov)
+        ov = load_standardized(path_ov)
         ov = ov.rename(columns={
-            "D_FG_PCT": "D_FG_PCT_Overall",
-            "PCT_PLUSMINUS": "PCT_PLUSMINUS_Overall",
-            "D_FGM": "D_FGM_Overall",
-            "D_FGA": "D_FGA_Overall",
-            "FREQ": "FREQ_Overall",
+            "d_fg_pct": "D_FG_PCT_Overall",
+            "pct_plusminus": "PCT_PLUSMINUS_Overall",
+            "d_fgm": "D_FGM_Overall",
+            "d_fga": "D_FGA_Overall",
+            "freq": "FREQ_Overall",
         })
-        keep = ["CLOSE_DEF_PERSON_ID", "PLAYER_NAME"] + [c for c in ov.columns if "Overall" in c]
+        keep = ["close_def_person_id", "player_name"] + [c for c in ov.columns if "Overall" in c]
         merged = ov[keep].copy()
 
     # --- LessThan6Ft ---
     path_lt = season_dir / "defense_LessThan6Ft.parquet"
     if path_lt.exists():
-        lt = pd.read_parquet(path_lt)
+        lt = load_standardized(path_lt)
         lt = lt.rename(columns={
-            "LT_06_PCT": "D_FG_PCT_LessThan6Ft",
-            "PLUSMINUS": "PCT_PLUSMINUS_LessThan6Ft",
-            "FGM_LT_06": "D_FGM_LessThan6Ft",
-            "FGA_LT_06": "D_FGA_LessThan6Ft",
-            "FREQ": "FREQ_LessThan6Ft",
+            "lt_06_pct": "D_FG_PCT_LessThan6Ft",
+            "plusminus": "PCT_PLUSMINUS_LessThan6Ft",
+            "fgm_lt_06": "D_FGM_LessThan6Ft",
+            "fga_lt_06": "D_FGA_LessThan6Ft",
+            "freq": "FREQ_LessThan6Ft",
         })
-        keep = ["CLOSE_DEF_PERSON_ID", "PLAYER_NAME"] + [c for c in lt.columns if "LessThan6Ft" in c]
+        keep = ["close_def_person_id", "player_name"] + [c for c in lt.columns if "LessThan6Ft" in c]
         lt = lt[keep]
         if len(merged) > 0:
-            merged = merged.merge(lt, on=["CLOSE_DEF_PERSON_ID", "PLAYER_NAME"], how="outer")
+            merged = merged.merge(lt, on=["close_def_person_id", "player_name"], how="outer")
         else:
             merged = lt.copy()
 
     # --- 3Pointers ---
     path_3p = season_dir / "defense_3Pointers.parquet"
     if path_3p.exists():
-        tp = pd.read_parquet(path_3p)
+        tp = load_standardized(path_3p)
         tp = tp.rename(columns={
-            "FG3_PCT": "D_FG_PCT_3Pointers",
-            "PLUSMINUS": "PCT_PLUSMINUS_3Pointers",
-            "FG3M": "D_FGM_3Pointers",
-            "FG3A": "D_FGA_3Pointers",
-            "FREQ": "FREQ_3Pointers",
+            "fg3_pct": "D_FG_PCT_3Pointers",
+            "plusminus": "PCT_PLUSMINUS_3Pointers",
+            "fg3m": "D_FGM_3Pointers",
+            "fg3a": "D_FGA_3Pointers",
+            "freq": "FREQ_3Pointers",
         })
-        keep = ["CLOSE_DEF_PERSON_ID", "PLAYER_NAME"] + [c for c in tp.columns if "3Pointers" in c]
+        keep = ["close_def_person_id", "player_name"] + [c for c in tp.columns if "3Pointers" in c]
         tp = tp[keep]
         if len(merged) > 0:
-            merged = merged.merge(tp, on=["CLOSE_DEF_PERSON_ID", "PLAYER_NAME"], how="outer")
+            merged = merged.merge(tp, on=["close_def_person_id", "player_name"], how="outer")
         else:
             merged = tp.copy()
 
     if len(merged) == 0:
         return pd.DataFrame()
 
-    merged["SEASON"] = season
-    merged = merged.rename(columns={"CLOSE_DEF_PERSON_ID": "PLAYER_ID"})
+    merged["season"] = season
+    merged = merged.rename(columns={"close_def_person_id": "player_id"})
     return merged
 
 
@@ -155,8 +156,8 @@ def load_tracking_defense(season: str) -> pd.DataFrame:
     """Load tracking_Defense.parquet -- NOTE: all stats here are PER GAME."""
     path = TRACKING_DIR / season / "tracking_Defense.parquet"
     if path.exists():
-        df = pd.read_parquet(path)
-        df["SEASON"] = season
+        df = load_standardized(path)
+        df["season"] = season
         return df
     return pd.DataFrame()
 
@@ -165,9 +166,9 @@ def load_box_score_data() -> pd.DataFrame:
     path = HISTORICAL_DIR / "complete_player_season_stats.parquet"
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_parquet(path)
-    cols = ["PLAYER_ID", "PLAYER_NAME", "SEASON", "GP", "MIN", "STL", "BLK",
-            "DREB", "TOV", "PF", "REB_PCT"]
+    df = load_standardized(path)
+    cols = ["player_id", "player_name", "season", "gp", "min", "stl", "blk",
+            "dreb", "tov", "pf", "reb_pct"]
     available = [c for c in cols if c in df.columns]
     return df[available]
 
@@ -176,11 +177,11 @@ def load_player_profiles() -> pd.DataFrame:
     path = OUTPUT_DIR / "player_profiles_advanced.parquet"
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_parquet(path)
+    df = load_standardized(path)
     df = df.rename(columns={
-        "player_id": "PLAYER_ID",
-        "season": "SEASON",
-        "player_name": "PLAYER_NAME",
+        "player_id": "player_id",
+        "season": "season",
+        "player_name": "player_name",
     })
     return df
 
@@ -190,8 +191,8 @@ def load_speed_distance() -> pd.DataFrame:
     for season in SEASONS:
         path = TRACKING_DIR / season / "tracking_SpeedDistance.parquet"
         if path.exists():
-            df = pd.read_parquet(path)
-            df["SEASON"] = season
+            df = load_standardized(path)
+            df["season"] = season
             all_data.append(df)
     if all_data:
         return pd.concat(all_data, ignore_index=True)
@@ -203,8 +204,8 @@ def load_tracking_rebounding() -> pd.DataFrame:
     for season in SEASONS:
         path = TRACKING_DIR / season / "tracking_Rebounding.parquet"
         if path.exists():
-            df = pd.read_parquet(path)
-            df["SEASON"] = season
+            df = load_standardized(path)
+            df["season"] = season
             all_data.append(df)
     if all_data:
         return pd.concat(all_data, ignore_index=True)
@@ -217,9 +218,9 @@ def load_hustle_stats() -> pd.DataFrame:
     for season in SEASONS:
         path = TRACKING_DIR / season / "hustle_stats.parquet"
         if path.exists():
-            df = pd.read_parquet(path)
-            if "SEASON" not in df.columns:
-                df["SEASON"] = season
+            df = load_standardized(path)
+            if "season" not in df.columns:
+                df["season"] = season
             all_data.append(df)
     if all_data:
         return pd.concat(all_data, ignore_index=True)
@@ -232,23 +233,23 @@ def load_position_estimates() -> pd.DataFrame:
     frames = []
 
     for path in season_files:
-        df = pd.read_parquet(path)
-        if "SEASON" not in df.columns:
+        df = load_standardized(path)
+        if "season" not in df.columns:
             season = path.stem.replace("player_position_estimates_", "")
-            df["SEASON"] = season
+            df["season"] = season
         frames.append(df)
 
     if frames:
         merged = pd.concat(frames, ignore_index=True)
-        merged = merged.rename(columns={"player_id": "PLAYER_ID"})
+        merged = merged.rename(columns={"player_id": "player_id"})
         return merged
 
     # Backward compatibility with legacy single-file output
     path = OUTPUT_DIR / "player_position_estimates.parquet"
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_parquet(path)
-    df = df.rename(columns={"player_id": "PLAYER_ID"})
+    df = load_standardized(path)
+    df = df.rename(columns={"player_id": "player_id"})
     return df
 
 
@@ -263,8 +264,8 @@ def safe_col(df, col, default=0):
 
 
 def normalize_player_id(df: pd.DataFrame) -> pd.DataFrame:
-    if "PLAYER_ID" in df.columns:
-        df["PLAYER_ID"] = pd.to_numeric(df["PLAYER_ID"], errors="coerce")
+    if "player_id" in df.columns:
+        df["player_id"] = pd.to_numeric(df["player_id"], errors="coerce")
     return df
 
 
@@ -281,18 +282,18 @@ def compute_features(
     position_estimates: pd.DataFrame,
     season: str,
 ) -> pd.DataFrame:
-    vers = versatility[versatility["SEASON"] == season].copy() if len(versatility) > 0 else pd.DataFrame()
-    diff = difficulty[difficulty["SEASON"] == season].copy() if len(difficulty) > 0 else pd.DataFrame()
+    vers = versatility[versatility["season"] == season].copy() if len(versatility) > 0 else pd.DataFrame()
+    diff = difficulty[difficulty["season"] == season].copy() if len(difficulty) > 0 else pd.DataFrame()
     def_trk = defense_tracking.copy() if len(defense_tracking) > 0 else pd.DataFrame()
     trk_def = tracking_defense.copy() if len(tracking_defense) > 0 else pd.DataFrame()
-    bx = box[box["SEASON"] == season].copy() if len(box) > 0 else pd.DataFrame()
-    prof = profiles[profiles["SEASON"] == season].copy() if len(profiles) > 0 else pd.DataFrame()
-    spd = speed_dist[speed_dist["SEASON"] == season].copy() if len(speed_dist) > 0 else pd.DataFrame()
-    reb = reb_tracking[reb_tracking["SEASON"] == season].copy() if len(reb_tracking) > 0 else pd.DataFrame()
-    hst = hustle[hustle["SEASON"] == season].copy() if len(hustle) > 0 else pd.DataFrame()
+    bx = box[box["season"] == season].copy() if len(box) > 0 else pd.DataFrame()
+    prof = profiles[profiles["season"] == season].copy() if len(profiles) > 0 else pd.DataFrame()
+    spd = speed_dist[speed_dist["season"] == season].copy() if len(speed_dist) > 0 else pd.DataFrame()
+    reb = reb_tracking[reb_tracking["season"] == season].copy() if len(reb_tracking) > 0 else pd.DataFrame()
+    hst = hustle[hustle["season"] == season].copy() if len(hustle) > 0 else pd.DataFrame()
     pos_est = (
-        position_estimates[position_estimates["SEASON"] == season].copy()
-        if len(position_estimates) > 0 and "SEASON" in position_estimates.columns
+        position_estimates[position_estimates["season"] == season].copy()
+        if len(position_estimates) > 0 and "season" in position_estimates.columns
         else pd.DataFrame()
     )
 
@@ -306,85 +307,85 @@ def compute_features(
 
     # Pre-2022 complete_player_season_stats stores per-game values (MIN=32.9 MPG).
     # Post-2022 stores season totals. Detect by median MIN < 50 → per-game format.
-    _per_game_cols = ['MIN', 'PTS', 'AST', 'REB', 'OREB', 'DREB', 'STL', 'BLK', 'TOV',
-                      'FGA', 'FGM', 'FG3A', 'FG3M', 'FTA', 'FTM']
-    if features['MIN'].median() < 50 and 'GP' in features.columns:
+    _per_game_cols = ['min', 'pts', 'ast', 'reb', 'oreb', 'dreb', 'stl', 'blk', 'tov',
+                      'fga', 'fgm', 'fg3a', 'fg3m', 'fta', 'ftm']
+    if features['min'].median() < 50 and 'gp' in features.columns:
         for _col in _per_game_cols:
             if _col in features.columns:
-                features[_col] = features[_col] * features['GP']
+                features[_col] = features[_col] * features['gp']
 
     # Merge matchup versatility
     if not vers.empty:
-        vers_r = vers.rename(columns={"DEF_PLAYER_ID": "PLAYER_ID"})
+        vers_r = vers.rename(columns={"def_player_id": "player_id"})
         normalize_player_id(vers_r)
         features = features.merge(
-            vers_r.drop(columns=["DEF_PLAYER_NAME", "SEASON"], errors="ignore"),
-            on="PLAYER_ID", how="left",
+            vers_r.drop(columns=["def_player_name", "season"], errors="ignore"),
+            on="player_id", how="left",
         )
 
     # Merge matchup difficulty
     if not diff.empty:
-        diff_r = diff.rename(columns={"DEF_PLAYER_ID": "PLAYER_ID"})
+        diff_r = diff.rename(columns={"def_player_id": "player_id"})
         normalize_player_id(diff_r)
         features = features.merge(
-            diff_r.drop(columns=["DEF_PLAYER_NAME", "SEASON"], errors="ignore"),
-            on="PLAYER_ID", how="left",
+            diff_r.drop(columns=["def_player_name", "season"], errors="ignore"),
+            on="player_id", how="left",
         )
 
     # Merge defense tracking (leaguedashptdefend — D_FG_PCT_Overall, etc.)
     if not def_trk.empty:
         features = features.merge(
-            def_trk.drop(columns=["PLAYER_NAME", "SEASON"], errors="ignore"),
-            on="PLAYER_ID", how="left",
+            def_trk.drop(columns=["player_name", "season"], errors="ignore"),
+            on="player_id", how="left",
         )
 
     # Merge tracking defense (per-game: STL, BLK, DREB, DEF_RIM_FGM/FGA/FG_PCT)
     if not trk_def.empty:
         trk_def_r = trk_def.rename(columns={
-            "STL": "STL_PG_TRK", "BLK": "BLK_PG_TRK", "DREB": "DREB_PG_TRK",
+            "stl": "STL_PG_TRK", "blk": "BLK_PG_TRK", "dreb": "DREB_PG_TRK",
         })
-        drop_cols = ["PLAYER_NAME", "SEASON", "GP", "W", "L", "MIN",
-                     "TEAM_ID", "TEAM_ABBREVIATION"]
+        drop_cols = ["player_name", "season", "gp", "W", "L", "min",
+                     "team_id", "team_abbreviation"]
         features = features.merge(
             trk_def_r.drop(columns=drop_cols, errors="ignore"),
-            on="PLAYER_ID", how="left",
+            on="player_id", how="left",
         )
 
     # Merge profiles (defensive workload)
     if not prof.empty:
         features = features.merge(
-            prof.drop(columns=["PLAYER_NAME", "SEASON"], errors="ignore"),
-            on="PLAYER_ID", how="left", suffixes=("", "_prof"),
+            prof.drop(columns=["player_name", "season"], errors="ignore"),
+            on="player_id", how="left", suffixes=("", "_prof"),
         )
 
     # Merge speed/distance
-    if not spd.empty and "PLAYER_ID" in spd.columns:
-        spd_cols = ["PLAYER_ID", "DIST_MILES", "DIST_MILES_DEF", "AVG_SPEED",
-                    "AVG_SPEED_DEF"]
+    if not spd.empty and "player_id" in spd.columns:
+        spd_cols = ["player_id", "dist_miles", "dist_miles_def", "avg_speed",
+                    "avg_speed_def"]
         spd_cols = [c for c in spd_cols if c in spd.columns]
-        features = features.merge(spd[spd_cols], on="PLAYER_ID", how="left")
+        features = features.merge(spd[spd_cols], on="player_id", how="left")
 
     # Merge rebounding tracking
-    if not reb.empty and "PLAYER_ID" in reb.columns:
-        reb_cols = ["PLAYER_ID", "DREB_CHANCES", "DREB_CHANCE_PCT",
-                    "DREB_CONTEST", "DREB_CONTEST_PCT"]
+    if not reb.empty and "player_id" in reb.columns:
+        reb_cols = ["player_id", "dreb_chances", "dreb_chance_pct",
+                    "dreb_contest", "DREB_CONTEST_PCT"]
         reb_cols = [c for c in reb_cols if c in reb.columns]
-        features = features.merge(reb[reb_cols], on="PLAYER_ID", how="left")
+        features = features.merge(reb[reb_cols], on="player_id", how="left")
 
     # Merge hustle stats
-    if not hst.empty and "PLAYER_ID" in hst.columns:
-        hustle_cols = ["PLAYER_ID", "DEFLECTIONS", "CONTESTED_SHOTS",
-                       "CONTESTED_SHOTS_2PT", "CONTESTED_SHOTS_3PT",
-                       "CHARGES_DRAWN", "SCREEN_ASSISTS",
-                       "DEF_LOOSE_BALLS_RECOVERED", "LOOSE_BALLS_RECOVERED",
-                       "DEF_BOXOUTS", "BOX_OUTS"]
+    if not hst.empty and "player_id" in hst.columns:
+        hustle_cols = ["player_id", "deflections", "contested_shots",
+                       "contested_shots_2pt", "contested_shots_3pt",
+                       "charges_drawn", "screen_assists",
+                       "def_loose_balls_recovered", "loose_balls_recovered",
+                       "def_boxouts", "box_outs"]
         hustle_cols = [c for c in hustle_cols if c in hst.columns]
-        features = features.merge(hst[hustle_cols], on="PLAYER_ID", how="left")
+        features = features.merge(hst[hustle_cols], on="player_id", how="left")
 
     # Merge season-level position estimates (own-position usage and height)
     if not pos_est.empty:
         est_cols = [
-            "PLAYER_ID",
+            "player_id",
             "primary_position",
             "primary_position_estimate",
             "height_inches",
@@ -395,34 +396,34 @@ def compute_features(
         est_cols = [c for c in est_cols if c in pos_est.columns]
         if est_cols:
             features = features.merge(
-                pos_est[est_cols].drop_duplicates(subset=["PLAYER_ID"]),
-                on="PLAYER_ID", how="left",
+                pos_est[est_cols].drop_duplicates(subset=["player_id"]),
+                on="player_id", how="left",
             )
 
     # ---- Compute derived features ----
-    poss_def = safe_col(features, "POSS_DEF", np.nan).fillna(features["MIN"] * 2.0)
-    seconds_def = safe_col(features, "SECONDS_DEF", np.nan).fillna(features["MIN"] * 60.0)
-    features["POSS_DEF"] = poss_def
-    features["SECONDS_DEF"] = seconds_def
+    poss_def = safe_col(features, "poss_def", np.nan).fillna(features["min"] * 2.0)
+    seconds_def = safe_col(features, "seconds_def", np.nan).fillna(features["min"] * 60.0)
+    features["poss_def"] = poss_def
+    features["seconds_def"] = seconds_def
 
-    features["STL_PER100_DEF_POSS"] = (
-        safe_col(features, "STL", 0)
+    features["stl_per100_def_poss"] = (
+        safe_col(features, "stl", 0)
         / poss_def.replace(0, np.nan)
         * 100
     )
-    features["DREB_PER100_DEF_POSS"] = (
-        safe_col(features, "DREB", 0)
+    features["dreb_per100_def_poss"] = (
+        safe_col(features, "dreb", 0)
         / poss_def.replace(0, np.nan)
         * 100
     )
 
     # ---- FIX BLK_PCT: Use per-game BLK from tracking_Defense / per-game DEF_RIM_FGA ----
     blk_pg = safe_col(features, "BLK_PG_TRK", np.nan)
-    rim_fga_pg = safe_col(features, "DEF_RIM_FGA", np.nan)
+    rim_fga_pg = safe_col(features, "def_rim_fga", np.nan)
 
     # Fallback: compute per-game BLK from box totals
     blk_pg = blk_pg.fillna(
-        safe_col(features, "BLK", 0) / features["GP"].replace(0, np.nan)
+        safe_col(features, "blk", 0) / features["gp"].replace(0, np.nan)
     )
     # Fallback rim FGA: use LessThan6Ft D_FGA if available
     rim_fga_pg = rim_fga_pg.fillna(
@@ -430,22 +431,22 @@ def compute_features(
     )
     rim_fga_pg = rim_fga_pg.fillna(3.0)  # league average fallback
 
-    features["BLK_PG"] = blk_pg
-    features["DEF_RIM_FGA_PG"] = rim_fga_pg
-    features["BLK_PCT"] = blk_pg / rim_fga_pg.replace(0, np.nan)
-    features["BLK_PCT"] = features["BLK_PCT"].replace(
+    features["blk_pg"] = blk_pg
+    features["def_rim_fga_pg"] = rim_fga_pg
+    features["blk_pct"] = blk_pg / rim_fga_pg.replace(0, np.nan)
+    features["blk_pct"] = features["blk_pct"].replace(
         [np.inf, -np.inf], np.nan
     ).fillna(0)
-    features["BLK_PCT"] = features["BLK_PCT"].clip(0, 1.0)
+    features["blk_pct"] = features["blk_pct"].clip(0, 1.0)
 
-    features["RIM_FGA_RATE"] = rim_fga_pg
+    features["rim_fga_rate"] = rim_fga_pg
     features["DEF_SECONDS_PER_GAME"] = (
-        seconds_def / features["GP"].replace(0, np.nan)
+        seconds_def / features["gp"].replace(0, np.nan)
     )
-    features["DEF_RIM_FG_PCT"] = safe_col(features, "DEF_RIM_FG_PCT", 0.62)
-    features["D_FG_DIFF"] = safe_col(features, "PCT_PLUSMINUS_Overall", 0)
+    features["def_rim_fg_pct"] = safe_col(features, "def_rim_fg_pct", 0.62)
+    features["d_fg_diff"] = safe_col(features, "PCT_PLUSMINUS_Overall", 0)
 
-    features["SEASON"] = season
+    features["season"] = season
     return features
 
 
@@ -681,8 +682,8 @@ def compute_defensive_fit(row, archetype):
 def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     """Role-only defensive classification (v3.4)."""
     df = features.copy()
-    qualified = df[(df["MIN"] >= MIN_MINUTES) & (df["GP"] >= MIN_GP)].copy()
-    unqualified = df[(df["MIN"] < MIN_MINUTES) | (df["GP"] < MIN_GP)].copy()
+    qualified = df[(df["min"] >= MIN_MINUTES) & (df["gp"] >= MIN_GP)].copy()
+    unqualified = df[(df["min"] < MIN_MINUTES) | (df["gp"] < MIN_GP)].copy()
 
     if len(qualified) == 0:
         return pd.DataFrame()
@@ -691,19 +692,19 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     qualified["switch_score"] = safe_col(qualified, "switch_score", 0.5)
     qualified["avg_opponent_ppg"] = safe_col(qualified, "avg_opponent_ppg", 11.5)
     qualified["elite_matchup_pct"] = safe_col(qualified, "elite_matchup_pct", 0.15)
-    qualified["STL_PER100_DEF_POSS"] = safe_col(qualified, "STL_PER100_DEF_POSS", 0.8)
-    qualified["BLK_PCT"] = safe_col(qualified, "BLK_PCT", 0.03)
-    qualified["DEF_RIM_FG_PCT"] = safe_col(qualified, "DEF_RIM_FG_PCT", 0.62)
-    qualified["RIM_FGA_RATE"] = safe_col(qualified, "RIM_FGA_RATE", 3.0)
-    qualified["D_FG_DIFF"] = safe_col(qualified, "D_FG_DIFF", 0)
-    qualified["POSS_DEF"] = safe_col(qualified, "POSS_DEF", qualified["MIN"] * 2.0)
-    qualified["SECONDS_DEF"] = safe_col(qualified, "SECONDS_DEF", qualified["MIN"] * 60.0)
-    qualified["DIST_MILES_DEF"] = safe_col(qualified, "DIST_MILES_DEF", 0)
-    qualified["AVG_SPEED_DEF"] = safe_col(qualified, "AVG_SPEED_DEF", 0)
-    qualified["DREB_CHANCES"] = safe_col(qualified, "DREB_CHANCES", 0)
-    qualified["DREB_CHANCE_PCT"] = safe_col(qualified, "DREB_CHANCE_PCT", 0)
-    qualified["REB_PCT"] = safe_col(qualified, "REB_PCT", 0)
-    qualified["DREB_CHANCE_PCT"] = safe_col(qualified, "DREB_CHANCE_PCT", 0)
+    qualified["stl_per100_def_poss"] = safe_col(qualified, "stl_per100_def_poss", 0.8)
+    qualified["blk_pct"] = safe_col(qualified, "blk_pct", 0.03)
+    qualified["def_rim_fg_pct"] = safe_col(qualified, "def_rim_fg_pct", 0.62)
+    qualified["rim_fga_rate"] = safe_col(qualified, "rim_fga_rate", 3.0)
+    qualified["d_fg_diff"] = safe_col(qualified, "d_fg_diff", 0)
+    qualified["poss_def"] = safe_col(qualified, "poss_def", qualified["min"] * 2.0)
+    qualified["seconds_def"] = safe_col(qualified, "seconds_def", qualified["min"] * 60.0)
+    qualified["dist_miles_def"] = safe_col(qualified, "dist_miles_def", 0)
+    qualified["avg_speed_def"] = safe_col(qualified, "avg_speed_def", 0)
+    qualified["dreb_chances"] = safe_col(qualified, "dreb_chances", 0)
+    qualified["dreb_chance_pct"] = safe_col(qualified, "dreb_chance_pct", 0)
+    qualified["reb_pct"] = safe_col(qualified, "reb_pct", 0)
+    qualified["dreb_chance_pct"] = safe_col(qualified, "dreb_chance_pct", 0)
     qualified["pct_guards"] = safe_col(qualified, "pct_guards", 0.33)
     qualified["pct_forwards"] = safe_col(qualified, "pct_forwards", 0.33)
     qualified["pct_centers"] = safe_col(qualified, "pct_centers", 0.33)
@@ -721,40 +722,40 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     qualified["height_inches"] = safe_col(qualified, "height_inches", 78)
 
     # Hustle stat defaults
-    for hcol in ["DEFLECTIONS", "CONTESTED_SHOTS", "CONTESTED_SHOTS_3PT",
-                 "CHARGES_DRAWN", "DEF_LOOSE_BALLS_RECOVERED", "DEF_BOXOUTS"]:
+    for hcol in ["deflections", "contested_shots", "contested_shots_3pt",
+                 "charges_drawn", "def_loose_balls_recovered", "def_boxouts"]:
         qualified[hcol] = safe_col(qualified, hcol, 0)
 
     # -- Percentiles --
     qualified["versatility_pctl"] = qualified["switch_score"].rank(pct=True)
     qualified["difficulty_pctl"] = qualified["avg_opponent_ppg"].rank(pct=True)
     qualified["elite_matchup_pctl"] = qualified["elite_matchup_pct"].rank(pct=True)
-    qualified["stl_pctl"] = qualified["STL_PER100_DEF_POSS"].rank(pct=True)
-    qualified["blk_pctl"] = qualified["BLK_PCT"].rank(pct=True)
-    qualified["rim_fg_pctl"] = qualified["DEF_RIM_FG_PCT"].rank(pct=True)
-    qualified["rim_fga_pctl"] = qualified["RIM_FGA_RATE"].rank(pct=True)
-    qualified["d_results_pctl"] = 1 - qualified["D_FG_DIFF"].rank(pct=True)
-    qualified["reb_pctl"] = qualified["REB_PCT"].rank(pct=True)
+    qualified["stl_pctl"] = qualified["stl_per100_def_poss"].rank(pct=True)
+    qualified["blk_pctl"] = qualified["blk_pct"].rank(pct=True)
+    qualified["rim_fg_pctl"] = qualified["def_rim_fg_pct"].rank(pct=True)
+    qualified["rim_fga_pctl"] = qualified["rim_fga_rate"].rank(pct=True)
+    qualified["d_results_pctl"] = 1 - qualified["d_fg_diff"].rank(pct=True)
+    qualified["reb_pctl"] = qualified["reb_pct"].rank(pct=True)
     qualified["guard_pctl"] = qualified["pct_guards"].rank(pct=True)
     qualified["forward_pctl"] = qualified["pct_forwards"].rank(pct=True)
     qualified["center_pctl"] = qualified["pct_centers"].rank(pct=True)
-    qualified["speed_pctl"] = qualified["AVG_SPEED_DEF"].rank(pct=True)
+    qualified["speed_pctl"] = qualified["avg_speed_def"].rank(pct=True)
     qualified["height_pctl"] = qualified["height_inches"].rank(pct=True)
-    qualified["rim_presence_pctl"] = qualified["RIM_FGA_RATE"].rank(pct=True)
-    qualified["dreb_chance_pctl"] = qualified["DREB_CHANCE_PCT"].rank(pct=True)
+    qualified["rim_presence_pctl"] = qualified["rim_fga_rate"].rank(pct=True)
+    qualified["dreb_chance_pctl"] = qualified["dreb_chance_pct"].rank(pct=True)
 
     # Hustle percentiles
-    qualified["deflections_pctl"] = qualified["DEFLECTIONS"].rank(pct=True)
-    qualified["contested_shots_pctl"] = qualified["CONTESTED_SHOTS"].rank(pct=True)
-    qualified["contested_3pt_pctl"] = qualified["CONTESTED_SHOTS_3PT"].rank(pct=True)
-    qualified["charges_pctl"] = qualified["CHARGES_DRAWN"].rank(pct=True)
-    qualified["loose_balls_pctl"] = qualified["DEF_LOOSE_BALLS_RECOVERED"].rank(pct=True)
-    qualified["boxouts_pctl"] = qualified["DEF_BOXOUTS"].rank(pct=True)
+    qualified["deflections_pctl"] = qualified["deflections"].rank(pct=True)
+    qualified["contested_shots_pctl"] = qualified["contested_shots"].rank(pct=True)
+    qualified["contested_3pt_pctl"] = qualified["contested_shots_3pt"].rank(pct=True)
+    qualified["charges_pctl"] = qualified["charges_drawn"].rank(pct=True)
+    qualified["loose_balls_pctl"] = qualified["def_loose_balls_recovered"].rank(pct=True)
+    qualified["boxouts_pctl"] = qualified["def_boxouts"].rank(pct=True)
 
     # -- Engagement & Hustle composite --
-    poss_def_pg = qualified["POSS_DEF"] / qualified["GP"].replace(0, np.nan)
-    seconds_def_pg = qualified["SECONDS_DEF"] / qualified["GP"].replace(0, np.nan)
-    dist_def_pg = qualified["DIST_MILES_DEF"] / qualified["GP"].replace(0, np.nan)
+    poss_def_pg = qualified["poss_def"] / qualified["gp"].replace(0, np.nan)
+    seconds_def_pg = qualified["seconds_def"] / qualified["gp"].replace(0, np.nan)
+    dist_def_pg = qualified["dist_miles_def"] / qualified["gp"].replace(0, np.nan)
 
     def zscore(s):
         m, sd = s.mean(skipna=True), s.std(skipna=True)
@@ -766,13 +767,13 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
         zscore(poss_def_pg.fillna(0))
         + zscore(seconds_def_pg.fillna(0))
         + zscore(dist_def_pg.fillna(0))
-        + zscore(qualified["AVG_SPEED_DEF"].fillna(0))
+        + zscore(qualified["avg_speed_def"].fillna(0))
     )
     hustle_score = (
-        zscore(qualified["DREB_CHANCES"].fillna(0))
-        + zscore(qualified["DREB_CHANCE_PCT"].fillna(0))
-        + zscore(qualified["DEFLECTIONS"].fillna(0)) * 0.5
-        + zscore(qualified["CONTESTED_SHOTS"].fillna(0)) * 0.5
+        zscore(qualified["dreb_chances"].fillna(0))
+        + zscore(qualified["dreb_chance_pct"].fillna(0))
+        + zscore(qualified["deflections"].fillna(0)) * 0.5
+        + zscore(qualified["contested_shots"].fillna(0)) * 0.5
     )
 
     qualified["engagement_score"] = engagement_score
@@ -1114,11 +1115,11 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
         )
 
         results.append({
-            "PLAYER_ID": row["PLAYER_ID"],
-            "PLAYER_NAME": row["PLAYER_NAME"],
-            "SEASON": row["SEASON"],
-            "GP": row["GP"],
-            "MIN": row["MIN"],
+            "player_id": row["player_id"],
+            "player_name": row["player_name"],
+            "season": row["season"],
+            "gp": row["gp"],
+            "min": row["min"],
             "defensive_archetype": archetype,
             "defensive_secondary": secondary,
             "defensive_confidence": min(1.0, confidence),
@@ -1131,21 +1132,21 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "avg_opponent_ppg": row["avg_opponent_ppg"],
             "elite_matchup_pct": row["elite_matchup_pct"],
             "difficulty_pctl": diff_pctl,
-            "STL_PER100_DEF_POSS": row["STL_PER100_DEF_POSS"],
+            "stl_per100_def_poss": row["stl_per100_def_poss"],
             "stl_pctl": row["stl_pctl"],
-            "BLK_PCT": row["BLK_PCT"],
+            "blk_pct": row["blk_pct"],
             "blk_pctl": row["blk_pctl"],
-            "DEF_RIM_FG_PCT": row["DEF_RIM_FG_PCT"],
-            "RIM_FGA_RATE": row["RIM_FGA_RATE"],
+            "def_rim_fg_pct": row["def_rim_fg_pct"],
+            "rim_fga_rate": row["rim_fga_rate"],
             "engagement_score": row["engagement_score"],
             "engagement_pctl": eng_pctl,
             "hustle_score": row["hustle_score"],
             "hustle_pctl": row["hustle_pctl"],
-            "D_FG_DIFF": row["D_FG_DIFF"],
+            "d_fg_diff": row["d_fg_diff"],
             "d_results_pctl": d_res,
-            "DEFLECTIONS": row.get("DEFLECTIONS", 0),
+            "deflections": row.get("deflections", 0),
             "deflections_pctl": row.get("deflections_pctl", 0),
-            "CONTESTED_SHOTS": row.get("CONTESTED_SHOTS", 0),
+            "contested_shots": row.get("contested_shots", 0),
             "contested_shots_pctl": row.get("contested_shots_pctl", 0),
             "ball_pressure_index_pctl": row["ball_pressure_index_pctl"],
             "screen_navigation_index_pctl": row["screen_navigation_index_pctl"],
@@ -1171,11 +1172,11 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
     _zero = {c: 0 for c in SCORE_COLS}
     for _, row in unqualified.iterrows():
         results.append({
-            "PLAYER_ID": row["PLAYER_ID"],
-            "PLAYER_NAME": row["PLAYER_NAME"],
-            "SEASON": row["SEASON"],
-            "GP": row["GP"],
-            "MIN": row["MIN"],
+            "player_id": row["player_id"],
+            "player_name": row["player_name"],
+            "season": row["season"],
+            "gp": row["gp"],
+            "min": row["min"],
             "defensive_archetype": "Insufficient Minutes",
             "defensive_secondary": None,
             "defensive_confidence": 0.0,
@@ -1186,14 +1187,14 @@ def classify_defenders(features: pd.DataFrame) -> pd.DataFrame:
             "switch_score": 0, "versatility_pctl": 0,
             "avg_opponent_ppg": 0, "elite_matchup_pct": 0,
             "difficulty_pctl": 0,
-            "STL_PER100_DEF_POSS": 0, "stl_pctl": 0,
-            "BLK_PCT": 0, "blk_pctl": 0,
-            "DEF_RIM_FG_PCT": 0, "RIM_FGA_RATE": 0,
+            "stl_per100_def_poss": 0, "stl_pctl": 0,
+            "blk_pct": 0, "blk_pctl": 0,
+            "def_rim_fg_pct": 0, "rim_fga_rate": 0,
             "engagement_score": 0, "engagement_pctl": 0,
             "hustle_score": 0, "hustle_pctl": 0,
-            "D_FG_DIFF": 0, "d_results_pctl": 0,
-            "DEFLECTIONS": 0, "deflections_pctl": 0,
-            "CONTESTED_SHOTS": 0, "contested_shots_pctl": 0,
+            "d_fg_diff": 0, "d_results_pctl": 0,
+            "deflections": 0, "deflections_pctl": 0,
+            "contested_shots": 0, "contested_shots_pctl": 0,
             "ball_pressure_index_pctl": 0,
             "screen_navigation_index_pctl": 0,
             "offball_navigation_index_pctl": 0,
@@ -1270,7 +1271,7 @@ def main():
         return
 
     final_df = pd.concat(all_results, ignore_index=True)
-    final_df.to_parquet(OUTPUT_DIR / "defensive_archetypes_v2.parquet", index=False)
+    save_standardized(final_df, OUTPUT_DIR / "defensive_archetypes_v2.parquet")
     final_df.to_csv(OUTPUT_DIR / "defensive_archetypes_v2.csv", index=False)
 
     print(f"\nSaved {len(final_df)} records to defensive_archetypes_v2.parquet")
@@ -1296,12 +1297,12 @@ def main():
 
     for name, expected in known:
         player = final_df[
-            (final_df["PLAYER_NAME"].str.contains(name, case=False, na=False))
-            & (final_df["SEASON"] == "2024-25")
+            (final_df["player_name"].str.contains(name, case=False, na=False))
+            & (final_df["season"] == "2024-25")
         ]
         if len(player) == 0:
             player = final_df[
-                final_df["PLAYER_NAME"].str.contains(name, case=False, na=False)
+                final_df["player_name"].str.contains(name, case=False, na=False)
             ]
         if len(player) > 0:
             r = player.iloc[0]
@@ -1313,9 +1314,9 @@ def main():
                 f"Mob={r.get('mobile_big_score',0):.2f}"
             )
             print(
-                f"  {r['PLAYER_NAME'][:22]:22} "
+                f"  {r['player_name'][:22]:22} "
                 f"| {r['defensive_archetype']:22}{sec:15}"
-                f" | BLK%={r['BLK_PCT']:.3f}"
+                f" | BLK%={r['blk_pct']:.3f}"
                 f" Eff={r['defensive_effectiveness']:.2f}"
                 f" Fit={r['defensive_fit']}"
                 f" | Conf={r['defensive_confidence']:.2f}"
@@ -1328,7 +1329,7 @@ def main():
     print(f"\n=== OVERALL DISTRIBUTION ===")
     print(q["defensive_archetype"].value_counts().to_string())
     print(f"\n=== BLK_PCT STATS (should be 0-1 range) ===")
-    blk = q["BLK_PCT"]
+    blk = q["blk_pct"]
     print(f"  min={blk.min():.4f} max={blk.max():.4f} mean={blk.mean():.4f}")
     print(f"\n=== CONFIDENCE STATS ===")
     conf = q["defensive_confidence"]

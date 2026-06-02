@@ -18,14 +18,16 @@ Notes:
 """
 import requests
 import pandas as pd
-import pyarrow.parquet as pq
-import pyarrow as pa
 import time
 import re
 import unicodedata
 from bs4 import BeautifulSoup
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+from src.data.schema_contract import save_standardized
 
 OUTPUT_PARQUET = "data/historical/player_salaries.parquet"
 
@@ -218,8 +220,7 @@ def main():
             "player_name_final": "player_name",
         })
         season_file = f"data/historical/player_salaries_{season}.parquet"
-        table = pa.Table.from_pandas(out, preserve_index=False)
-        pq.write_table(table, season_file)
+        save_standardized(out, season_file)
         print(f"Wrote {season_file} with {len(out)} rows.")
 
     # Print summary: number of unique players per season

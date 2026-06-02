@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.simulation.simulation_config import REPORTS_DIR
 from src.player_eval.constants import DEFAULT_TEAM_SCALE
+from src.data.schema_contract import load_standardized, save_standardized
 
 FORECAST_FEATURES = Path("data/processed/forecast/projected_team_features.parquet")
 GAME_LOGS = Path("data/historical/team_game_logs.parquet")
@@ -44,7 +45,7 @@ WIN_PCT_CLIP = (0.10, 0.90)  # avoid ±∞ from Φ^{-1}
 
 def compute_actual_net_ratings(gl: pd.DataFrame, season: str) -> pd.DataFrame:
     """Estimate actual team net rating from observed win% in a season."""
-    season_gl = gl[gl["SEASON"] == season].copy()
+    season_gl = gl[gl["season"] == season].copy()
     if season_gl.empty:
         return pd.DataFrame()
 
@@ -54,18 +55,18 @@ def compute_actual_net_ratings(gl: pd.DataFrame, season: str) -> pd.DataFrame:
 
     wins = (
         season_gl[season_gl["WL"] == "W"]
-        .groupby("TEAM_ABBREVIATION")
+        .groupby("team_abbreviation")
         .size()
         .reset_index(name="wins")
     )
     total = (
-        season_gl.groupby("TEAM_ABBREVIATION")
+        season_gl.groupby("team_abbreviation")
         .size()
         .reset_index(name="gp")
     )
-    rec = wins.merge(total, on="TEAM_ABBREVIATION", how="right").fillna({"wins": 0})
+    rec = wins.merge(total, on="team_abbreviation", how="right").fillna({"wins": 0})
     rec["win_pct"] = rec["wins"] / rec["gp"]
-    rec["team_abbreviation"] = rec["TEAM_ABBREVIATION"].astype(str).str.upper()
+    rec["team_abbreviation"] = rec["team_abbreviation"].astype(str).str.upper()
 
     # Actual net rating from win%
     clipped = rec["win_pct"].clip(*WIN_PCT_CLIP)
@@ -96,12 +97,12 @@ def main() -> None:
         print(f"ERROR: {FORECAST_FEATURES} not found. Run forecast pipeline first.")
         return
 
-    ptf = pd.read_parquet(FORECAST_FEATURES)
-    gl = pd.read_parquet(GAME_LOGS)
+    ptf = load_standardized(FORECAST_FEATURES)
+    gl = load_standardized(GAME_LOGS)
 
     ptf["season"] = ptf["season"].astype(str)
     ptf["team_abbreviation"] = ptf["team_abbreviation"].astype(str).str.upper()
-    gl["SEASON"] = gl["SEASON"].astype(str)
+    gl["season"] = gl["season"].astype(str)
 
     seasons = sorted(ptf["season"].unique())
     print(f"Projected seasons: {seasons}")

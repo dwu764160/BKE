@@ -94,17 +94,17 @@ class PostHocConfig:
 
 def build_matchup_dim6_z(def_arch: pd.DataFrame) -> pd.DataFrame:
     """Return [player_id, season, matchup_dim6_z] composite z-score."""
-    df = def_arch[["PLAYER_ID", "SEASON"]].copy()
-    df["player_id"] = df["PLAYER_ID"].astype(str).str.replace(r"\.0$", "", regex=True)
-    df["season"] = df["SEASON"].astype(str)
+    df = def_arch[["player_id", "season"]].copy()
+    df["player_id"] = df["player_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+    df["season"] = df["season"].astype(str)
 
     components = {
         "d_results_pctl": 0.35,
-        "D_FG_DIFF": 0.30,
+        "d_fg_diff": 0.30,
         "contested_shots_pctl": 0.15,
         "rim_protection_index_pctl": 0.20,
     }
-    invert = {"D_FG_DIFF"}  # low = good → invert
+    invert = {"d_fg_diff"}  # low = good → invert
 
     composite = pd.Series(0.0, index=def_arch.index)
     total_w = 0.0
@@ -112,7 +112,7 @@ def build_matchup_dim6_z(def_arch: pd.DataFrame) -> pd.DataFrame:
         if col not in def_arch.columns:
             continue
         vals = pd.to_numeric(def_arch[col], errors="coerce")
-        z = vals.groupby(def_arch["SEASON"].astype(str)).transform(
+        z = vals.groupby(def_arch["season"].astype(str)).transform(
             lambda x: (x - x.mean()) / max(x.std(), 1e-6)
         ).fillna(0)
         if col in invert:

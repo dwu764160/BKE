@@ -58,7 +58,9 @@ LEAGUE_EFG = 0.535
 LEAGUE_3P = 0.360
 LEAGUE_FT = 0.780
 LEAGUE_OREB = 0.260
-LEAGUE_AST_ON_MADE = 0.580   # share of made FG that are assisted
+LEAGUE_AST_ON_MADE = 0.730   # P(made FG generates an assist credit). Above the raw
+                             # league ast/fgm (~0.61) to net the right total after the
+                             # assister!=scorer self-pick rejection drops ~12% (Step 2.1).
 LEAGUE_PACE = 99.0           # possessions per team per game
 LEAGUE_USAGE = 0.180
 LEAGUE_BENCH_EFG = 0.520
@@ -80,6 +82,68 @@ ARCH_SHAPE: Dict[str, Dict[str, float]] = {
     "Off-Ball Stationary Shooter":{"usage": 0.70, "three": 1.55, "ft": 0.80, "ast": 0.65, "tov": 0.80},
 }
 _DEFAULT_SHAPE = {"usage": 1.0, "three": 1.0, "ft": 1.0, "ast": 1.0, "tov": 1.0}
+
+# Step 2.1 Defect 1 — rebound-share concentration by position band. The raw
+# behavioral_drb/orb_rate are nearly flat across bands (bigs ~1.2x guards), so the
+# emergent rebound profile collapsed to ~3.5 for everyone. These multipliers restore
+# the real big > wing > guard rebounding hierarchy on top of the behavioral rate.
+_BAND_DRB_MULT = {"bigs": 1.55, "wings": 1.05, "smalls": 0.80}
+_BAND_ORB_MULT = {"bigs": 1.95, "wings": 1.0, "smalls": 0.48}
+_REB_RATE_CAP = 0.55   # tame behavioral_orb_rate outliers (data has values up to 1.0)
+
+# Step 2.1 — structural FTR->FT-trip conversion. behavioral_free_throw_rate is FTR
+# (FTA per FGA, league ~0.22), NOT the per-possession probability that a possession
+# ends in a shooting-foul FT trip. Using FTR directly flooded the sim with ~2.5x too
+# many FTs (FTA ~55 vs ~22 actual), siphoning possessions from field goals and
+# suppressing made-FG assists. This coefficient maps FTR -> per-possession trip prob
+# so league FT volume (~22 FTA, ~11 trips/game) emerges. Structural, not a tunable.
+_FT_TRIP_PER_FTR = 0.45
+
+# Step 2.1 Defect 2 — assist concentration exponent. Near-linear: a steeper value funneled
+# too many assists to the single pass-first playmaker (Haliburton/Garland projected +3 to
+# +5 over) while pass-second scorers went under. 1.0 keeps assists proportional to actual
+# assist rate, which already separates primaries from finishers.
+_AST_CONC_EXP = 1.00
+
+# Step 2.1 Defect 3 — shape of the possession distribution. The dominant mid-tier leak
+# was MINUTES (fixed by the 9-man rotation cap in the runner). The remaining distortion
+# was over-STEEPNESS at the top: mpg x usage x archetype-usage-shape over-fed the single
+# ball-dominant creator (SGA/Curry/Haliburton projected +4 to +8 over) while starving the
+# mid rotation. A sub-1 usage exponent FLATTENS the curve — trimming the rank-1 over and
+# lifting Star/Starter shares simultaneously (a >1 exponent does the opposite and was
+# wrong). _MPG_CONC_EXP stays linear; minutes already encode rotation hierarchy.
+_MPG_CONC_EXP = 1.00
+_USAGE_CONC_EXP = 0.80
+
+# Step 2.1 Defect 4 — per-game minutes dispersion. v1 holds projected MPG fixed across
+# all sims, so a player's only game-to-game variance is per-possession binomial noise —
+# far too narrow (pts P10-P90 coverage ~0.65 vs 0.80 target). The dominant missing
+# variance source is MINUTES: DNPs, foul trouble, blowout garbage time. A per-(sim,
+# player) lognormal minutes multiplier injects that variance. It is minutes-DEPENDENT
+# (high-minute stars have stable rotations -> low sigma; low-minute role players DNP and
+# swing hard -> high sigma) and per-sim normalized to mean 1, so team minutes stay
+# zero-sum (team totals are not over-dispersed) and per-player means are preserved.
+_MIN_DISP_SIGMA_BASE = 0.26    # floor sigma for high-minute starters (keeps star tails tight)
+_MIN_DISP_SIGMA_EXTRA = 0.36   # added sigma as minutes drop toward bench level
+_MIN_DISP_FULL_MPG = 35.0      # mpg at/above which only base sigma applies
+
+
+def _minutes_dispersion(players: List["Player"], n_sims: int,
+                        rng: np.random.Generator) -> np.ndarray:
+    """Per-(sim, player) minutes multiplier (n_sims, K), mean ~1 per sim (zero-sum
+    team minutes). Lower-minute players get a wider lognormal (more DNP/foul swing)."""
+    K = len(players)
+    if K == 0:
+        return np.ones((n_sims, 0))
+    sig = np.array([
+        _MIN_DISP_SIGMA_BASE + _MIN_DISP_SIGMA_EXTRA
+        * float(np.clip((_MIN_DISP_FULL_MPG - max(p.mpg, 0.0)) / _MIN_DISP_FULL_MPG, 0.0, 1.0))
+        for p in players
+    ], dtype=float)
+    ms = rng.lognormal(-0.5 * sig * sig, sig, size=(n_sims, K))
+    ms = np.clip(ms, 0.10, 2.30)
+    ms /= ms.mean(axis=1, keepdims=True)   # per-sim normalize -> zero-sum minutes
+    return ms
 
 
 @dataclass
@@ -186,7 +250,7 @@ class RateModel:
         sh = self._shape(p.off_arch)
         mm = self.matchup_mult(p.matchup_adj)
         three = float(np.clip(p.three_rate * sh["three"], 0.0, 0.95))
-        efg = float(np.clip(p.efg * mm * self.g.efg_scale, 0.20, 0.78))
+        efg = float(np.clip(p.efg * mm * self.g.efg_scale, 0.20, 0.72))
         p3 = float(np.clip(self.g.league_3p * (efg / LEAGUE_EFG), 0.15, 0.55))
         if three < 0.99:
             p2 = (efg * 2.0 - three * p3 * 3.0) / ((1.0 - three) * 2.0)
@@ -194,31 +258,54 @@ class RateModel:
             p2 = efg
         p2 = float(np.clip(p2, 0.25, 0.80))
         tov = float(np.clip(p.tov_rate * sh["tov"] * self.g.tov_scale, 0.02, 0.30))
-        ft_trip = float(np.clip(p.ftr * sh["ft"] * self.g.ft_scale, 0.0, 0.60))
+        ft_trip = float(np.clip(p.ftr * sh["ft"] * self.g.ft_scale * _FT_TRIP_PER_FTR, 0.0, 0.35))
         return {"three": three, "p2": p2, "p3": p3, "tov": tov, "ft_trip": ft_trip}
 
     def finish_weights(self, lineup: Lineup) -> np.ndarray:
         """P(player i is the terminal actor) ∝ minutes-on-court × usage × shape."""
         w = np.array([
-            max(pl.mpg, 0.0) * max(pl.usage, 1e-4) * self._shape(pl.off_arch)["usage"]
+            (max(pl.mpg, 0.0) ** _MPG_CONC_EXP)
+            * (max(pl.usage, 1e-4) ** _USAGE_CONC_EXP)
+            * self._shape(pl.off_arch)["usage"]
             for pl in lineup.players
         ], dtype=float)
         s = w.sum()
         return w / s if s > 0 else np.full(len(w), 1.0 / max(len(w), 1))
 
     def assist_weights(self, lineup: Lineup) -> np.ndarray:
-        w = np.array([max(pl.ast_rate, 1e-4) * self._shape(pl.off_arch)["ast"]
-                      for pl in lineup.players], dtype=float)
+        # assist credit = minutes x sharpened assist-rate x archetype playmaking shape.
+        # The mpg factor stops low-minute players from siphoning assist share; the
+        # concentration exponent routes assists to the true primary creators (Step 2.1
+        # Defect 2 — flat weights left superstars/stars badly under-assisted).
+        w = np.array([
+            max(pl.mpg, 0.0)
+            * (max(pl.ast_rate, 1e-4) ** _AST_CONC_EXP)
+            * self._shape(pl.off_arch)["ast"]
+            for pl in lineup.players
+        ], dtype=float)
         s = w.sum()
         return w / s if s > 0 else np.full(len(w), 1.0 / max(len(w), 1))
 
     def drb_weights(self, lineup: Lineup) -> np.ndarray:
-        w = np.array([max(pl.drb_rate, 1e-4) for pl in lineup.players], dtype=float)
+        # rebound share = minutes-on-court x banded rebound rate. The mpg factor is
+        # load-bearing: without it, a low-minute deep-bench big grabs the same share
+        # as a 36-min starter, starving the rotation (esp. in v1's 11-man normalization).
+        w = np.array([
+            max(pl.mpg, 0.0)
+            * min(max(pl.drb_rate, 1e-4), _REB_RATE_CAP)
+            * _BAND_DRB_MULT.get(str(pl.band).lower(), 1.0)
+            for pl in lineup.players
+        ], dtype=float)
         s = w.sum()
         return w / s if s > 0 else np.full(len(w), 1.0 / max(len(w), 1))
 
     def orb_weights(self, lineup: Lineup) -> np.ndarray:
-        w = np.array([max(pl.orb_rate, 1e-4) for pl in lineup.players], dtype=float)
+        w = np.array([
+            max(pl.mpg, 0.0)
+            * min(max(pl.orb_rate, 1e-4), _REB_RATE_CAP)
+            * _BAND_ORB_MULT.get(str(pl.band).lower(), 1.0)
+            for pl in lineup.players
+        ], dtype=float)
         s = w.sum()
         return w / s if s > 0 else np.full(len(w), 1.0 / max(len(w), 1))
 
@@ -276,11 +363,22 @@ class OutcomeSamplerResolver(PossessionResolver):
                 di = int(rng.choice(len(defense.players), p=ffw))
                 out.pf += 1
                 out.fouler_id = defense.players[di].player_id
-                made = int(rng.random() < g.league_ft) + int(rng.random() < g.league_ft)
+                ft1 = rng.random() < g.league_ft
+                ft2 = rng.random() < g.league_ft   # last FT — a miss leaves a live ball
+                made = int(ft1) + int(ft2)
                 out.fta += 2
                 out.ftm += made
                 out.points += made
                 out.scorer_id = fp.player_id
+                if not ft2:  # missed last FT -> rebound battle (a real ~4 reb/game source)
+                    if rng.random() < oreb_p:
+                        oi = int(rng.choice(len(offense.players), p=ow))
+                        out.oreb += 1
+                        out.oreb_id = offense.players[oi].player_id
+                        continue   # offensive board -> putback chain
+                    di2 = int(rng.choice(len(defense.players), p=dw))
+                    out.dreb += 1
+                    out.dreb_id = defense.players[di2].player_id
                 return out
 
             out.fga += 1
@@ -380,15 +478,30 @@ class OutcomeSamplerResolver(PossessionResolver):
             ft_mask = rest & (r2 < v_ft[fi])
             if ft_mask.any():
                 mm = int(ft_mask.sum())
-                made = (rng.random(mm) < g.league_ft).astype(int) + (rng.random(mm) < g.league_ft).astype(int)
+                ft1 = rng.random(mm) < g.league_ft
+                ft2 = rng.random(mm) < g.league_ft   # last FT — miss leaves a live ball
+                made = ft1.astype(int) + ft2.astype(int)
                 s_ft, f_ft = sidx[ft_mask], fi[ft_mask]
+                ft_global = idx[ft_mask]
                 np.add.at(OFF["fta"], (s_ft, f_ft), 2)
                 np.add.at(OFF["ftm"], (s_ft, f_ft), made)
                 np.add.at(OFF["pts"], (s_ft, f_ft), made)
                 np.add.at(team_pts, s_ft, made)
                 di = rng.choice(Kd, size=mm, p=ffw)
                 np.add.at(DEF["pf"], (s_ft, di), 1)
-                active[idx[ft_mask]] = False
+                # missed last FT -> rebound battle (adds the ~4 reb/game FT-miss source)
+                last_miss = ~ft2
+                ft_oreb = last_miss & (rng.random(mm) < oreb_p)
+                ft_dreb = last_miss & ~ft_oreb
+                if ft_oreb.any():
+                    oi = rng.choice(K, size=int(ft_oreb.sum()), p=ow)
+                    np.add.at(OFF["oreb"], (s_ft[ft_oreb], oi), 1)
+                if ft_dreb.any():
+                    di2 = rng.choice(Kd, size=int(ft_dreb.sum()), p=dw)
+                    np.add.at(DEF["dreb"], (s_ft[ft_dreb], di2), 1)
+                # offensive board off the missed FT stays active for a putback; all else ends
+                active[ft_global] = False
+                active[ft_global[ft_oreb]] = True
 
             shot = rest & ~ft_mask
             if shot.any():
@@ -440,6 +553,23 @@ class OutcomeSamplerResolver(PossessionResolver):
             # any still-active beyond cap will be force-closed next loop end
         # force-close stragglers as defensive rebounds (no further attempts)
         # (rare; keeps possession accounting consistent)
+
+        # Step 2.1 Defect 4 — inject per-game minutes dispersion (DNP/foul/blowout). Each
+        # (sim, player) stat line is scaled by a minutes-dependent lognormal (per-sim
+        # mean 1, zero-sum), widening prop intervals toward the 0.80 coverage target while
+        # preserving per-player means (no bias shift). Offense and defense get their own
+        # minutes draws (different lineups). team_pts is recomputed from the scaled
+        # offensive points; because minutes are zero-sum the team total is not
+        # over-dispersed, only its small scoring-rate covariance with minutes.
+        if K > 0:
+            ms_off = _minutes_dispersion(offense.players, n_sims, rng)
+            for stat in OFF:
+                OFF[stat] = OFF[stat] * ms_off
+            team_pts = OFF["pts"].sum(axis=1)
+        if Kd > 0:
+            ms_def = _minutes_dispersion(defense.players, n_sims, rng)
+            for stat in DEF:
+                DEF[stat] = DEF[stat] * ms_def
         return {"OFF": OFF, "DEF": DEF, "team_pts": team_pts}
 
 

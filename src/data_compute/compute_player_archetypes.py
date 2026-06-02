@@ -53,6 +53,7 @@ warnings.filterwarnings('ignore')
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.modeling.model_config import SEASONS
+from src.data.schema_contract import load_standardized, save_standardized
 
 # =============================================================================
 # CONFIGURATION
@@ -94,53 +95,53 @@ STATIC = {
 # These are resolved to actual values at runtime from per-season distributions
 PCTILE_THRESHOLDS = {
     # Ball Dominant Creator gates
-    'BD_MIN':               ('BALL_DOMINANT_PCT', 80),    # >= P80 for BDC path (tighter v3)
-    'BD_ALL_AROUND':        ('BALL_DOMINANT_PCT', 60),    # >= P60 for All-Around
-    'BD_BASE':              ('BALL_DOMINANT_PCT', 50),    # >= P50 for any ball-dom consideration
+    'BD_MIN':               ('ball_dominant_pct', 80),    # >= P80 for BDC path (tighter v3)
+    'BD_ALL_AROUND':        ('ball_dominant_pct', 60),    # >= P60 for All-Around
+    'BD_BASE':              ('ball_dominant_pct', 50),    # >= P50 for any ball-dom consideration
     # Playmaking gates
-    'PLAYMAKER':            ('AST_PER36', 75),            # >= P75 for playmaker
-    'ELITE_PLAYMAKER':      ('AST_PER36', 85),            # >= P85 elite playmaker
-    'CONNECTOR_AST':        ('AST_PER36', 50),            # >= P50 for connector
+    'PLAYMAKER':            ('ast_per36', 75),            # >= P75 for playmaker
+    'ELITE_PLAYMAKER':      ('ast_per36', 85),            # >= P85 elite playmaker
+    'CONNECTOR_AST':        ('ast_per36', 50),            # >= P50 for connector
     # Scoring volume
-    'HIGH_SCORING':         ('PTS_PER36', 70),            # >= P70 high volume
-    'ELITE_SCORING':        ('PTS_PER36', 80),            # >= P80 elite volume
-    'ALL_AROUND_SCORING':   ('PTS_PER36', 60),            # >= P60 for all-around filer
-    'LOW_SCORING':          ('PTS_PER36', 25),            # <= P25 low scorer
+    'HIGH_SCORING':         ('pts_per36', 70),            # >= P70 high volume
+    'ELITE_SCORING':        ('pts_per36', 80),            # >= P80 elite volume
+    'ALL_AROUND_SCORING':   ('pts_per36', 60),            # >= P60 for all-around filer
+    'LOW_SCORING':          ('pts_per36', 25),            # <= P25 low scorer
     # Shot profile
-    'FG2A_INTERIOR':        ('FG2A_RATE', 70),            # >= P70 interior heavy
-    'FG2A_PERIMETER':       ('FG2A_RATE', 30),            # <= P30 perimeter heavy
+    'FG2A_INTERIOR':        ('fg2a_rate', 70),            # >= P70 interior heavy
+    'FG2A_PERIMETER':       ('fg2a_rate', 30),            # <= P30 perimeter heavy
     # Off-ball
-    'HIGH_CUT_PNRRM':      ('CUT_PNRRM_PCT', 75),       # >= P75 cut + roll man
-    'HIGH_SPOTUP':          ('SPOTUP_PCT', 50),           # >= P50 spot-up
-    'HIGH_MOVEMENT':        ('MOVEMENT_SHOOTER_PCT', 60), # >= P60 movement shooter (loosened from P70 in v4.2)
-    'HIGH_PRROLLMAN':       ('PRROLLMAN_POSS_PCT', 70),   # >= P70 roll man (for PnR Big)
-    'PROMINENT_PRROLLMAN':  ('PRROLLMAN_POSS_PCT', 50),   # >= P50 prominent roll man (looser PnR Big gate for bigs)
+    'HIGH_CUT_PNRRM':      ('cut_pnrrm_pct', 75),       # >= P75 cut + roll man
+    'HIGH_SPOTUP':          ('spotup_pct', 50),           # >= P50 spot-up
+    'HIGH_MOVEMENT':        ('movement_shooter_pct', 60), # >= P60 movement shooter (loosened from P70 in v4.2)
+    'HIGH_PRROLLMAN':       ('prrollman_poss_pct', 70),   # >= P70 roll man (for PnR Big)
+    'PROMINENT_PRROLLMAN':  ('prrollman_poss_pct', 50),   # >= P50 prominent roll man (looser PnR Big gate for bigs)
     # Touches / activity (for Connector)
-    'TOUCHES_MEDIAN':       ('TOUCHES', 50),              # >= P50 touches
+    'TOUCHES_MEDIAN':       ('touches', 50),              # >= P50 touches
     # Efficiency
-    'HIGH_EFFICIENCY':      ('TS_PCT', 70),               # >= P70 efficient
-    'LOW_EFFICIENCY':       ('TS_PCT', 30),               # <= P30 inefficient
+    'HIGH_EFFICIENCY':      ('ts_pct', 70),               # >= P70 efficient
+    'LOW_EFFICIENCY':       ('ts_pct', 30),               # <= P30 inefficient
     # Gravity Engine
-    'HIGH_FG3A':            ('FG3A_PER36', 80),           # >= P80 3PA volume
-    'HIGH_FG3_PCT':         ('FG3_PCT', 70),              # >= P70 3P%
+    'HIGH_FG3A':            ('fg3a_per36', 80),           # >= P80 3PA volume
+    'HIGH_FG3_PCT':         ('fg3_pct', 70),              # >= P70 3P%
     # BDC Heliocentric subtype
-    'BD_HELIOCENTRIC':      ('BALL_DOMINANT_PCT', 85),    # >= P85 for Heliocentric subtype
+    'BD_HELIOCENTRIC':      ('ball_dominant_pct', 85),    # >= P85 for Heliocentric subtype
     # P95 caps for composite normalization
-    'BD_P95':               ('BALL_DOMINANT_PCT', 95),    # P95 for composite norm
-    'PTS_P95':              ('PTS_PER36', 95),            # P95 for composite norm
-    'AST_P95':              ('AST_PER36', 95),            # P95 for composite norm
+    'BD_P95':               ('ball_dominant_pct', 95),    # P95 for composite norm
+    'PTS_P95':              ('pts_per36', 95),            # P95 for composite norm
+    'AST_P95':              ('ast_per36', 95),            # P95 for composite norm
     # Scoring gate for BDC main path
-    'MODERATE_SCORING':     ('PTS_PER36', 50),            # >= P50 BDC must be above-avg scorer
+    'MODERATE_SCORING':     ('pts_per36', 50),            # >= P50 BDC must be above-avg scorer
     # Playmaking score
-    'HIGH_PLAYMAKING_SCORE':('PLAYMAKING_SCORE', 75),     # >= P75
+    'HIGH_PLAYMAKING_SCORE':('playmaking_score', 75),     # >= P75
     # FG3A for PnR pop vs roll
-    'FG3A_MEDIAN':          ('FG3A_PER36', 50),           # >= P50 → popping, < P50 → rolling
+    'FG3A_MEDIAN':          ('fg3a_per36', 50),           # >= P50 → popping, < P50 → rolling
     # Shot zone features (from LeagueDashPlayerShotLocations)
-    'HIGH_AT_RIM':          ('AT_RIM_FREQ', 70),          # >= P70 rim finisher
-    'HIGH_MIDRANGE':        ('MIDRANGE_FREQ', 70),        # >= P70 midrange scorer
-    'LOW_MIDRANGE':         ('MIDRANGE_FREQ', 30),        # <= P30 non-midrange
-    'MODERATE_MIDRANGE':    ('MIDRANGE_FREQ', 50),        # >= P50 midrange leaning
-    'AT_RIM_PAINT_P60':     ('AT_RIM_PLUS_PAINT_FREQ', 60), # >= P60 interior shot location
+    'HIGH_AT_RIM':          ('at_rim_freq', 70),          # >= P70 rim finisher
+    'HIGH_MIDRANGE':        ('midrange_freq', 70),        # >= P70 midrange scorer
+    'LOW_MIDRANGE':         ('midrange_freq', 30),        # <= P30 non-midrange
+    'MODERATE_MIDRANGE':    ('midrange_freq', 50),        # >= P50 midrange leaning
+    'AT_RIM_PAINT_P60':     ('at_rim_plus_paint_freq', 60), # >= P60 interior shot location
 }
 
 # ---------- Frozen canonical metric vectors for best-fit fallback ----------
@@ -148,25 +149,25 @@ PCTILE_THRESHOLDS = {
 #   (row_column, pctile_key_for_denominator_or_None, static_fallback_denom, weight)
 FALLBACK_VECTORS = {
     'Off-Ball Stationary Shooter': [
-        ('SPOTUP_PCT',           'HIGH_SPOTUP',     0.10, 1.0),
+        ('spotup_pct',           'HIGH_SPOTUP',     0.10, 1.0),
     ],
     'Off-Ball Movement Shooter': [
-        ('MOVEMENT_SHOOTER_PCT', 'HIGH_MOVEMENT',   0.05, 1.0),
+        ('movement_shooter_pct', 'HIGH_MOVEMENT',   0.05, 1.0),
     ],
     'Off-Ball Finisher': [
-        ('CUT_PNRRM_PCT',        None,             0.15, 1.0),
-        ('PUTBACK_PCT',           None,             0.15, 0.5),
-        ('TRANSITION_PCT',        None,             0.15, 0.3),
+        ('cut_pnrrm_pct',        None,             0.15, 1.0),
+        ('putback_pct',           None,             0.15, 0.5),
+        ('transition_pct',        None,             0.15, 0.3),
     ],
     'Connector': [
-        ('AST_PER36',            'CONNECTOR_AST',   2.0,  1.0),
+        ('ast_per36',            'CONNECTOR_AST',   2.0,  1.0),
     ],
     'Interior Scorer': [
-        ('FG2A_RATE',             None,             0.85, 0.5),
-        ('PTS_PER36',            'HIGH_SCORING',    14.0, 0.5),
+        ('fg2a_rate',             None,             0.85, 0.5),
+        ('pts_per36',            'HIGH_SCORING',    14.0, 0.5),
     ],
     'PnR Rolling Big': [
-        ('PRROLLMAN_POSS_PCT',   'HIGH_PRROLLMAN',  0.04, 1.0),
+        ('prrollman_poss_pct',   'HIGH_PRROLLMAN',  0.04, 1.0),
     ],
 }
 
@@ -187,18 +188,18 @@ def load_synergy_data(season: str) -> pd.DataFrame:
     for playtype in playtypes:
         path = season_dir / f"synergy_Offensive_{playtype}.parquet"
         if path.exists():
-            df = pd.read_parquet(path)
-            agg_df = df.groupby('PLAYER_ID').agg({
-                'PLAYER_NAME': 'first',
-                'POSS_PCT': 'mean',
-                'PPP': 'mean',
-                'POSS': 'sum'
+            df = load_standardized(path)
+            agg_df = df.groupby('player_id').agg({
+                'player_name': 'first',
+                'poss_pct': 'mean',
+                'ppp': 'mean',
+                'poss': 'sum'
             }).reset_index()
 
             agg_df = agg_df.rename(columns={
-                'POSS_PCT': f'{playtype.upper()}_POSS_PCT',
-                'PPP': f'{playtype.upper()}_PPP',
-                'POSS': f'{playtype.upper()}_POSS'
+                'poss_pct': f'{playtype.lower()}_poss_pct',
+                'ppp': f'{playtype.lower()}_ppp',
+                'poss': f'{playtype.lower()}_poss'
             })
             all_data.append(agg_df)
 
@@ -208,11 +209,11 @@ def load_synergy_data(season: str) -> pd.DataFrame:
     player_data = all_data[0]
     for df in all_data[1:]:
         player_data = player_data.merge(
-            df.drop(columns=['PLAYER_NAME'], errors='ignore'),
-            on='PLAYER_ID', how='outer'
+            df.drop(columns=['player_name'], errors='ignore'),
+            on='player_id', how='outer'
         )
 
-    player_data['SEASON'] = season
+    player_data['season'] = season
     return player_data
 
 
@@ -221,33 +222,33 @@ def load_tracking_data(season: str) -> pd.DataFrame:
     season_dir = TRACKING_DIR / season
 
     tracking_files = {
-        'Drives': ['PLAYER_ID', 'DRIVES', 'DRIVE_PTS', 'DRIVE_FG_PCT', 'DRIVE_AST', 'DRIVE_TOV'],
-        'Passing': ['PLAYER_ID', 'PASSES_MADE', 'SECONDARY_AST', 'POTENTIAL_AST', 'AST_POINTS_CREATED'],
-        'Possessions': ['PLAYER_ID', 'TOUCHES', 'TIME_OF_POSS', 'AVG_SEC_PER_TOUCH', 'AVG_DRIB_PER_TOUCH', 'FRONT_CT_TOUCHES'],
-        'CatchShoot': ['PLAYER_ID', 'CATCH_SHOOT_FGM', 'CATCH_SHOOT_FGA', 'CATCH_SHOOT_FG_PCT',
-                       'CATCH_SHOOT_PTS', 'CATCH_SHOOT_FG3M', 'CATCH_SHOOT_FG3A', 'CATCH_SHOOT_FG3_PCT'],
-        'Rebounding': ['PLAYER_ID', 'OREB_CONTEST', 'DREB_CONTEST', 'REB_CONTEST'],
-        'SpeedDistance': ['PLAYER_ID', 'DIST_MILES', 'AVG_SPEED'],
+        'Drives': ['player_id', 'drives', 'drive_pts', 'drive_fg_pct', 'drive_ast', 'drive_tov'],
+        'Passing': ['player_id', 'passes_made', 'secondary_ast', 'potential_ast', 'AST_POINTS_CREATED'],
+        'Possessions': ['player_id', 'touches', 'time_of_poss', 'avg_sec_per_touch', 'avg_drib_per_touch', 'front_ct_touches'],
+        'CatchShoot': ['player_id', 'catch_shoot_fgm', 'catch_shoot_fga', 'catch_shoot_fg_pct',
+                       'catch_shoot_pts', 'catch_shoot_fg3m', 'catch_shoot_fg3a', 'catch_shoot_fg3_pct'],
+        'Rebounding': ['player_id', 'oreb_contest', 'dreb_contest', 'reb_contest'],
+        'SpeedDistance': ['player_id', 'dist_miles', 'avg_speed'],
     }
 
     merged = None
     for track_type, keep_cols in tracking_files.items():
         path = season_dir / f"tracking_{track_type}.parquet"
         if path.exists():
-            df = pd.read_parquet(path)
+            df = load_standardized(path)
             available_cols = [c for c in keep_cols if c in df.columns]
             if available_cols:
                 df = df[available_cols]
-                numeric_cols = [c for c in df.columns if c != 'PLAYER_ID']
-                df = df.groupby('PLAYER_ID')[numeric_cols].sum().reset_index()
+                numeric_cols = [c for c in df.columns if c != 'player_id']
+                df = df.groupby('player_id')[numeric_cols].sum().reset_index()
 
                 if merged is None:
                     merged = df
                 else:
-                    merged = merged.merge(df, on='PLAYER_ID', how='outer')
+                    merged = merged.merge(df, on='player_id', how='outer')
 
     if merged is not None:
-        merged['SEASON'] = season
+        merged['season'] = season
     return merged if merged is not None else pd.DataFrame()
 
 
@@ -257,10 +258,10 @@ def load_box_score_data() -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
 
-    df = pd.read_parquet(path)
-    cols = ['PLAYER_ID', 'PLAYER_NAME', 'TEAM_ABBREVIATION', 'SEASON', 'GP', 'MIN', 'PTS', 'AST', 'REB',
-            'OREB', 'DREB', 'STL', 'BLK', 'TOV', 'FGA', 'FGM', 'FG3A', 'FG3M',
-            'FTA', 'FTM', 'FG_PCT', 'FG3_PCT', 'FT_PCT', 'USG_PCT', 'TS_PCT']
+    df = load_standardized(path)
+    cols = ['player_id', 'player_name', 'team_abbreviation', 'season', 'gp', 'min', 'pts', 'ast', 'reb',
+            'oreb', 'dreb', 'stl', 'blk', 'tov', 'fga', 'fgm', 'fg3a', 'fg3m',
+            'fta', 'ftm', 'fg_pct', 'fg3_pct', 'ft_pct', 'usg_pct', 'ts_pct']
     available_cols = [c for c in cols if c in df.columns]
     return df[available_cols]
 
@@ -271,12 +272,12 @@ def load_shot_zone_data(season: str) -> pd.DataFrame:
     path = TRACKING_DIR / season / "shot_zones.parquet"
     if not path.exists():
         return pd.DataFrame()
-    df = pd.read_parquet(path)
+    df = load_standardized(path)
     # Keep only the columns we need for archetype classification
-    keep_cols = ['PLAYER_ID', 'AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ',
-                 'CORNER3_FREQ', 'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ',
-                 'AT_RIM_FG_PCT', 'MIDRANGE_FG_PCT',
-                 'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA']
+    keep_cols = ['player_id', 'at_rim_freq', 'paint_freq', 'midrange_freq',
+                 'corner3_freq', 'ab3_freq', 'at_rim_plus_paint_freq',
+                 'at_rim_fg_pct', 'midrange_fg_pct',
+                 'ra_fga', 'mr_fga', 'paint_fga', 'total_fga']
     available = [c for c in keep_cols if c in df.columns]
     return df[available]
 
@@ -290,9 +291,9 @@ def compute_season_percentiles(features: pd.DataFrame) -> dict:
     Returns dict mapping threshold_name -> actual_value.
     """
     qualified = features[
-        (features['MPG'] >= STATIC['MIN_MPG']) &
-        (features['GP'] >= STATIC['MIN_GP']) &
-        (features['MIN'] >= STATIC['MIN_MINUTES'])
+        (features['mpg'] >= STATIC['MIN_MPG']) &
+        (features['gp'] >= STATIC['MIN_GP']) &
+        (features['min'] >= STATIC['MIN_MINUTES'])
     ]
 
     resolved = {}
@@ -317,44 +318,44 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
                                 shot_zones: pd.DataFrame = None) -> pd.DataFrame:
     """Compute all features needed for archetype classification."""
 
-    syn = synergy[synergy['SEASON'] == season].copy() if not synergy.empty else pd.DataFrame()
-    trk = tracking[tracking['SEASON'] == season].copy() if not tracking.empty else pd.DataFrame()
-    bx = box[box['SEASON'] == season].copy() if not box.empty else pd.DataFrame()
+    syn = synergy[synergy['season'] == season].copy() if not synergy.empty else pd.DataFrame()
+    trk = tracking[tracking['season'] == season].copy() if not tracking.empty else pd.DataFrame()
+    bx = box[box['season'] == season].copy() if not box.empty else pd.DataFrame()
 
     if bx.empty:
         return pd.DataFrame()
 
     features = bx.copy()
     # Normalize PLAYER_ID to string in all frames before merging to avoid int/str type conflicts
-    features['PLAYER_ID'] = features['PLAYER_ID'].astype(str)
+    features['player_id'] = features['player_id'].astype(str)
 
     # Pre-2022 complete_player_season_stats stores per-game values (MIN=32.9 MPG, AST=2.3 APG).
     # Post-2022 stores season totals (MIN=2055, AST=203). Detect by median MIN < 50 → per-game.
-    _per_game_cols = ['MIN', 'PTS', 'AST', 'REB', 'OREB', 'DREB', 'STL', 'BLK', 'TOV',
-                      'FGA', 'FGM', 'FG3A', 'FG3M', 'FTA', 'FTM']
-    if features['MIN'].median() < 50 and 'GP' in features.columns:
+    _per_game_cols = ['min', 'pts', 'ast', 'reb', 'oreb', 'dreb', 'stl', 'blk', 'tov',
+                      'fga', 'fgm', 'fg3a', 'fg3m', 'fta', 'ftm']
+    if features['min'].median() < 50 and 'gp' in features.columns:
         for _col in _per_game_cols:
             if _col in features.columns:
-                features[_col] = features[_col] * features['GP']
+                features[_col] = features[_col] * features['gp']
 
     # Merge synergy data
     if not syn.empty:
-        syn['PLAYER_ID'] = syn['PLAYER_ID'].astype(str)
-        syn_cols = [c for c in syn.columns if c not in ['PLAYER_NAME', 'SEASON'] or c == 'PLAYER_ID']
-        features = features.merge(syn[syn_cols], on='PLAYER_ID', how='left')
+        syn['player_id'] = syn['player_id'].astype(str)
+        syn_cols = [c for c in syn.columns if c not in ['player_name', 'season'] or c == 'player_id']
+        features = features.merge(syn[syn_cols], on='player_id', how='left')
 
     # Merge tracking data
     if not trk.empty:
-        trk['PLAYER_ID'] = trk['PLAYER_ID'].astype(str)
-        trk_cols = [c for c in trk.columns if c not in ['PLAYER_NAME', 'SEASON', 'GP', 'MIN'] or c == 'PLAYER_ID']
-        features = features.merge(trk[trk_cols], on='PLAYER_ID', how='left')
+        trk['player_id'] = trk['player_id'].astype(str)
+        trk_cols = [c for c in trk.columns if c not in ['player_name', 'season', 'gp', 'min'] or c == 'player_id']
+        features = features.merge(trk[trk_cols], on='player_id', how='left')
 
     # Merge shot zone data
     if shot_zones is not None and not shot_zones.empty:
         sz = shot_zones.copy()
-        sz['PLAYER_ID'] = sz['PLAYER_ID'].astype(str)
-        sz_cols = [c for c in sz.columns if c == 'PLAYER_ID' or c not in features.columns]
-        features = features.merge(sz[sz_cols], on='PLAYER_ID', how='left')
+        sz['player_id'] = sz['player_id'].astype(str)
+        sz_cols = [c for c in sz.columns if c == 'player_id' or c not in features.columns]
+        features = features.merge(sz[sz_cols], on='player_id', how='left')
 
     # Fill NaN playtype data with 0
     playtype_cols = [c for c in features.columns if '_POSS_PCT' in c or '_PPP' in c]
@@ -362,9 +363,9 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
 
     # Fill shot zone NaN with 0
     zone_cols = [c for c in features.columns if c in
-                 ('AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ', 'CORNER3_FREQ',
-                  'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ', 'AT_RIM_FG_PCT',
-                  'MIDRANGE_FG_PCT', 'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA')]
+                 ('at_rim_freq', 'paint_freq', 'midrange_freq', 'corner3_freq',
+                  'ab3_freq', 'at_rim_plus_paint_freq', 'at_rim_fg_pct',
+                  'midrange_fg_pct', 'ra_fga', 'mr_fga', 'paint_fga', 'total_fga')]
     for col in zone_cols:
         features[col] = features[col].fillna(0)
 
@@ -373,21 +374,21 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
     # merged in above, so features.get(col, 0) would return int 0 — a Series
     # operation on it then fails. Explicit pre-fill avoids scattered checks.
     _optional_zero_cols = [
-        'ISOLATION_POSS_PCT', 'PRBALLHANDLER_POSS_PCT', 'POSTUP_POSS_PCT',
-        'TRANSITION_POSS_PCT', 'SPOTUP_POSS_PCT', 'OFFSCREEN_POSS_PCT',
-        'HANDOFF_POSS_PCT', 'CUT_POSS_PCT', 'PRROLLMAN_POSS_PCT', 'OFFREBOUND_POSS_PCT',
-        'ISOLATION_PPP', 'PRBALLHANDLER_PPP', 'POSTUP_PPP', 'PRROLLMAN_PPP',
-        'SPOTUP_PPP', 'TRANSITION_PPP', 'CUT_PPP',
-        'SECONDARY_AST', 'POTENTIAL_AST', 'TOUCHES', 'AVG_SEC_PER_TOUCH',
-        'AVG_DRIB_PER_TOUCH', 'FRONT_CT_TOUCHES', 'DRIVES', 'DRIVE_PTS',
-        'DRIVE_FG_PCT', 'DRIVE_AST', 'DRIVE_TOV', 'PASSES_MADE',
-        'AST_POINTS_CREATED', 'DIST_MILES', 'AVG_SPEED',
-        'AT_RIM_FREQ', 'PAINT_FREQ', 'MIDRANGE_FREQ', 'CORNER3_FREQ',
-        'AB3_FREQ', 'AT_RIM_PLUS_PAINT_FREQ', 'AT_RIM_FG_PCT', 'MIDRANGE_FG_PCT',
-        'RA_FGA', 'MR_FGA', 'PAINT_FGA', 'TOTAL_FGA',
-        'CATCH_SHOOT_FGM', 'CATCH_SHOOT_FGA', 'CATCH_SHOOT_FG_PCT',
-        'CATCH_SHOOT_PTS', 'CATCH_SHOOT_FG3M', 'CATCH_SHOOT_FG3A', 'CATCH_SHOOT_FG3_PCT',
-        'OREB_CONTEST', 'DREB_CONTEST', 'REB_CONTEST',
+        'isolation_poss_pct', 'prballhandler_poss_pct', 'postup_poss_pct',
+        'transition_poss_pct', 'spotup_poss_pct', 'offscreen_poss_pct',
+        'handoff_poss_pct', 'cut_poss_pct', 'prrollman_poss_pct', 'offrebound_poss_pct',
+        'isolation_ppp', 'prballhandler_ppp', 'postup_ppp', 'prrollman_ppp',
+        'spotup_ppp', 'transition_ppp', 'cut_ppp',
+        'secondary_ast', 'potential_ast', 'touches', 'avg_sec_per_touch',
+        'avg_drib_per_touch', 'front_ct_touches', 'drives', 'drive_pts',
+        'drive_fg_pct', 'drive_ast', 'drive_tov', 'passes_made',
+        'AST_POINTS_CREATED', 'dist_miles', 'avg_speed',
+        'at_rim_freq', 'paint_freq', 'midrange_freq', 'corner3_freq',
+        'ab3_freq', 'at_rim_plus_paint_freq', 'at_rim_fg_pct', 'midrange_fg_pct',
+        'ra_fga', 'mr_fga', 'paint_fga', 'total_fga',
+        'catch_shoot_fgm', 'catch_shoot_fga', 'catch_shoot_fg_pct',
+        'catch_shoot_pts', 'catch_shoot_fg3m', 'catch_shoot_fg3a', 'catch_shoot_fg3_pct',
+        'oreb_contest', 'dreb_contest', 'reb_contest',
     ]
     for _col in _optional_zero_cols:
         if _col not in features.columns:
@@ -397,91 +398,91 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
     # COMPUTE DERIVED FEATURES
     # ==========================================================================
 
-    features['MPG'] = features['MIN'] / features['GP']
+    features['mpg'] = features['min'] / features['gp']
 
     # Per-36 minute stats
-    minutes_factor = 36 / (features['MIN'] / features['GP']).replace(0, np.nan)
-    features['PTS_PER36'] = (features['PTS'] / features['GP']) * minutes_factor
-    features['AST_PER36'] = (features['AST'] / features['GP']) * minutes_factor
-    features['REB_PER36'] = (features['REB'] / features['GP']) * minutes_factor
-    features['TOV_PER36'] = (features['TOV'] / features['GP']) * minutes_factor
-    features['STL_PER36'] = (features['STL'] / features['GP']) * minutes_factor
-    features['BLK_PER36'] = (features['BLK'] / features['GP']) * minutes_factor
+    minutes_factor = 36 / (features['min'] / features['gp']).replace(0, np.nan)
+    features['pts_per36'] = (features['pts'] / features['gp']) * minutes_factor
+    features['ast_per36'] = (features['ast'] / features['gp']) * minutes_factor
+    features['reb_per36'] = (features['reb'] / features['gp']) * minutes_factor
+    features['tov_per36'] = (features['tov'] / features['gp']) * minutes_factor
+    features['stl_per36'] = (features['stl'] / features['gp']) * minutes_factor
+    features['blk_per36'] = (features['blk'] / features['gp']) * minutes_factor
 
     # ---- Ball Dominance (split on-ball from post-up) ----
-    features['ON_BALL_CREATION'] = (
-        features.get('ISOLATION_POSS_PCT', 0) +
-        features.get('PRBALLHANDLER_POSS_PCT', 0)
+    features['on_ball_creation'] = (
+        features.get('isolation_poss_pct', 0) +
+        features.get('prballhandler_poss_pct', 0)
     ).fillna(0)
 
-    features['POST_CREATION'] = features.get('POSTUP_POSS_PCT', 0).fillna(0)
+    features['post_creation'] = features.get('postup_poss_pct', 0).fillna(0)
 
-    features['BALL_DOMINANT_PCT'] = (
-        features['ON_BALL_CREATION'] + features['POST_CREATION'] * STATIC['POST_WEIGHT']
+    features['ball_dominant_pct'] = (
+        features['on_ball_creation'] + features['post_creation'] * STATIC['POST_WEIGHT']
     ).fillna(0)
 
     # ---- Playmaking composite (with turnover penalty) ----
-    if 'SECONDARY_AST' in features.columns:
-        features['SECONDARY_AST_PER36'] = (features['SECONDARY_AST'] / features['GP']) * minutes_factor
+    if 'secondary_ast' in features.columns:
+        features['secondary_ast_per36'] = (features['secondary_ast'] / features['gp']) * minutes_factor
     else:
-        features['SECONDARY_AST_PER36'] = 0
+        features['secondary_ast_per36'] = 0
 
-    if 'POTENTIAL_AST' in features.columns:
-        features['POTENTIAL_AST_PER36'] = (features['POTENTIAL_AST'] / features['GP']) * minutes_factor
+    if 'potential_ast' in features.columns:
+        features['potential_ast_per36'] = (features['potential_ast'] / features['gp']) * minutes_factor
     else:
-        features['POTENTIAL_AST_PER36'] = 0
+        features['potential_ast_per36'] = 0
 
-    features['PLAYMAKING_SCORE'] = (
-        features['AST_PER36'] * 1.0 +
-        features['SECONDARY_AST_PER36'] * 0.5 +
-        features['POTENTIAL_AST_PER36'] * 0.3 -
-        features['TOV_PER36'] * 0.5
+    features['playmaking_score'] = (
+        features['ast_per36'] * 1.0 +
+        features['secondary_ast_per36'] * 0.5 +
+        features['potential_ast_per36'] * 0.3 -
+        features['tov_per36'] * 0.5
     ).fillna(0)
 
     # ---- Shot Profile: FG2A_RATE ----
-    features['FG2A_RATE'] = np.where(
-        features['FGA'] > 0,
-        (features['FGA'] - features['FG3A']) / features['FGA'],
+    features['fg2a_rate'] = np.where(
+        features['fga'] > 0,
+        (features['fga'] - features['fg3a']) / features['fga'],
         0.5
     )
 
-    features['FG3A_PER36'] = (features['FG3A'] / features['GP']) * minutes_factor
+    features['fg3a_per36'] = (features['fg3a'] / features['gp']) * minutes_factor
 
     # Drives
-    if 'DRIVES' in features.columns:
-        features['DRIVES_PER36'] = (features['DRIVES'] / features['GP']) * minutes_factor
+    if 'drives' in features.columns:
+        features['drives_per36'] = (features['drives'] / features['gp']) * minutes_factor
     else:
-        features['DRIVES_PER36'] = 0
+        features['drives_per36'] = 0
 
-    features['INTERIOR_RATIO'] = features['FG2A_RATE']  # Legacy alias
+    features['interior_ratio'] = features['fg2a_rate']  # Legacy alias
 
     # ---- Off-ball frequencies ----
-    features['CUT_PNRRM_PCT'] = (
-        features.get('CUT_POSS_PCT', 0) +
-        features.get('PRROLLMAN_POSS_PCT', 0)
+    features['cut_pnrrm_pct'] = (
+        features.get('cut_poss_pct', 0) +
+        features.get('prrollman_poss_pct', 0)
     ).fillna(0)
 
-    features['MOVEMENT_SHOOTER_PCT'] = (
-        features.get('HANDOFF_POSS_PCT', 0) +
-        features.get('OFFSCREEN_POSS_PCT', 0)
+    features['movement_shooter_pct'] = (
+        features.get('handoff_poss_pct', 0) +
+        features.get('offscreen_poss_pct', 0)
     ).fillna(0)
 
-    features['SPOTUP_PCT'] = features.get('SPOTUP_POSS_PCT', 0).fillna(0)
-    features['TRANSITION_PCT'] = features.get('TRANSITION_POSS_PCT', 0).fillna(0)
-    features['PUTBACK_PCT'] = features.get('OFFREBOUND_POSS_PCT', 0).fillna(0)
+    features['spotup_pct'] = features.get('spotup_poss_pct', 0).fillna(0)
+    features['transition_pct'] = features.get('transition_poss_pct', 0).fillna(0)
+    features['putback_pct'] = features.get('offrebound_poss_pct', 0).fillna(0)
 
     # ---- Efficiency: compute TS% and USG% when missing ----
-    tsa = 2 * (features['FGA'] + 0.44 * features['FTA'])
-    computed_ts = np.where(tsa > 0, features['PTS'] / tsa, np.nan)
+    tsa = 2 * (features['fga'] + 0.44 * features['fta'])
+    computed_ts = np.where(tsa > 0, features['pts'] / tsa, np.nan)
 
-    if 'TS_PCT' in features.columns:
-        features['TS_PCT'] = features['TS_PCT'].fillna(pd.Series(computed_ts, index=features.index))
+    if 'ts_pct' in features.columns:
+        features['ts_pct'] = features['ts_pct'].fillna(pd.Series(computed_ts, index=features.index))
     else:
-        features['TS_PCT'] = computed_ts
+        features['ts_pct'] = computed_ts
 
-    features['EFG_PCT'] = np.where(
-        features['FGA'] > 0,
-        (features['FGM'] + 0.5 * features['FG3M']) / features['FGA'],
+    features['efg_pct'] = np.where(
+        features['fga'] > 0,
+        (features['fgm'] + 0.5 * features['fg3m']) / features['fga'],
         0
     )
 
@@ -491,41 +492,41 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
     official_adv_path = OFFICIAL_DIR / f"official_advanced_{season}.parquet"
     if official_adv_path.exists():
         try:
-            off_adv = pd.read_parquet(official_adv_path)
-            if 'USG_PCT' in off_adv.columns and 'PLAYER_ID' in off_adv.columns:
-                off_usg = off_adv[['PLAYER_ID', 'USG_PCT']].rename(
-                    columns={'USG_PCT': '_OFFICIAL_USG_PCT'})
-                features = features.merge(off_usg, on='PLAYER_ID', how='left')
-                if 'USG_PCT' not in features.columns or features['USG_PCT'].isna().all():
-                    features['USG_PCT'] = features['_OFFICIAL_USG_PCT']
+            off_adv = load_standardized(official_adv_path)
+            if 'usg_pct' in off_adv.columns and 'player_id' in off_adv.columns:
+                off_usg = off_adv[['player_id', 'usg_pct']].rename(
+                    columns={'usg_pct': '_OFFICIAL_USG_PCT'})
+                features = features.merge(off_usg, on='player_id', how='left')
+                if 'usg_pct' not in features.columns or features['usg_pct'].isna().all():
+                    features['usg_pct'] = features['_OFFICIAL_USG_PCT']
                 else:
-                    features['USG_PCT'] = features['USG_PCT'].fillna(features['_OFFICIAL_USG_PCT'])
+                    features['usg_pct'] = features['usg_pct'].fillna(features['_OFFICIAL_USG_PCT'])
                 features.drop(columns=['_OFFICIAL_USG_PCT'], inplace=True, errors='ignore')
         except Exception:
             pass  # silently fall through to proxy
 
     # Proxy for any remaining NaN: approximate standard USG% formula.
     # Constant 2.0 ≈ league-avg team possessions per minute (100 poss / 48 min ≈ 2.08).
-    poss_used = features['FGA'] + 0.44 * features['FTA'] + features['TOV']
+    poss_used = features['fga'] + 0.44 * features['fta'] + features['tov']
     computed_usg = np.where(
-        features['MIN'] > 0,
-        poss_used * 2.0 / (features['MIN'] * 5),
+        features['min'] > 0,
+        poss_used * 2.0 / (features['min'] * 5),
         np.nan
     )
 
-    if 'USG_PCT' in features.columns:
-        features['USG_PCT'] = features['USG_PCT'].fillna(pd.Series(computed_usg, index=features.index))
+    if 'usg_pct' in features.columns:
+        features['usg_pct'] = features['usg_pct'].fillna(pd.Series(computed_usg, index=features.index))
     else:
-        features['USG_PCT'] = computed_usg
+        features['usg_pct'] = computed_usg
 
     # Season-level league average TS for z-score
     league_avg_ts = features.loc[
-        (features['MIN'] >= 500) & (features['GP'] >= 20) & (features['MPG'] >= 15),
-        'TS_PCT'
+        (features['min'] >= 500) & (features['gp'] >= 20) & (features['mpg'] >= 15),
+        'ts_pct'
     ].mean()
     league_std_ts = features.loc[
-        (features['MIN'] >= 500) & (features['GP'] >= 20) & (features['MPG'] >= 15),
-        'TS_PCT'
+        (features['min'] >= 500) & (features['gp'] >= 20) & (features['mpg'] >= 15),
+        'ts_pct'
     ].std()
 
     if pd.isna(league_avg_ts):
@@ -533,29 +534,29 @@ def compute_archetype_features(synergy: pd.DataFrame, tracking: pd.DataFrame,
     if pd.isna(league_std_ts) or league_std_ts == 0:
         league_std_ts = 0.04
 
-    features['TS_ZSCORE'] = (features['TS_PCT'] - league_avg_ts) / league_std_ts
-    features['LEAGUE_AVG_TS'] = league_avg_ts
+    features['ts_zscore'] = (features['ts_pct'] - league_avg_ts) / league_std_ts
+    features['league_avg_ts'] = league_avg_ts
 
     # Four Factors (informational)
-    features['TOV_PCT'] = np.where(
-        (features['FGA'] + 0.44 * features['FTA'] + features['TOV']) > 0,
-        features['TOV'] / (features['FGA'] + 0.44 * features['FTA'] + features['TOV']),
+    features['tov_pct'] = np.where(
+        (features['fga'] + 0.44 * features['fta'] + features['tov']) > 0,
+        features['tov'] / (features['fga'] + 0.44 * features['fta'] + features['tov']),
         0
     )
-    features['FT_RATE'] = np.where(features['FGA'] > 0, features['FTA'] / features['FGA'], 0)
+    features['ft_rate'] = np.where(features['fga'] > 0, features['fta'] / features['fga'], 0)
 
     # Time of possession
-    if 'TIME_OF_POSS' in features.columns:
-        features['TIME_OF_POSS_PER36'] = (features['TIME_OF_POSS'] / features['GP']) * minutes_factor
+    if 'time_of_poss' in features.columns:
+        features['time_of_poss_per36'] = (features['time_of_poss'] / features['gp']) * minutes_factor
     else:
-        features['TIME_OF_POSS_PER36'] = 0
+        features['time_of_poss_per36'] = 0
 
-    if 'AVG_DRIB_PER_TOUCH' in features.columns:
-        features['DRIBBLES_PER_TOUCH'] = features['AVG_DRIB_PER_TOUCH']
+    if 'avg_drib_per_touch' in features.columns:
+        features['dribbles_per_touch'] = features['avg_drib_per_touch']
     else:
-        features['DRIBBLES_PER_TOUCH'] = 0
+        features['dribbles_per_touch'] = 0
 
-    features['PPG'] = features['PTS'] / features['GP']
+    features['ppg'] = features['pts'] / features['gp']
 
     return features
 
@@ -569,21 +570,21 @@ def compute_role_effectiveness(row: pd.Series, archetype: str, pctiles: dict) ->
     Independent of classification certainty — measures performance quality.
     Returns 0.0 to 1.0.
     """
-    ts_z = row.get('TS_ZSCORE', 0)
+    ts_z = row.get('ts_zscore', 0)
     if pd.isna(ts_z):
         ts_z = 0.0
     # Base efficiency score from TS z-score (normalized: -2sigma=0, +2sigma=1)
     eff_score = float(np.clip((ts_z + 2) / 4, 0.05, 1.0))
 
-    pts36 = row.get('PTS_PER36', 0)
+    pts36 = row.get('pts_per36', 0)
     if pd.isna(pts36):
         pts36 = 0.0
     pts36_cap = max(pctiles.get('ELITE_SCORING', 21.0), 15.0)
     volume_score = float(np.clip(pts36 / pts36_cap, 0, 1.0))
 
     if archetype == 'Ball Dominant Creator':
-        iso_ppp = row.get('ISOLATION_PPP', 0) or 0
-        prbh_ppp = row.get('PRBALLHANDLER_PPP', 0) or 0
+        iso_ppp = row.get('isolation_ppp', 0) or 0
+        prbh_ppp = row.get('prballhandler_ppp', 0) or 0
         primary_ppp = max(iso_ppp, prbh_ppp)
         ppp_score = float(np.clip(primary_ppp / 1.0, 0, 1.0))
         return 0.35 * eff_score + 0.35 * volume_score + 0.30 * ppp_score
@@ -592,37 +593,37 @@ def compute_role_effectiveness(row: pd.Series, archetype: str, pctiles: dict) ->
         return 0.50 * eff_score + 0.50 * volume_score
 
     elif archetype == 'Ballhandler':
-        ast36 = row.get('AST_PER36', 0) or 0
+        ast36 = row.get('ast_per36', 0) or 0
         ast_cap = max(pctiles.get('ELITE_PLAYMAKER', 6.0), 4.0)
         ast_score = float(np.clip(ast36 / ast_cap, 0, 1.0))
         return 0.35 * eff_score + 0.25 * volume_score + 0.40 * ast_score
 
     elif archetype == 'Connector':
-        ast36 = row.get('AST_PER36', 0) or 0
-        sec_ast = row.get('SECONDARY_AST_PER36', 0) or 0
+        ast36 = row.get('ast_per36', 0) or 0
+        sec_ast = row.get('secondary_ast_per36', 0) or 0
         connect_score = float(np.clip((ast36 + sec_ast * 5) / 8.0, 0, 1.0))
         return 0.30 * eff_score + 0.20 * volume_score + 0.50 * connect_score
 
     elif archetype in ('PnR Rolling Big', 'PnR Popping Big'):
-        prm_ppp = row.get('PRROLLMAN_PPP', 0) or 0
+        prm_ppp = row.get('prrollman_ppp', 0) or 0
         ppp_score = float(np.clip(prm_ppp / 1.2, 0, 1.0))
         return 0.35 * eff_score + 0.30 * volume_score + 0.35 * ppp_score
 
     elif archetype == 'Off-Ball Finisher':
-        cut_ppp = row.get('CUT_PPP', 0) or 0
+        cut_ppp = row.get('cut_ppp', 0) or 0
         ppp_score = float(np.clip(cut_ppp / 1.3, 0, 1.0))
         return 0.35 * eff_score + 0.30 * volume_score + 0.35 * ppp_score
 
     elif archetype == 'Off-Ball Movement Shooter':
-        fg3 = row.get('FG3_PCT', 0) or 0
-        offscr_ppp = row.get('OFFSCREEN_PPP', 0) or 0
+        fg3 = row.get('fg3_pct', 0) or 0
+        offscr_ppp = row.get('offscreen_ppp', 0) or 0
         shoot_score = float(np.clip((fg3 - 0.30) / 0.12, 0, 1.0))
         ppp_score = float(np.clip(offscr_ppp / 1.1, 0, 1.0))
         return 0.25 * eff_score + 0.15 * volume_score + 0.35 * shoot_score + 0.25 * ppp_score
 
     elif archetype == 'Off-Ball Stationary Shooter':
-        fg3 = row.get('FG3_PCT', 0) or 0
-        spotup_ppp = row.get('SPOTUP_PPP', 0) or 0
+        fg3 = row.get('fg3_pct', 0) or 0
+        spotup_ppp = row.get('spotup_ppp', 0) or 0
         shoot_score = float(np.clip((fg3 - 0.30) / 0.12, 0, 1.0))
         ppp_score = float(np.clip(spotup_ppp / 1.15, 0, 1.0))
         return 0.25 * eff_score + 0.15 * volume_score + 0.35 * shoot_score + 0.25 * ppp_score
@@ -666,9 +667,9 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     # ==========================================================================
     # STEP 0: MINIMUM REQUIREMENTS
     # ==========================================================================
-    mpg = row.get('MPG', 0)
-    if (row.get('MIN', 0) < STATIC['MIN_MINUTES'] or
-        row.get('GP', 0) < STATIC['MIN_GP'] or
+    mpg = row.get('mpg', 0)
+    if (row.get('min', 0) < STATIC['MIN_MINUTES'] or
+        row.get('gp', 0) < STATIC['MIN_GP'] or
         mpg < STATIC['MIN_MPG']):
         result['primary_archetype'] = 'Insufficient Minutes'
         return result
@@ -676,57 +677,57 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     # ==========================================================================
     # EXTRACT KEY METRICS
     # ==========================================================================
-    ball_dom = row.get('BALL_DOMINANT_PCT', 0) or 0
-    on_ball = row.get('ON_BALL_CREATION', 0) or 0
-    post_up = row.get('POSTUP_POSS_PCT', 0) or 0
-    ast_per36 = row.get('AST_PER36', 0) or 0
-    pts_per36 = row.get('PTS_PER36', 0) or 0
-    playmaking = row.get('PLAYMAKING_SCORE', 0) or 0
-    fg2a_rate = row.get('FG2A_RATE', 0.5)
+    ball_dom = row.get('ball_dominant_pct', 0) or 0
+    on_ball = row.get('on_ball_creation', 0) or 0
+    post_up = row.get('postup_poss_pct', 0) or 0
+    ast_per36 = row.get('ast_per36', 0) or 0
+    pts_per36 = row.get('pts_per36', 0) or 0
+    playmaking = row.get('playmaking_score', 0) or 0
+    fg2a_rate = row.get('fg2a_rate', 0.5)
     if pd.isna(fg2a_rate):
         fg2a_rate = 0.5
-    fg3a_per36 = row.get('FG3A_PER36', 0) or 0
-    fg3_pct = row.get('FG3_PCT', 0) or 0
-    ts = row.get('TS_PCT', 0)
-    ts_z = row.get('TS_ZSCORE', 0)
+    fg3a_per36 = row.get('fg3a_per36', 0) or 0
+    fg3_pct = row.get('fg3_pct', 0) or 0
+    ts = row.get('ts_pct', 0)
+    ts_z = row.get('ts_zscore', 0)
     if pd.isna(ts) or ts == 0:
         ts = 0.55
     if pd.isna(ts_z):
         ts_z = 0.0
-    usg = row.get('USG_PCT', 0.18)
+    usg = row.get('usg_pct', 0.18)
     if pd.isna(usg):
         usg = 0.18
 
     # Off-ball
-    cut_pnrrm = row.get('CUT_PNRRM_PCT', 0) or 0
-    spotup = row.get('SPOTUP_PCT', 0) or 0
-    movement = row.get('MOVEMENT_SHOOTER_PCT', 0) or 0
-    transition = row.get('TRANSITION_PCT', 0) or 0
-    putback = row.get('PUTBACK_PCT', 0) or 0
-    prrollman = row.get('PRROLLMAN_POSS_PCT', 0) or 0
-    cut_poss = row.get('CUT_POSS_PCT', 0) or 0
+    cut_pnrrm = row.get('cut_pnrrm_pct', 0) or 0
+    spotup = row.get('spotup_pct', 0) or 0
+    movement = row.get('movement_shooter_pct', 0) or 0
+    transition = row.get('transition_pct', 0) or 0
+    putback = row.get('putback_pct', 0) or 0
+    prrollman = row.get('prrollman_poss_pct', 0) or 0
+    cut_poss = row.get('cut_poss_pct', 0) or 0
 
     # Tracking
-    touches = row.get('TOUCHES', 0) or 0
-    sec_per_touch = row.get('AVG_SEC_PER_TOUCH', 3.0)
+    touches = row.get('touches', 0) or 0
+    sec_per_touch = row.get('avg_sec_per_touch', 3.0)
     if pd.isna(sec_per_touch):
         sec_per_touch = 3.0
-    sec_ast = row.get('SECONDARY_AST_PER36', 0) or 0
+    sec_ast = row.get('secondary_ast_per36', 0) or 0
 
     # Shot zones (from LeagueDashPlayerShotLocations)
-    at_rim_freq = row.get('AT_RIM_FREQ', 0) or 0
+    at_rim_freq = row.get('at_rim_freq', 0) or 0
     if pd.isna(at_rim_freq):
         at_rim_freq = 0
-    midrange_freq = row.get('MIDRANGE_FREQ', 0) or 0
+    midrange_freq = row.get('midrange_freq', 0) or 0
     if pd.isna(midrange_freq):
         midrange_freq = 0
-    paint_freq = row.get('PAINT_FREQ', 0) or 0
+    paint_freq = row.get('paint_freq', 0) or 0
     if pd.isna(paint_freq):
         paint_freq = 0
-    at_rim_plus_paint = row.get('AT_RIM_PLUS_PAINT_FREQ', 0) or 0
+    at_rim_plus_paint = row.get('at_rim_plus_paint_freq', 0) or 0
     if pd.isna(at_rim_plus_paint):
         at_rim_plus_paint = 0
-    midrange_fg_pct = row.get('MIDRANGE_FG_PCT', 0) or 0
+    midrange_fg_pct = row.get('midrange_fg_pct', 0) or 0
     if pd.isna(midrange_fg_pct):
         midrange_fg_pct = 0
 
@@ -1151,9 +1152,9 @@ def classify_archetype(row: pd.Series, pctiles: dict) -> dict:
     # 9. BEST-FIT FALLBACK (replaces Rotation Piece catch-all)
     # Uses scoring signals to assign closest archetype instead of a generic bucket
     # ---------------------------------------------------------------------------
-    reb36 = row.get('REB_PER36', 0) or 0
-    stl36 = row.get('STL_PER36', 0) or 0
-    blk36 = row.get('BLK_PER36', 0) or 0
+    reb36 = row.get('reb_per36', 0) or 0
+    stl36 = row.get('stl_per36', 0) or 0
+    blk36 = row.get('blk_per36', 0) or 0
 
     # Score each candidate archetype using frozen canonical metric vectors
     # (FALLBACK_VECTORS prevents silent regressions from feature creep)
@@ -1213,14 +1214,14 @@ def classify_all_players(features: pd.DataFrame, pctiles: dict) -> pd.DataFrame:
     classifications = []
     for idx, row in features.iterrows():
         result = classify_archetype(row, pctiles)
-        result['PLAYER_ID'] = row['PLAYER_ID']
-        result['PLAYER_NAME'] = row['PLAYER_NAME']
-        result['SEASON'] = row['SEASON']
+        result['player_id'] = row['player_id']
+        result['player_name'] = row['player_name']
+        result['season'] = row['season']
         classifications.append(result)
 
     class_df = pd.DataFrame(classifications)
 
-    output = features.merge(class_df, on=['PLAYER_ID', 'PLAYER_NAME', 'SEASON'])
+    output = features.merge(class_df, on=['player_id', 'player_name', 'season'])
 
     return output
 
@@ -1276,36 +1277,36 @@ def compute_archetype_embedding(row: pd.Series, pctiles: dict) -> dict:
     p = pctiles
 
     # ---- Extract metrics (same as classify_archetype) ----
-    ball_dom = row.get('BALL_DOMINANT_PCT', 0) or 0
-    on_ball = row.get('ON_BALL_CREATION', 0) or 0
-    post_up = row.get('POSTUP_POSS_PCT', 0) or 0
-    ast_per36 = row.get('AST_PER36', 0) or 0
-    pts_per36 = row.get('PTS_PER36', 0) or 0
-    fg2a_rate = row.get('FG2A_RATE', 0.5)
+    ball_dom = row.get('ball_dominant_pct', 0) or 0
+    on_ball = row.get('on_ball_creation', 0) or 0
+    post_up = row.get('postup_poss_pct', 0) or 0
+    ast_per36 = row.get('ast_per36', 0) or 0
+    pts_per36 = row.get('pts_per36', 0) or 0
+    fg2a_rate = row.get('fg2a_rate', 0.5)
     if pd.isna(fg2a_rate):
         fg2a_rate = 0.5
-    fg3a_per36 = row.get('FG3A_PER36', 0) or 0
-    fg3_pct = row.get('FG3_PCT', 0) or 0
-    ts = row.get('TS_PCT', 0)
+    fg3a_per36 = row.get('fg3a_per36', 0) or 0
+    fg3_pct = row.get('fg3_pct', 0) or 0
+    ts = row.get('ts_pct', 0)
     if pd.isna(ts) or ts == 0:
         ts = 0.55
-    cut_pnrrm = row.get('CUT_PNRRM_PCT', 0) or 0
-    spotup = row.get('SPOTUP_PCT', 0) or 0
-    movement = row.get('MOVEMENT_SHOOTER_PCT', 0) or 0
-    transition = row.get('TRANSITION_PCT', 0) or 0
-    putback = row.get('PUTBACK_PCT', 0) or 0
-    prrollman = row.get('PRROLLMAN_POSS_PCT', 0) or 0
-    at_rim_freq = row.get('AT_RIM_FREQ', 0) or 0
+    cut_pnrrm = row.get('cut_pnrrm_pct', 0) or 0
+    spotup = row.get('spotup_pct', 0) or 0
+    movement = row.get('movement_shooter_pct', 0) or 0
+    transition = row.get('transition_pct', 0) or 0
+    putback = row.get('putback_pct', 0) or 0
+    prrollman = row.get('prrollman_poss_pct', 0) or 0
+    at_rim_freq = row.get('at_rim_freq', 0) or 0
     if pd.isna(at_rim_freq):
         at_rim_freq = 0
-    midrange_freq = row.get('MIDRANGE_FREQ', 0) or 0
+    midrange_freq = row.get('midrange_freq', 0) or 0
     if pd.isna(midrange_freq):
         midrange_freq = 0
-    touches = row.get('TOUCHES', 0) or 0
-    sec_per_touch = row.get('AVG_SEC_PER_TOUCH', 3.0)
+    touches = row.get('touches', 0) or 0
+    sec_per_touch = row.get('avg_sec_per_touch', 3.0)
     if pd.isna(sec_per_touch):
         sec_per_touch = 3.0
-    playmaking = row.get('PLAYMAKING_SCORE', 0) or 0
+    playmaking = row.get('playmaking_score', 0) or 0
 
     # ---- Normalisation denominators (threshold → P95 range) ----
     bd_floor = p.get('BD_MIN', 0.37)
@@ -1443,9 +1444,9 @@ def compute_all_embeddings(features: pd.DataFrame, pctiles: dict) -> pd.DataFram
     embeddings = []
     for idx, row in features.iterrows():
         emb = compute_archetype_embedding(row, pctiles)
-        emb['PLAYER_ID'] = row['PLAYER_ID']
-        emb['PLAYER_NAME'] = row['PLAYER_NAME']
-        emb['SEASON'] = row['SEASON']
+        emb['player_id'] = row['player_id']
+        emb['player_name'] = row['player_name']
+        emb['season'] = row['season']
         embeddings.append(emb)
 
     return pd.DataFrame(embeddings)
@@ -1512,9 +1513,9 @@ def main():
 
         # Print summary
         qual = classified[
-            (classified['MIN'] >= STATIC['MIN_MINUTES']) &
-            (classified['GP'] >= STATIC['MIN_GP']) &
-            (classified['MPG'] >= STATIC['MIN_MPG'])
+            (classified['min'] >= STATIC['MIN_MINUTES']) &
+            (classified['gp'] >= STATIC['MIN_GP']) &
+            (classified['mpg'] >= STATIC['MIN_MPG'])
         ]
         archetype_counts = qual['primary_archetype'].value_counts()
         print(f"   Classified {len(qual)} qualified players:")
@@ -1536,7 +1537,7 @@ def main():
         print("\n Computing archetype embeddings...")
         all_emb = []
         for season in SEASONS:
-            season_data = final_df[final_df['SEASON'] == season]
+            season_data = final_df[final_df['season'] == season]
             if season_data.empty:
                 continue
             # Re-compute pctiles for embedding (use same qualified pool)
@@ -1548,15 +1549,15 @@ def main():
             embedding_df = pd.concat(all_emb, ignore_index=True)
             # Merge embeddings into final_df
             emb_cols = [c for c in embedding_df.columns if c.startswith('emb_')]
-            merge_cols = ['PLAYER_ID', 'PLAYER_NAME', 'SEASON'] + emb_cols
+            merge_cols = ['player_id', 'player_name', 'season'] + emb_cols
             final_df = final_df.merge(embedding_df[merge_cols],
-                                      on=['PLAYER_ID', 'PLAYER_NAME', 'SEASON'], how='left')
+                                      on=['player_id', 'player_name', 'season'], how='left')
             # Save standalone embedding file
-            embedding_df.to_parquet(OUTPUT_DIR / "archetype_embeddings.parquet", index=False)
+            save_standardized(embedding_df, OUTPUT_DIR / "archetype_embeddings.parquet")
             embedding_df.to_csv(OUTPUT_DIR / "archetype_embeddings.csv", index=False)
             print(f"   Saved {len(embedding_df)} embeddings to data/processed/archetype_embeddings.parquet")
 
-        final_df.to_parquet(OUTPUT_DIR / "player_archetypes.parquet", index=False)
+        save_standardized(final_df, OUTPUT_DIR / "player_archetypes.parquet")
         final_df.to_csv(OUTPUT_DIR / "player_archetypes.csv", index=False)
 
         print(f"\n Saved {len(final_df)} player-seasons to data/processed/player_archetypes.parquet")
@@ -1566,7 +1567,7 @@ def main():
         print("VALIDATION: KEY PLAYER CLASSIFICATIONS")
         print("=" * 70)
 
-        s25 = final_df[final_df['SEASON'] == '2024-25'].copy()
+        s25 = final_df[final_df['season'] == '2024-25'].copy()
         stars = [
             'LeBron James', 'Stephen Curry', 'Kevin Durant', 'Giannis Antetokounmpo',
             'Luka Dončić', 'Nikola Jokic', 'Jayson Tatum', 'Jonathan Kuminga',
@@ -1579,26 +1580,26 @@ def main():
         ]
 
         for name in stars:
-            player = s25[s25['PLAYER_NAME'].str.contains(name, case=False, na=False)]
+            player = s25[s25['player_name'].str.contains(name, case=False, na=False)]
             if len(player) > 0:
                 pp = player.iloc[0]
                 sec = f" / {pp['secondary_archetype']}" if pp.get('secondary_archetype') else ""
                 eff_tier = pp.get('efficiency_tier', '?')
                 rc = pp.get('role_confidence', 0)
                 re = pp.get('role_effectiveness', 0)
-                fg2 = pp.get('FG2A_RATE', 0)
-                bd = pp.get('BALL_DOMINANT_PCT', 0)
-                ast = pp.get('AST_PER36', 0)
-                print(f"  {pp['PLAYER_NAME']:<25} {pp['primary_archetype']}{sec}  conf={rc:.0%} eff={re:.0%}  [{eff_tier}] BD={bd:.2f} AST={ast:.1f} FG2A={fg2:.0%}")
+                fg2 = pp.get('fg2a_rate', 0)
+                bd = pp.get('ball_dominant_pct', 0)
+                ast = pp.get('ast_per36', 0)
+                print(f"  {pp['player_name']:<25} {pp['primary_archetype']}{sec}  conf={rc:.0%} eff={re:.0%}  [{eff_tier}] BD={bd:.2f} AST={ast:.1f} FG2A={fg2:.0%}")
             else:
-                s24 = final_df[final_df['SEASON'] == '2023-24']
-                player = s24[s24['PLAYER_NAME'].str.contains(name, case=False, na=False)]
+                s24 = final_df[final_df['season'] == '2023-24']
+                player = s24[s24['player_name'].str.contains(name, case=False, na=False)]
                 if len(player) > 0:
                     pp = player.iloc[0]
                     sec = f" / {pp['secondary_archetype']}" if pp.get('secondary_archetype') else ""
                     rc = pp.get('role_confidence', 0)
                     re = pp.get('role_effectiveness', 0)
-                    print(f"  {pp['PLAYER_NAME']:<25} {pp['primary_archetype']}{sec}  conf={rc:.0%} eff={re:.0%} [{pp['SEASON']}]")
+                    print(f"  {pp['player_name']:<25} {pp['primary_archetype']}{sec}  conf={rc:.0%} eff={re:.0%} [{pp['season']}]")
 
         # ---- Embedding example output ----
         if 'emb_dominance' in final_df.columns:
@@ -1610,14 +1611,14 @@ def main():
             emb_stars = ['LeBron James', 'Stephen Curry', 'Nikola Jokic', 'Jarrett Allen',
                          'Klay Thompson', 'Draymond Green', 'Clint Capela']
             for name in emb_stars:
-                player = s25[s25['PLAYER_NAME'].str.contains(name, case=False, na=False)]
+                player = s25[s25['player_name'].str.contains(name, case=False, na=False)]
                 if len(player) == 0:
                     continue
                 pp = player.iloc[0]
                 if 'emb_dominance' not in pp.index:
                     # Merge back from final_df
-                    pp = final_df[(final_df['PLAYER_NAME'].str.contains(name, case=False, na=False)) &
-                                  (final_df['SEASON'] == '2024-25')]
+                    pp = final_df[(final_df['player_name'].str.contains(name, case=False, na=False)) &
+                                  (final_df['season'] == '2024-25')]
                     if len(pp) == 0:
                         continue
                     pp = pp.iloc[0]
@@ -1631,7 +1632,7 @@ def main():
                         top3.append((arch_name, val))
                 top3.sort(key=lambda x: x[1], reverse=True)
                 top3_str = " | ".join(f"{a}: {v:.0%}" for a, v in top3[:4])
-                print(f"  {pp['PLAYER_NAME']:<25} dominance={dom:.0%} hybrid={ent:.0%}  [{top3_str}]")
+                print(f"  {pp['player_name']:<25} dominance={dom:.0%} hybrid={ent:.0%}  [{top3_str}]")
 
     return final_df
 

@@ -47,6 +47,8 @@ from src.simulation.game_model import (
 )
 import dataclasses
 
+from src.data.schema_contract import load_standardized
+
 from src.simulation.simulation_config import (
     FORECAST_TEAM_FEATURES_PATH,
     HISTORICAL_DIR,
@@ -70,26 +72,26 @@ def build_rest_lookup(season: str, game_logs_path: Path = None) -> dict:
     if not gl_path.exists():
         return {}
 
-    gl = pd.read_parquet(gl_path)
-    gl = gl[gl["SEASON"] == season].copy()
+    gl = load_standardized(gl_path)
+    gl = gl[gl["season"] == season].copy()
     if gl.empty:
         return {}
 
-    gl["GAME_DATE"] = pd.to_datetime(gl["GAME_DATE"])
-    gl = gl.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"]).reset_index(drop=True)
+    gl["game_date"] = pd.to_datetime(gl["game_date"])
+    gl = gl.sort_values(["team_abbreviation", "game_date"]).reset_index(drop=True)
 
-    gl["_prev"] = gl.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(1)
-    raw_diff = (gl["GAME_DATE"] - gl["_prev"]).dt.days - 1
+    gl["_prev"] = gl.groupby("team_abbreviation")["game_date"].shift(1)
+    raw_diff = (gl["game_date"] - gl["_prev"]).dt.days - 1
     gl["days_rest"] = raw_diff.fillna(3).clip(lower=0, upper=7).astype(int)
     gl["is_b2b"] = gl["days_rest"] == 0
 
-    gl["_prev2"] = gl.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(2)
-    span = (gl["GAME_DATE"] - gl["_prev2"]).dt.days.fillna(99)
+    gl["_prev2"] = gl.groupby("team_abbreviation")["game_date"].shift(2)
+    span = (gl["game_date"] - gl["_prev2"]).dt.days.fillna(99)
     gl["is_3in4"] = (span <= 3) & gl["is_b2b"]
 
     per_team: dict = {}
     for _, row in gl.iterrows():
-        per_team[(str(row["GAME_ID"]), str(row["TEAM_ABBREVIATION"]).upper())] = {
+        per_team[(str(row["game_id"]), str(row["team_abbreviation"]).upper())] = {
             "days_rest": int(row["days_rest"]),
             "is_b2b":    bool(row["is_b2b"]),
             "is_3in4":   bool(row["is_3in4"]),
@@ -97,11 +99,11 @@ def build_rest_lookup(season: str, game_logs_path: Path = None) -> dict:
 
     _def = {"days_rest": 1, "is_b2b": False, "is_3in4": False}
     lookup: dict = {}
-    home_rows = gl[gl["MATCHUP"].str.contains("vs.", na=False)]
+    home_rows = gl[gl["matchup"].str.contains("vs.", na=False)]
     for _, row in home_rows.iterrows():
-        gid  = str(row["GAME_ID"])
-        home = str(row["TEAM_ABBREVIATION"]).upper()
-        parts = str(row["MATCHUP"]).split(" vs. ")
+        gid  = str(row["game_id"])
+        home = str(row["team_abbreviation"]).upper()
+        parts = str(row["matchup"]).split(" vs. ")
         away  = parts[1].strip().upper() if len(parts) > 1 else ""
         h = per_team.get((gid, home), _def)
         a = per_team.get((gid, away), _def)
@@ -450,9 +452,9 @@ def main() -> None:
             print(f"  {season}: game logs missing — skipping")
             continue
 
-        gl = pd.read_parquet(gl_path)
-        if season not in gl["SEASON"].values:
-            print(f"  {season}: no actual game logs — skipping (game logs cover {sorted(gl['SEASON'].unique())})")
+        gl = load_standardized(gl_path)
+        if season not in gl["season"].values:
+            print(f"  {season}: no actual game logs — skipping (game logs cover {sorted(gl['season'].unique())})")
             continue
 
         schedule = build_schedule(season)

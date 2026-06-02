@@ -46,6 +46,7 @@ from typing import Dict
 
 import numpy as np
 import pandas as pd
+from src.data.schema_contract import load_standardized, save_standardized
 
 
 GAME_LOGS_PATH = Path("data/historical/team_game_logs.parquet")
@@ -69,19 +70,19 @@ COVID_SEASONS = {"2019-20", "2020-21"}  # bubble/truncated — no real HCA
 
 
 def load_games() -> pd.DataFrame:
-    df = pd.read_parquet(GAME_LOGS_PATH)
+    df = load_standardized(GAME_LOGS_PATH)
     df = df.copy()
-    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-    df = df[~df["SEASON"].isin(COVID_SEASONS)].copy()
-    df = df.sort_values(["TEAM_ID", "GAME_DATE"])
+    df["game_date"] = pd.to_datetime(df["game_date"])
+    df = df[~df["season"].isin(COVID_SEASONS)].copy()
+    df = df.sort_values(["team_id", "game_date"])
 
     # Days rest per team (NaN for first game → fill with 3, clip to [0, 7])
-    df["prev_game_date"] = df.groupby("TEAM_ID")["GAME_DATE"].shift(1)
-    df["days_rest"] = (df["GAME_DATE"] - df["prev_game_date"]).dt.days - 1
+    df["prev_game_date"] = df.groupby("team_id")["game_date"].shift(1)
+    df["days_rest"] = (df["game_date"] - df["prev_game_date"]).dt.days - 1
     df["days_rest"] = df["days_rest"].fillna(3).clip(lower=0, upper=7).astype(int)
     df["is_b2b"] = (df["days_rest"] == 0).astype(int)
 
-    df["is_home"] = df["MATCHUP"].apply(_is_home_from_matchup)
+    df["is_home"] = df["matchup"].apply(_is_home_from_matchup)
     return df
 
 
@@ -91,29 +92,29 @@ def build_game_pairs(df: pd.DataFrame) -> pd.DataFrame:
     away = df[df["is_home"] == 0].copy()
 
     home_cols = {
-        "GAME_ID": "GAME_ID",
-        "GAME_DATE": "game_date",
-        "SEASON": "season",
-        "TEAM_ID": "home_team_id",
-        "TEAM_ABBREVIATION": "home_team",
-        "PTS": "home_pts",
+        "game_id": "game_id",
+        "game_date": "game_date",
+        "season": "season",
+        "team_id": "home_team_id",
+        "team_abbreviation": "home_team",
+        "pts": "home_pts",
         "OPP_PTS": "away_pts_from_home_row",
         "margin": "home_margin",
         "is_b2b": "is_b2b_home",
         "days_rest": "days_rest_home",
     }
     away_cols = {
-        "GAME_ID": "GAME_ID",
-        "TEAM_ID": "away_team_id",
-        "TEAM_ABBREVIATION": "away_team",
-        "PTS": "away_pts",
+        "game_id": "game_id",
+        "team_id": "away_team_id",
+        "team_abbreviation": "away_team",
+        "pts": "away_pts",
         "is_b2b": "is_b2b_away",
         "days_rest": "days_rest_away",
     }
     home = home[list(home_cols.keys())].rename(columns=home_cols)
     away = away[list(away_cols.keys())].rename(columns=away_cols)
 
-    games = home.merge(away, on="GAME_ID", how="inner")
+    games = home.merge(away, on="game_id", how="inner")
     # Sanity: home_margin should equal home_pts - away_pts
     games["actual_margin"] = games["home_pts"] - games["away_pts"]
     return games
@@ -251,7 +252,7 @@ def main():
     print("=" * 72)
     print(f"Reading {GAME_LOGS_PATH}...")
     df = load_games()
-    print(f"Loaded {len(df)} team-games across {df['SEASON'].nunique()} seasons")
+    print(f"Loaded {len(df)} team-games across {df['season'].nunique()} seasons")
 
     n_unknown_home = int((df["is_home"] == -1).sum())
     if n_unknown_home > 0:

@@ -97,7 +97,7 @@ def load_rapm() -> pd.DataFrame:
         print(f"  WARNING: {RAPM_PATH} not found")
         return pd.DataFrame()
 
-    rapm = pd.read_parquet(RAPM_PATH)
+    rapm = load_standardized(RAPM_PATH)
     rapm["player_id"] = rapm["player_id"].astype(str).apply(clean_id)
     rapm["season"] = rapm["season"].astype(str)
 
@@ -135,7 +135,7 @@ def load_modeling_inputs() -> pd.DataFrame:
         print(f"  WARNING: {MODELING_INPUTS_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(MODELING_INPUTS_PATH)
+    df = load_standardized(MODELING_INPUTS_PATH)
     df["player_id"] = df["player_id"].astype(str).apply(clean_id)
     df["season"] = df["season"].astype(str)
 
@@ -152,15 +152,15 @@ def load_player_profiles() -> pd.DataFrame:
         print(f"  WARNING: {PLAYER_PROFILES_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(PLAYER_PROFILES_PATH)
+    df = load_standardized(PLAYER_PROFILES_PATH)
     df["player_id"] = df["player_id"].astype(str).apply(clean_id)
     df["season"] = df["season"].astype(str)
 
-    keep = ["season", "player_id", "player_name", "GP", "MIN", "MPG",
-            "PTS", "AST", "REB", "ORB", "DRB", "STL", "BLK", "TOV",
-            "FGM", "FGA", "FG3M", "FG3A", "FTM", "FTA",
-            "TS_PCT", "EFG_PCT", "USG_RATE", "AST_PCT", "TOV_PCT",
-            "ORTG", "DRTG", "NET_RTG",
+    keep = ["season", "player_id", "player_name", "gp", "min", "MPG",
+            "pts", "ast", "reb", "ORB", "DRB", "stl", "blk", "tov",
+            "fgm", "fga", "fg3m", "fg3a", "ftm", "fta",
+            "ts_pct", "efg_pct", "USG_RATE", "AST_PCT", "TOV_PCT",
+            "ortg", "drtg", "net_rtg",
             "POSS_OFF", "POSS_DEF"]
     available = [c for c in keep if c in df.columns]
     return df[available].drop_duplicates(subset=["season", "player_id"], keep="last")
@@ -172,20 +172,20 @@ def load_archetypes() -> pd.DataFrame:
         print(f"  WARNING: {PLAYER_ARCHETYPES_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(PLAYER_ARCHETYPES_PATH)
+    df = load_standardized(PLAYER_ARCHETYPES_PATH)
 
     # Normalize ID column
-    id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+    id_col = "player_id" if "player_id" in df.columns else "player_id"
     df["player_id"] = df[id_col].astype(str).apply(clean_id)
 
-    season_col = "SEASON" if "SEASON" in df.columns else "season"
+    season_col = "season" if "season" in df.columns else "season"
     df["season"] = df[season_col].astype(str)
 
     # Core archetype columns
     core_cols = ["season", "player_id", "primary_archetype", "secondary_archetype",
                  "role_confidence", "role_effectiveness",
                  "BALL_DOMINANT_PCT", "PLAYMAKING_SCORE",
-                 "FG3_PCT", "FG3A_PER36", "TS_ZSCORE"]
+                 "fg3_pct", "FG3A_PER36", "TS_ZSCORE"]
 
     # v2.0: Additional tracking/feature columns needed for 8-dimension model
     tracking_cols = [
@@ -197,7 +197,7 @@ def load_archetypes() -> pd.DataFrame:
         "POTENTIAL_AST", "POTENTIAL_AST_PER36",
         "SECONDARY_AST", "SECONDARY_AST_PER36",
         # Turnover Control (Dim 7)
-        "TOV", "TOV_PER36", "TOV_PCT",
+        "tov", "TOV_PER36", "TOV_PCT",
         # Portability: PCV entropy (emb_entropy_norm as proxy)
         "pcv_entropy", "emb_entropy", "emb_entropy_norm",
     ]
@@ -222,11 +222,11 @@ def load_defensive_archetypes() -> pd.DataFrame:
         print(f"  WARNING: {DEFENSIVE_ARCHETYPES_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(DEFENSIVE_ARCHETYPES_PATH)
-    id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+    df = load_standardized(DEFENSIVE_ARCHETYPES_PATH)
+    id_col = "player_id" if "player_id" in df.columns else "player_id"
     df["player_id"] = df[id_col].astype(str).apply(clean_id)
 
-    season_col = "SEASON" if "SEASON" in df.columns else "season"
+    season_col = "season" if "season" in df.columns else "season"
     df["season"] = df[season_col].astype(str)
 
     keep = ["season", "player_id", "defensive_archetype",
@@ -253,11 +253,11 @@ def load_hustle_stats(seasons: Optional[list] = None) -> pd.DataFrame:
         if not os.path.exists(path):
             print(f"  WARNING: {path} not found")
             continue
-        df = pd.read_parquet(path)
-        id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+        df = load_standardized(path)
+        id_col = "player_id" if "player_id" in df.columns else "player_id"
         df["player_id"] = df[id_col].astype(str).apply(clean_id)
-        if "SEASON" in df.columns:
-            df["season"] = df["SEASON"].astype(str)
+        if "season" in df.columns:
+            df["season"] = df["season"].astype(str)
         elif "season" in df.columns:
             df["season"] = df["season"].astype(str)
         else:
@@ -289,15 +289,15 @@ def load_pullup_tracking(seasons: Optional[list] = None) -> pd.DataFrame:
         if not os.path.exists(path):
             print(f"  WARNING: {path} not found")
             continue
-        df = pd.read_parquet(path)
-        id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+        df = load_standardized(path)
+        id_col = "player_id" if "player_id" in df.columns else "player_id"
         df["player_id"] = df[id_col].astype(str).apply(clean_id)
         df["season"] = season
 
         keep = ["season", "player_id",
                 "PULL_UP_FGM", "PULL_UP_FGA", "PULL_UP_FG_PCT",
                 "PULL_UP_PTS", "PULL_UP_FG3M", "PULL_UP_FG3A",
-                "PULL_UP_FG3_PCT", "PULL_UP_EFG_PCT", "GP", "MIN"]
+                "PULL_UP_FG3_PCT", "PULL_UP_EFG_PCT", "gp", "min"]
         available = [c for c in keep if c in df.columns]
         parts.append(df[available])
 
@@ -315,11 +315,11 @@ def load_position_estimates() -> pd.DataFrame:
         print(f"  WARNING: {POSITION_ESTIMATES_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(POSITION_ESTIMATES_PATH)
-    id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
+    df = load_standardized(POSITION_ESTIMATES_PATH)
+    id_col = "player_id" if "player_id" in df.columns else "player_id"
     df["player_id"] = df[id_col].astype(str).apply(clean_id)
 
-    season_col = "SEASON" if "SEASON" in df.columns else "season"
+    season_col = "season" if "season" in df.columns else "season"
     df["season"] = df[season_col].astype(str)
 
     # Find position percentage columns
@@ -337,9 +337,9 @@ def load_archetype_embeddings() -> pd.DataFrame:
         print(f"  WARNING: {ARCHETYPE_EMBEDDINGS_PATH} not found")
         return pd.DataFrame()
 
-    df = pd.read_parquet(ARCHETYPE_EMBEDDINGS_PATH)
-    id_col = "PLAYER_ID" if "PLAYER_ID" in df.columns else "player_id"
-    season_col = "SEASON" if "SEASON" in df.columns else "season"
+    df = load_standardized(ARCHETYPE_EMBEDDINGS_PATH)
+    id_col = "player_id" if "player_id" in df.columns else "player_id"
+    season_col = "season" if "season" in df.columns else "season"
 
     df["player_id"] = df[id_col].astype(str).apply(clean_id)
     df["season"] = df[season_col].astype(str)
@@ -466,7 +466,7 @@ def assign_position_bucket(row: pd.Series) -> str:
             return "Guard"
         elif pos in ("SG-SF", "SF-SG", "G-F"):
             return "Guard-Forward"
-        elif pos in ("SF", "PF"):
+        elif pos in ("SF", "pf"):
             return "Forward"
         elif pos in ("PF-C", "C-PF"):
             return "Forward-Center"
@@ -509,24 +509,24 @@ def apply_luck_adjustment(df: pd.DataFrame) -> pd.DataFrame:
         mask = result["season"] == season
 
         # 3PT% luck adjustment
-        if "FG3_PCT" in result.columns:
-            league_mean_3pt = result.loc[mask, "FG3_PCT"].mean()
+        if "fg3_pct" in result.columns:
+            league_mean_3pt = result.loc[mask, "fg3_pct"].mean()
             if not np.isnan(league_mean_3pt):
-                raw_3pt = result.loc[mask, "FG3_PCT"]
+                raw_3pt = result.loc[mask, "fg3_pct"]
                 adjusted = league_mean_3pt + (1 - cfg.shooting_regression_rate) * (raw_3pt - league_mean_3pt)
                 result.loc[mask, "FG3_PCT_adj"] = adjusted
             else:
-                result.loc[mask, "FG3_PCT_adj"] = result.loc[mask, "FG3_PCT"]
+                result.loc[mask, "FG3_PCT_adj"] = result.loc[mask, "fg3_pct"]
         
         # TS% luck adjustment (lighter touch — includes FT component)
-        if "TS_PCT" in result.columns:
-            league_mean_ts = result.loc[mask, "TS_PCT"].mean()
+        if "ts_pct" in result.columns:
+            league_mean_ts = result.loc[mask, "ts_pct"].mean()
             if not np.isnan(league_mean_ts):
-                raw_ts = result.loc[mask, "TS_PCT"]
+                raw_ts = result.loc[mask, "ts_pct"]
                 adjusted = league_mean_ts + (1 - cfg.ts_regression_rate) * (raw_ts - league_mean_ts)
                 result.loc[mask, "TS_PCT_adj"] = adjusted
             else:
-                result.loc[mask, "TS_PCT_adj"] = result.loc[mask, "TS_PCT"]
+                result.loc[mask, "TS_PCT_adj"] = result.loc[mask, "ts_pct"]
 
     return result
 
@@ -613,9 +613,9 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
 
     # MF-1: TOV per touch
-    if "TOV" in result.columns and "TOUCHES" in result.columns:
+    if "tov" in result.columns and "TOUCHES" in result.columns:
         touches = result["TOUCHES"].replace(0, np.nan)
-        result["TOV_PER_TOUCH"] = result["TOV"] / touches
+        result["TOV_PER_TOUCH"] = result["tov"] / touches
     else:
         result["TOV_PER_TOUCH"] = np.nan
 
@@ -634,9 +634,9 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
         result["DRIVE_AST_RATIO"] = np.nan
 
     # Passes made per 36
-    if "PASSES_MADE" in result.columns and "MIN" in result.columns:
-        minutes = result["MIN"].replace(0, np.nan)
-        result["PASSES_MADE_PER36"] = result["PASSES_MADE"] / minutes * 36.0 * result.get("GP", 1)
+    if "PASSES_MADE" in result.columns and "min" in result.columns:
+        minutes = result["min"].replace(0, np.nan)
+        result["PASSES_MADE_PER36"] = result["PASSES_MADE"] / minutes * 36.0 * result.get("gp", 1)
         # Correct: PASSES_MADE is already per-game in the tracking data
         # Just normalize to per-36
         if "MPG" in result.columns:
@@ -650,8 +650,8 @@ def compute_derived_metrics(df: pd.DataFrame) -> pd.DataFrame:
         if "MPG" in result.columns:
             mpg = result["MPG"].replace(0, np.nan)
             result["PULL_UP_FGA_PER36"] = result["PULL_UP_FGA"] / mpg * 36.0
-        elif "MIN" in result.columns and "GP" in result.columns:
-            mpg = (result["MIN"] / result["GP"].replace(0, np.nan)).replace(0, np.nan)
+        elif "min" in result.columns and "gp" in result.columns:
+            mpg = (result["min"] / result["gp"].replace(0, np.nan)).replace(0, np.nan)
             result["PULL_UP_FGA_PER36"] = result["PULL_UP_FGA"] / mpg * 36.0
         else:
             result["PULL_UP_FGA_PER36"] = np.nan
@@ -685,11 +685,11 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== DIMENSION 1: SHOOTING GRAVITY (league z — universally portable) =====
     z_components = {}
-    ts_col = "TS_PCT_adj" if "TS_PCT_adj" in result.columns else "TS_PCT"
+    ts_col = "TS_PCT_adj" if "TS_PCT_adj" in result.columns else "ts_pct"
     if ts_col in result.columns:
         z_components["ts"] = _zscore_within_season(result, ts_col)
 
-    fg3_col = "FG3_PCT_adj" if "FG3_PCT_adj" in result.columns else "FG3_PCT"
+    fg3_col = "FG3_PCT_adj" if "FG3_PCT_adj" in result.columns else "fg3_pct"
     if fg3_col in result.columns:
         z_components["fg3_pct"] = _zscore_within_season(result, fg3_col)
 
@@ -777,7 +777,7 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
     # ===== DIMENSION 5: DEFENSIVE PLAYMAKING (position z — BLK% dominated by centers) =====
     z_components = {}
     shrinkage = BAYESIAN_SHRINKAGE.defensive_playmaking_shrinkage
-    gp_series = result.get("GP") if "GP" in result.columns else None
+    gp_series = result.get("gp") if "gp" in result.columns else None
     group_labels = result.get("primary_archetype") if "primary_archetype" in result.columns else result.get("position_bucket")
 
     for col in ["STL_PER100_DEF_POSS", "BLK_PCT", "DEFLECTIONS",
@@ -808,8 +808,8 @@ def compute_dimension_model(df: pd.DataFrame) -> pd.DataFrame:
     if "drapm" in result.columns:
         z_components["drapm"] = _zscore_within_position_season(result, "drapm")
 
-    if "DRTG" in result.columns:
-        z_components["drtg"] = _zscore_within_position_season(result, "DRTG", invert=True)
+    if "drtg" in result.columns:
+        z_components["drtg"] = _zscore_within_position_season(result, "drtg", invert=True)
 
     if "d_results_pctl" in result.columns:
         z_components["d_results"] = _zscore_within_position_season(result, "d_results_pctl")
@@ -1049,7 +1049,7 @@ def compute_portable_talent_score(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- 1B. Playtype Efficiency z-score ---
     # Use playtype surplus total if available (computed in Layer 2), else TS adj
-    ts_col = "TS_PCT_adj" if "TS_PCT_adj" in result.columns else "TS_PCT"
+    ts_col = "TS_PCT_adj" if "TS_PCT_adj" in result.columns else "ts_pct"
     if ts_col in result.columns:
         result["playtype_efficiency_z"] = result.groupby("season")[ts_col].transform(
             lambda x: compute_z_score(x, winsorize=3.5)
@@ -1249,10 +1249,10 @@ def build_portable_talent(seasons: Optional[list] = None) -> pd.DataFrame:
     # 4. Qualify players
     print("  Qualifying players...")
     qualified_mask = pd.Series(True, index=base.index)
-    if "MIN" in base.columns:
-        qualified_mask &= base["MIN"] >= MIN_MINUTES
-    if "GP" in base.columns:
-        qualified_mask &= base["GP"] >= MIN_GP
+    if "min" in base.columns:
+        qualified_mask &= base["min"] >= MIN_MINUTES
+    if "gp" in base.columns:
+        qualified_mask &= base["gp"] >= MIN_GP
     if "MPG" in base.columns:
         qualified_mask &= base["MPG"] >= MIN_MPG
 
@@ -1279,6 +1279,7 @@ def build_portable_talent(seasons: Optional[list] = None) -> pd.DataFrame:
     # 6.5. Apply hierarchical Bayesian shrinkage to dimension z-scores (v2.6)
     print("  Applying hierarchical Bayesian shrinkage (v2.6)...")
     from src.modeling.bayesian_hierarchical import apply_and_replace
+from src.data.schema_contract import load_standardized, save_standardized
     qualified = apply_and_replace(qualified)
 
     # 7. Add league z-scores for key metrics

@@ -24,6 +24,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.data.schema_contract import load_standardized
 from src.simulation.game_model import SimConfig, build_schedule
 from src.simulation.simulation_config import HISTORICAL_DIR, YTD_RATINGS_PATH
 from src.simulation.gbdt_game_model import (
@@ -61,10 +62,10 @@ def main():
 
     # ── Check 2: outcome-join correctness (B: weakness not a join bug) ──
     print("\n[2] Outcome correctness (home_win vs official WL)")
-    gl = pd.read_parquet(HISTORICAL_DIR / "team_game_logs.parquet")
-    gl_home = gl[gl["MATCHUP"].str.contains("vs.", na=False)].copy()
-    gl_home["gid"] = gl_home["GAME_ID"].astype(str)
-    gl_home["wl_home_win"] = (gl_home["WL"] == "W").astype(int)
+    gl = load_standardized(HISTORICAL_DIR / "team_game_logs.parquet")
+    gl_home = gl[gl["matchup"].str.contains("vs.", na=False)].copy()
+    gl_home["gid"] = gl_home["game_id"].astype(str)
+    gl_home["wl_home_win"] = (gl_home["wl"] == "W").astype(int)
     wl_map = dict(zip(gl_home["gid"], gl_home["wl_home_win"]))
     chk = df[df["game_id"].isin(wl_map)].copy()
     chk["wl"] = chk["game_id"].map(wl_map)
@@ -78,26 +79,26 @@ def main():
 
     # ── Check 3: YTD blended_mu is properly LAGGED (no same-game leak) ──
     print("\n[3] YTD rating lag integrity")
-    ytd = pd.read_parquet(YTD_RATINGS_PATH)
+    ytd = load_standardized(YTD_RATINGS_PATH)
     # Rebuild lagged avg margin from official logs and compare to ytd_avg_margin.
-    gl["gid"] = gl["GAME_ID"].astype(str)
-    gl["GAME_DATE"] = pd.to_datetime(gl["GAME_DATE"])
-    glm = gl[["SEASON", "TEAM_ABBREVIATION", "gid", "GAME_DATE", "margin"]].copy()
-    glm["TEAM_ABBREVIATION"] = glm["TEAM_ABBREVIATION"].str.upper()
+    gl["gid"] = gl["game_id"].astype(str)
+    gl["game_date"] = pd.to_datetime(gl["game_date"])
+    glm = gl[["season", "team_abbreviation", "gid", "game_date", "margin"]].copy()
+    glm["team_abbreviation"] = glm["team_abbreviation"].str.upper()
     max_abs_err = 0.0
     n_checked = 0
     sample_seasons = ["2022-23", "2024-25"]
     for season in sample_seasons:
-        sg = glm[glm["SEASON"] == season].sort_values(["TEAM_ABBREVIATION", "GAME_DATE"])
+        sg = glm[glm["season"] == season].sort_values(["team_abbreviation", "game_date"])
         # strictly-prior expanding mean of margin per team
-        sg["lag_avg"] = (sg.groupby("TEAM_ABBREVIATION")["margin"]
+        sg["lag_avg"] = (sg.groupby("team_abbreviation")["margin"]
                            .apply(lambda s: s.shift(1).expanding().mean())
                            .reset_index(level=0, drop=True))
         sg["lag_avg"] = sg["lag_avg"].fillna(0.0)
         sy = ytd[ytd["season"] == season].copy()
         sy["team_abbreviation"] = sy["team_abbreviation"].str.upper()
         m = sy.merge(sg, left_on=["game_id", "team_abbreviation"],
-                     right_on=["gid", "TEAM_ABBREVIATION"], how="inner")
+                     right_on=["gid", "team_abbreviation"], how="inner")
         if len(m):
             err = (m["ytd_avg_margin"] - m["lag_avg"]).abs()
             max_abs_err = max(max_abs_err, float(err.max()))
@@ -108,7 +109,7 @@ def main():
     # The margin is RESCALED into compressed BKE units before blending — this is
     # a dilution-by-design step (scale ≈ 0.7/6 ≈ 0.12), not a leak: still a
     # strictly-lagged quantity (verified above).
-    proj = pd.read_parquet("data/processed/forecast/projected_team_features.parquet")
+    proj = load_standardized("data/processed/forecast/projected_team_features.parquet")
     scale_by_season = (proj.groupby("season")["team_net_rating_projected"].std() / 6.0)
     yy = ytd.copy()
     yy["scale"] = yy["season"].map(scale_by_season)
@@ -148,13 +149,12 @@ def main():
 
     # ── Check 5: are BKE ratings DILUTED? (rating vs reality) ───────────
     print("\n[5] Rating predictiveness (is BKE signal diluted?)")
-    actual = (glm.groupby(["SEASON", "TEAM_ABBREVIATION"])["margin"].mean()
+    actual = (glm.groupby(["season", "team_abbreviation"])["margin"].mean()
                  .rename("actual_avg_margin").reset_index())
     pre = (ytd.groupby(["season", "team_abbreviation"])["preseason_mu"].first()
               .rename("preseason_mu").reset_index())
     pre["team_abbreviation"] = pre["team_abbreviation"].str.upper()
-    j = pre.merge(actual, left_on=["season", "team_abbreviation"],
-                  right_on=["SEASON", "TEAM_ABBREVIATION"], how="inner")
+    j = pre.merge(actual, on=["season", "team_abbreviation"], how="inner")
     jp = j.dropna(subset=["preseason_mu", "actual_avg_margin"])
     jp = jp[np.isfinite(jp["preseason_mu"]) & np.isfinite(jp["actual_avg_margin"])]
     r_pre = float(jp["preseason_mu"].corr(jp["actual_avg_margin"]))
