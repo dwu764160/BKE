@@ -1,6 +1,13 @@
 # Data Reproduction & Verification Plan
 
-> **Goal:** Re-run the entire BKE pipeline from raw fetch → computed metrics, without
+> **⚠ HISTORICAL PLANNING DOC — 2026-05-xx vintage**
+> The comparison manifest in §4 uses old uppercase column names (`GAME_ID`, `TEAM_ID`, `PTS`, etc.)
+> that are now obsolete. All parquets use canonical lowercase names since the parquet
+> standardization (Sessions A-C, 2026-06-01/02). The workflow concepts in §1-3 and §5-9
+> are still valid; update column references before using the §4 manifest.
+> Current schema reference: `docs/reference/data_schemas.md`.
+
+> **Original goal:** Re-run the entire BKE pipeline from raw fetch → computed metrics, without
 > destroying any current data. Compare old vs new for completeness and correctness.
 > Identify and fix any problems before moving to player evaluation.
 

@@ -1,6 +1,6 @@
 # BKE Data Pipeline Dependency Reference
 
-> **Last updated:** 2026-05-21. Describes the full pipeline from raw fetch to forecast output.
+> **Last updated:** 2026-06-02. Describes the full pipeline from raw fetch to forecast output.
 > **Purpose:** Single reference for what each script produces, what it reads, and where it sits
 > in the dependency chain.
 
@@ -19,20 +19,33 @@ every upstream artifact.
 
 ---
 
+## Schema contract
+
+All parquets use canonical **lowercase column names** enforced by `src/data/schema_contract.py`.
+Use `load_standardized(path)` to read and `save_standardized(df, path)` to write. Season format
+is `'2024-25'` (not `'22024'`). ID columns have no trailing `.0`.
+
+---
+
 ## Layer 0 — Raw Data Fetch
 
 Scripts in `src/data_fetch/`. These hit external APIs (NBA.com, Basketball-Reference) and
-write raw parquet files to `data/historical/` and `data/tracking/`.
+write raw parquet files to `data/historical/`, `data/tracking/`, `data/matchup/`, `data/official_stats/`.
+All write paths use `save_standardized()` — outputs are canonical from creation.
 
 | Script | Output | Notes |
 |---|---|---|
-| `fetch_pbp/` | `raw_pbp_{season}.parquet` | One per season; NBA API play-by-play |
+| `fetch_pbp/fetch_play_by_play.py` | `play_by_play_{season}.parquet` | One per season; DOM fallback for NBA API PBP |
 | `fetch_box_scores_complete.py` | `complete_player_season_stats.parquet` | Official box stats (pts/reb/ast etc.) all seasons |
-| `fetch_official_stats.py` | `official_adv_{season}.parquet`, `official_tracking_{season}.parquet` | Advanced + tracking (2013-14+) |
-| `derive_team_game_logs.py` | `final_player_game_logs.parquet` | Per-game player logs (for HCA/B2B fitting) |
+| `fetch_official_stats.py` | `data/official_stats/official_advanced_{season}.parquet` | NBA.com advanced stats (ORTG, DRTG, USG%, TS%) |
+| `fetch_tracking_data.py` | `data/tracking/{season}/tracking_*.parquet`, `synergy_*.parquet` | Tracking + 11-type synergy playtypes |
+| `fetch_historical_data.py` | `player_game_logs_{season}.parquet` | Per-game player logs + player ID/name maps |
+| `derive_team_game_logs.py` | `team_game_logs.parquet` | Team game logs; API-first, PBP fallback |
+| `summarize_team_logs.py` | `team_summaries.parquet` | Per-team-season summaries |
 | `fetch_players.py` | `players.parquet` | Player metadata (name, DOB, draft info) |
 | `fetch_player_draft_history.py` | `player_draft_history.parquet` | Draft position, year, team |
-| `fetch_historical_data.py` | Various `data/historical/*.parquet` | Supplemental historical data |
+| `fetch_matchup_data.py` | `data/matchup/league_season_matchups.parquet` | Closest-defender matchup data (Second Spectrum) |
+| `fetch_player_clutch_stats.py` | `player_clutch_stats_{season}.parquet` | Last-5-min, ≤7-point clutch stats |
 
 ---
 

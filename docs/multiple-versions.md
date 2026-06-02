@@ -209,12 +209,12 @@ the box score emerges. Built 2026-05-31. Last pre-divergence Core step.
 (Step-1 matchup adj, applied at FULL magnitude). Actuals: `team_game_logs.parquet`,
 `player_game_logs_2024-25.parquet`.
 
-**Validation (walk-forward, 2024-25):** both modes PASS. v1 — team PTS MAE 10.34,
-bias +1.86, P10–P90 cov 0.885; player pts_mae 5.89, ast 2.09, reb 2.46, pts cov 0.649.
-v0 — team PTS MAE 10.21, bias +1.08, cov 0.890; player pts_mae 6.65 (v1 is the better
-prop model). **Known limitation:** player points interval coverage 0.65 < 0.80 target
-(intervals too narrow; fixed-minutes v1 cannot express DNP/foul-trouble/blowout minute
-variance — deferred to Step 2.1).
+**Validation (walk-forward, 2024-25, Step 2.1 calibrated — 2026-06-02):** v1 — team PTS MAE 10.33,
+bias +1.56, P10–P90 cov 0.925; player pts_mae 5.79, ast 1.75, reb 2.53, pts cov 0.754.
+v0 retained as baseline (pts_mae ~6.65). Step 2.1 fixed: FTR→trip conversion (`_FT_TRIP_PER_FTR=0.45`),
+band+mpg rebound weights, assist concentration, usage-flatten exponent, minutes-dispersion variance.
+AST/REB MAE now near single-game-variance oracle floors (AST floor 1.42, REB floor 1.93) — further
+reduction would require leaking holdout information. See `docs/findings/possession_engine_step2_1_2026-06-02.md`.
 
 ---
 
@@ -238,7 +238,7 @@ for **comparison display**, but the primary data always comes from v2.8 decompos
 | File | What it is | Superseded? |
 |---|---|---|
 | `loop/system_audit_v2.6.md` | Post-v2.6 system audit snapshot | Historical — describes v2.6 state only |
-| `loop/in_progress_context.txt` | Append-only session log | Always current — newest entry = truth |
+| `loop/in_progress_context.txt` | **Single-task context** (NOT append-only) | Replaced entirely when a new task starts — holds one task description at a time |
 | `loop/current_phase_plan.DO_NOT_CHANGE.txt` | Task-level checklist | Always current — checkbox state = truth |
 | `loop/overall_plan.DO_NOT_CHANGE.txt` | Phase-level plan | Always current |
 
