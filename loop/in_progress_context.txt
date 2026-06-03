@@ -46,4 +46,28 @@ NEXT (the fork — do NOT do in a calibration session):
 Recommended forecast-layer follow-up (separate from engine): a non-leaky early-career
 aging/progression prior would close most of the mid-tier under-bias.
 
+MULTI-SEASON LEAKAGE-FREE VALIDATION (added 2026-06-02)
+Runner is now walk-forward: walk_forward_train(target) calibrates league constants ONLY
+on seasons < target. Validator takes --season. Both holdouts PASS, consistent:
+  2023-24 (train <=22-23): team mae 10.68 / PLAYER pts 5.69 ast 1.75 reb 2.61 cov 0.761
+  2024-25 (train <=23-24): team mae 10.33 / PLAYER pts 5.79 ast 1.75 reb 2.53 cov 0.754
+Player logs only exist for these two seasons (projections exist for all 7). AST MAE
+identical across both -> engine generalizes, not overfit. 2023-24 mid-tier bias smaller
+than 2024-25 -> confirms breakout (not engine) explanation. JSONs:
+reports/possession_engine_validation_{2023-24,2024-25}.json.
+
+YTD/ELO ANSWER: In-season YTD blending of PLAYER rates is DEFERRED — engine uses one
+static preseason projection across all 82 games (the breakout root cause). YTD + Elo
+currently live ONLY in the TEAM win-forecast ensemble (gbdt_game_model.py / game_model.py
+/ build_ytd_team_ratings.py), orthogonal to the resolver. Elo stays there; do NOT wire it
+into box-score generation. Game track needs player rating (mostly reuse pts_v40 +
+behavioral) + a NEW explicit player tendency model (seed data exists: shot_zones, playtype,
+archetypes).
+
+DELIVERABLES WRITTEN
+- docs/bke_v1_report.md — overall BKE v1 final report
+- docs/plans/fork_integration_architecture.md — both-tracks connect/integrate handoff
+- docs/integration/for-alpha-thesis.md — added Section 9.5 (props/totals surface, still $0/research-only)
+- docs/findings/possession_engine_step2_1_2026-06-02.md — engine calibration detail
+
 Findings doc: docs/findings/possession_engine_step2_1_2026-06-02.md

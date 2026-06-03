@@ -23,6 +23,7 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -38,8 +39,9 @@ from src.data.schema_contract import load_standardized  # noqa: E402
 DIST = ROOT / "data/processed/simulation/possession_box_distributions.parquet"
 PLAYER_LOGS = ROOT / "data/historical/player_game_logs_{season}.parquet"
 TEAM_LOGS = ROOT / "data/historical/team_game_logs.parquet"   # combined, all seasons
-OUT = ROOT / "reports/possession_engine_validation.json"
-SEASON = "2024-25"
+OUT_TMPL = str(ROOT / "reports/possession_engine_validation_{season}.json")
+DEFAULT_OUT = ROOT / "reports/possession_engine_validation.json"
+SEASON = "2024-25"   # overridable via --season (the holdout being validated)
 
 # scoring tiers by actual season PTS/game — the aggregate MAE hides per-tier error,
 # so the calibration gate is judged tier-by-tier (Step 2.1).
@@ -61,11 +63,18 @@ def _wmae(a, b):
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--season", default=SEASON,
+                    help="holdout season to validate (must have player_game_logs)")
+    args = ap.parse_args()
+    season = args.season
+    out_path = Path(OUT_TMPL.format(season=season))
+
     if not DIST.exists():
         print("FATAL run the engine first (possession_box_distributions.parquet missing)")
         return 1
     sim = pd.read_parquet(DIST)
-    sim = sim[sim["season"].astype(str) == SEASON].copy()
+    sim = sim[sim["season"].astype(str) == season].copy()
     sim["game_id"] = sim["game_id"].astype(str)
     sim["player_id"] = sim["player_id"].astype(str)
     mode = str(sim["mode"].iloc[0]) if "mode" in sim.columns and len(sim) else "?"
@@ -84,7 +93,7 @@ def main() -> int:
     off_g = off_g[~off_g["player_id"].str.startswith("BENCH_")]
 
     # --- actual player box scores ---
-    pa = load_standardized(Path(str(PLAYER_LOGS).format(season=SEASON)))
+    pa = load_standardized(Path(str(PLAYER_LOGS).format(season=season)))
     pa["game_id"] = pa["game_id"].astype(str)
     pa["player_id"] = pa["player_id"].map(_norm)
     actual = pa[["game_id", "player_id", "pts", "reb", "ast", "min"]].copy()
@@ -147,7 +156,7 @@ def main() -> int:
     team_sim = sim[sim["player_id"] == "TEAM"][
         ["game_id", "team", "pts_mean", "pts_p10", "pts_p90"]].copy()
     ta = load_standardized(TEAM_LOGS)
-    ta = ta[ta["season"].astype(str) == SEASON].copy()
+    ta = ta[ta["season"].astype(str) == season].copy()
     ta["game_id"] = ta["game_id"].astype(str)
     ta["team_abbr"] = ta["matchup"].str.split().str[0].str.upper()
     ta_small = ta[["game_id", "team_abbr", "pts", "fga", "fta", "oreb", "tov"]].rename(
@@ -180,14 +189,15 @@ def main() -> int:
 
     result = {
         "test": "Step 2 possession engine calibration — player props + team totals",
-        "season": SEASON, "mode": mode,
+        "season": season, "mode": mode,
         "walk_forward": "constants calibrated <=2023-24; rates are forward projections",
         "player_prop_gate": player_gate,
         "tier_breakdown": tier_report,
         "team_total_gate": team_gate,
         "verdict": verdict,
     }
-    OUT.write_text(json.dumps(result, indent=2))
+    out_path.write_text(json.dumps(result, indent=2))
+    DEFAULT_OUT.write_text(json.dumps(result, indent=2))
     pg = player_gate or {}
     tge = team_gate or {}
     print("VAL %s | TEAM pts_mae=%s bias=%s cov=%s | PLAYER n=%s pts_mae=%s ast_mae=%s reb_mae=%s cov=%s"

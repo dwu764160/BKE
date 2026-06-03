@@ -59,7 +59,14 @@ _TEAM_LOGS_CACHE: Optional[pd.DataFrame] = None
 OUT = ROOT / "data/processed/simulation/possession_box_distributions.parquet"
 CONST_OUT = ROOT / "data/processed/simulation/possession_engine_constants.json"
 
-TRAIN_SEASONS = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]
+ALL_TRAIN_SEASONS = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23", "2023-24", "2024-25"]
+
+
+def walk_forward_train(target: str) -> List[str]:
+    """Seasons strictly BEFORE the target — league-constant calibration must never
+    see the season it is about to predict (walk-forward leakage discipline). The
+    'YYYY-YY' format sorts lexicographically, so a string compare is correct here."""
+    return [s for s in ALL_TRAIN_SEASONS if s < str(target)]
 
 
 def _norm(x) -> str:
@@ -229,12 +236,12 @@ def team_roster_map(season: str, rates) -> Dict[str, List[str]]:
 
 
 def calibrate(rates, pts_o, pts_d, adjs, overload, lineup_map, mode: str,
-              rng: np.random.Generator) -> GlobalConstants:
+              rng: np.random.Generator, train_seasons: List[str]) -> GlobalConstants:
     """Set global constants from train actuals; tune efg_scale to match team PTS."""
     # league rate anchors from train team logs (combined file, filtered)
     paces, orebs, fts, threes, ptss = [], [], [], [], []
     all_tg = _all_team_logs()
-    for s in TRAIN_SEASONS:
+    for s in train_seasons:
         tg = all_tg[all_tg["season"] == str(s)]
         if tg.empty:
             continue
@@ -255,7 +262,7 @@ def calibrate(rates, pts_o, pts_d, adjs, overload, lineup_map, mode: str,
     # tune efg_scale: simulate a sample of train matchups, match mean team PTS
     resolver = OutcomeSamplerResolver(RateModel(g))
     sample = []
-    for s in TRAIN_SEASONS:
+    for s in train_seasons:
         teams = lineup_map.get(s, {})
         names = list(teams.keys())
         for i in range(0, min(len(names), 16), 2):
@@ -319,15 +326,21 @@ def main() -> int:
     for r in lp.itertuples():
         _LINEUP_CACHE[(str(r.season), str(r.team_abbreviation))] = _ids(getattr(r, "starter_player_ids", None))
 
+    # walk-forward: calibrate league constants ONLY on seasons strictly before target
+    train_seasons = walk_forward_train(args.season)
+    if not train_seasons:
+        print("FATAL no train seasons strictly before %s" % args.season)
+        return 1
+
     # roster map per train+target season for v1 + calibration sampling
     lineup_map: Dict[str, Dict[str, List[str]]] = {}
-    for s in TRAIN_SEASONS + [args.season]:
+    for s in train_seasons + [args.season]:
         try:
             lineup_map[s] = team_roster_map(s, rates)
         except Exception:
             lineup_map[s] = {}
 
-    g = calibrate(rates, pts_o, pts_d, adjs, overload, lineup_map, args.mode, rng)
+    g = calibrate(rates, pts_o, pts_d, adjs, overload, lineup_map, args.mode, rng, train_seasons)
     CONST_OUT.parent.mkdir(parents=True, exist_ok=True)
     CONST_OUT.write_text(json.dumps({"mode": args.mode, **g.to_dict()}, indent=2))
     resolver = OutcomeSamplerResolver(RateModel(g))
@@ -365,9 +378,10 @@ def main() -> int:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_parquet(OUT, index=False)
     team_rows = out_df[out_df["player_id"] == "TEAM"]
-    print("RUN_OK mode=%s season=%s games=%d rows=%d pace=%.1f efg_scale=%.3f "
+    print("RUN_OK mode=%s season=%s train=[%s..%s] games=%d rows=%d pace=%.1f efg_scale=%.3f "
           "sim_team_pts_mean=%.1f" % (
-              args.mode, args.season, n_done, len(out_df), g.pace, g.efg_scale,
+              args.mode, args.season, train_seasons[0], train_seasons[-1], n_done, len(out_df),
+              g.pace, g.efg_scale,
               float(team_rows["pts_mean"].mean()) if len(team_rows) else -1))
     return 0
 

@@ -447,6 +447,45 @@ unproven.
 
 ---
 
+## Section 9.5: Possession-Engine Update — Player Props & Team Totals (2026-06-02)
+
+**New capability since the 2026-05-20 pass.** The generative possession engine (BKE
+Simulation Step 2 → 2.1) is now calibrated and validated. It produces a **different market
+surface than the moneyline model this doc was originally about**: per-game **box-score
+distributions** (player points/reb/ast props + team totals/spreads), not just win
+probabilities. Artifact: `data/processed/simulation/possession_box_distributions.parquet`.
+
+**Leakage-free, two-season walk-forward (the only honest numbers):** calibrated strictly on
+seasons `< target`; player rates projected from prior data only. Both holdouts PASS and are
+consistent — strong evidence the engine is not overfit.
+
+| Surface | 2023-24 (train ≤22-23) | 2024-25 (train ≤23-24) |
+|---|---|---|
+| Team total PTS MAE / bias / coverage | 10.68 / +2.40 / 0.913 | 10.33 / +1.56 / 0.925 |
+| Player PTS / AST / REB MAE | 5.69 / 1.75 / 2.61 | 5.79 / 1.75 / 2.53 |
+| Player PTS P10–P90 coverage | 0.761 | 0.754 |
+| Per-player season-mean corr (PTS/REB/AST) | — | 0.88 / 0.81 / 0.88 |
+
+**What's genuinely usable now:** the **team-total / spread** distribution is well-calibrated
+(bias +1.5–2.4, coverage ~0.91–0.93) — the strongest, most ready surface. **Player props** are
+now genuinely priced (calibrated means + tails matching real NBA game-to-game variance) — a
+real step up, but with two known forecast-layer caveats that matter at the prop level:
+established-star points run a few points hot (partly real role changes), and mid-tier scorers
+are under on unforecastable breakouts. Both wash out at the team level; both are projection
+limits, **not** engine defects (established-Superstar per-player point bias is +0.24, shot mix
+is exact). They are addressed by the deferred in-season YTD blend + a live-lineup override.
+
+**Readiness gate for this surface (mirrors the moneyline gate):** a walk-forward, **game-level
+CLV test of prop/total prices vs Kalshi closing lines** showing CLV > ~0.01. The engine no
+longer blocks that test — it now *enables* it. Until that number is positive:
+
+**Recommended allocation for props/totals on current evidence: $0 live; research-only.**
+
+Detail: BKE repo `docs/bke_v1_report.md`, `docs/findings/possession_engine_step2_1_2026-06-02.md`,
+and the both-tracks integration map `docs/plans/fork_integration_architecture.md`.
+
+---
+
 ## Section 10: Raw Numbers Dump
 
 All values extracted directly from JSON files this session (2026-05-19).

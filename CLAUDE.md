@@ -80,6 +80,30 @@ market-price comparison**. Recommended live allocation: **$0 / research-only**
 until a walk-forward game-level test vs. Kalshi closing lines shows positive
 closing-line value.
 
+### Downstream Sister Repos: BKE-Market & BKE-Game (the fork)
+
+This repo is the **upstream engine** for two downstream tracks that fork off the Step-2.1
+possession engine. They are local siblings under `~/projects/`:
+
+- **`../BKE-Market`** — prices prediction-market totals/spreads/props. Consumes the emergent
+  distributions; never runs the resolver.
+- **`../BKE-Game`** — full event-level simulation via a `MarkovEventResolver` on the existing
+  `PossessionResolver` seam.
+
+Both consume **`data/processed/simulation/possession_box_distributions.parquet`** (the API)
+and are bound by the parity contract `scripts/validate_possession_engine.py`. The connective
+architecture lives in `docs/plans/fork_integration_architecture.md` (this repo) and is
+mirrored as `docs/integration_with_bke.md` in each sister repo.
+
+**What the sister repos depend on from here (do not break without updating them):**
+- the `possession_box_distributions.parquet` schema (treat as a versioned API),
+- the `PossessionResolver` seam + `PossessionOutcome` schema,
+- the walk-forward validation gate and its oracle floors,
+- the calibrated constants block in `src/simulation/possession_engine.py`.
+
+When any of these change, update `docs/plans/fork_integration_architecture.md` and the
+sister repos' `docs/ground_truths.md`. Each sister repo points back here via `../BKE-Copy`.
+
 ## Skill System
 
 This repo has a comprehensive skill library: **portable governance skills**, **BKE domain skills**, and **context engineering skills**. The canonical single source of truth is `.github/skills/SKILL_MAP.md`.
